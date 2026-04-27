@@ -35,7 +35,17 @@ pytest -q
 
 ## Run the program from the CLI
 
-You can run the full scoring + report flow directly with the Python scripts.
+Use the single-command pipeline script as the primary path:
+
+```bash
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --top-n 5
+```
+
+The script parses the match query, collects schema-compatible inputs, scores props, renders the markdown report, and prints it to stdout.
+
+### Advanced / debug flow (manual JSON steps)
+
+If you want to inspect each phase manually, use the step-by-step JSON workflow below.
 
 1) Build an input payload JSON file (matching `docs/schemas/soccer_pick_input.schema.json`):
 
