@@ -169,3 +169,71 @@ def test_no_edge_returns_no_bet_with_ambiguous_flags() -> None:
     assert candidate["recommendation"] == "no-bet"
     assert "insufficient_projection_edge" in candidate["explainability"]["risk_flags"]
     assert "ambiguous_direction" in candidate["explainability"]["risk_flags"]
+
+
+def test_win_probability_factor_direction_and_bounds() -> None:
+    scorer = load_script_module("score_player_props.py")
+
+    underdog_score, underdog_flags = scorer._win_probability_context_score(
+        {"team_win_probability": 0.15},
+        {"team_win_probability": 0.8},
+    )
+    favorite_score, favorite_flags = scorer._win_probability_context_score(
+        {"team_win_probability": 0.85},
+        {"team_win_probability": 0.1},
+    )
+
+    assert favorite_score > underdog_score
+    assert 0.0 <= underdog_score <= 1.0
+    assert 0.0 <= favorite_score <= 1.0
+    assert "low_team_win_probability" in underdog_flags
+    assert "strong_favorite_context" in favorite_flags
+
+
+def test_win_probability_factor_defaults_to_neutral_when_missing() -> None:
+    scorer = load_script_module("score_player_props.py")
+
+    score, flags = scorer._win_probability_context_score({}, {})
+
+    assert score == 0.5
+    assert flags == []
+
+
+def test_last_five_momentum_normalizes_mixed_result_tokens() -> None:
+    scorer = load_script_module("score_player_props.py")
+
+    normalized_score, normalized_flags = scorer._last_5_form_momentum_score(
+        {"last_5_results": [" win ", "d", "Loss", 3, {"result": "W"}]}
+    )
+
+    assert normalized_score > 0.5
+    assert "missing_last_5_results" not in normalized_flags
+
+
+def test_last_five_momentum_edge_cases_fallback_safely() -> None:
+    scorer = load_script_module("score_player_props.py")
+
+    short_score, short_flags = scorer._last_5_form_momentum_score({"last_5_results": ["W", "L"]})
+    invalid_score, invalid_flags = scorer._last_5_form_momentum_score(
+        {"last_5_results": ["?", None, "bad", {}, "x"]}
+    )
+
+    assert short_score == 0.5
+    assert "missing_last_5_results" in short_flags
+    assert invalid_score == 0.5
+    assert "unrecognized_last_5_results" in invalid_flags
+
+
+def test_home_away_adjustment_direction_and_unknown_context() -> None:
+    scorer = load_script_module("score_player_props.py")
+    cfg = scorer._load_config()
+
+    home_score, home_flags = scorer._home_away_adjustment_score({"home_away": "home"}, cfg)
+    away_score, away_flags = scorer._home_away_adjustment_score({"home_away": "away"}, cfg)
+    unknown_score, unknown_flags = scorer._home_away_adjustment_score({"home_away": "neutral"}, cfg)
+
+    assert home_score > away_score
+    assert unknown_score == 0.5
+    assert "home_context" in home_flags
+    assert "away_context" in away_flags
+    assert "unknown_venue_context" in unknown_flags

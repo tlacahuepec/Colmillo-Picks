@@ -33,6 +33,64 @@ def _parse_utc_timestamp(raw_value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+
+
+def _normalize_probability(raw_value: Any, default: float = 0.5) -> float:
+    if raw_value is None:
+        return default
+
+    if isinstance(raw_value, str):
+        value = raw_value.strip()
+        if not value:
+            return default
+        is_pct = value.endswith("%")
+        if is_pct:
+            value = value[:-1].strip()
+        try:
+            parsed = float(value)
+        except ValueError:
+            return default
+        if is_pct or parsed > 1.0:
+            parsed /= 100.0
+        return _clip(parsed)
+
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+    if parsed > 1.0:
+        parsed /= 100.0
+    return _clip(parsed)
+
+
+def _normalize_last_5_result(result: Any) -> str | None:
+    if isinstance(result, dict):
+        for key in ("result", "outcome", "value"):
+            if key in result:
+                result = result[key]
+                break
+
+    token = str(result).strip().upper()
+    if not token:
+        return None
+
+    aliases = {
+        "W": "W",
+        "WIN": "W",
+        "WON": "W",
+        "3": "W",
+        "D": "D",
+        "DRAW": "D",
+        "T": "D",
+        "1": "D",
+        "L": "L",
+        "LOSS": "L",
+        "LOST": "L",
+        "0": "L",
+    }
+    return aliases.get(token)
+
 def _degrade_confidence(confidence: str) -> str:
     ladder = {"high": "medium", "medium": "low", "low": "low"}
     return ladder.get(confidence, "low")
@@ -187,8 +245,8 @@ def _match_state_score(match: dict[str, Any], team: dict[str, Any], cfg: dict[st
 
 
 def _win_probability_context_score(team: dict[str, Any], opponent: dict[str, Any]) -> tuple[float, list[str]]:
-    team_prob = float(team.get("team_win_probability", 0.5))
-    opp_prob = float(opponent.get("team_win_probability", 0.5))
+    team_prob = _normalize_probability(team.get("team_win_probability"), default=0.5)
+    opp_prob = _normalize_probability(opponent.get("team_win_probability"), default=0.5)
     win_prob_component = (team_prob - 0.5) * 0.8
     matchup_edge_component = (team_prob - opp_prob) * 0.2
     score = _clip(0.5 + win_prob_component + matchup_edge_component)
@@ -206,15 +264,19 @@ def _last_5_form_momentum_score(team: dict[str, Any]) -> tuple[float, list[str]]
     if not isinstance(results, list) or len(results) != 5:
         return 0.5, ["missing_last_5_results"]
 
+    normalized_results = [_normalize_last_5_result(item) for item in results]
+    if any(item is None for item in normalized_results):
+        return 0.5, ["unrecognized_last_5_results"]
+
     points_map = {"W": 1.0, "D": 0.5, "L": 0.0}
     recency_weights = [0.12, 0.16, 0.2, 0.24, 0.28]
     weighted_score = 0.0
-    for result, weight in zip(results, recency_weights):
-        weighted_score += points_map.get(str(result).upper(), 0.25) * weight
+    for result, weight in zip(normalized_results, recency_weights):
+        weighted_score += points_map[result] * weight
     score = _clip(weighted_score)
 
     flags: list[str] = []
-    wins = sum(1 for item in results if str(item).upper() == "W")
+    wins = sum(1 for item in normalized_results if item == "W")
     if wins >= 4:
         flags.append("strong_last_5_form")
     if wins == 0:
