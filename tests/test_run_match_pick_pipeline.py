@@ -89,6 +89,25 @@ def test_parse_match_query_accepts_free_form_vs_input_for_unknown_teams() -> Non
     assert parsed.match_date == (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
 
 
+def test_parse_cli_args_supports_llm_flags() -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    args = pipeline.parse_cli_args(
+        [
+            "juve - milan today",
+            "--use-llm",
+            "--llm-provider",
+            "openai",
+            "--llm-model",
+            "gpt-4.1-mini",
+        ]
+    )
+
+    assert args.use_llm is True
+    assert args.llm_provider == "openai"
+    assert args.llm_model == "gpt-4.1-mini"
+
+
 def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
     script = REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts" / "run_match_pick_pipeline.py"
 
@@ -121,14 +140,55 @@ def test_pipeline_cli_rejects_non_positive_top_n(invalid_top_n: str) -> None:
     assert "top-n must be a positive integer" in result.stderr
 
 
+def test_pipeline_cli_rejects_llm_without_provider() -> None:
+    script = REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts" / "run_match_pick_pipeline.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script), "juve - milan today", "--use-llm"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "--llm-provider is required when --use-llm is set" in result.stderr
+
+
+
+
+
+def test_pipeline_cli_rejects_llm_without_credentials() -> None:
+    script = REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts" / "run_match_pick_pipeline.py"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "juve - milan today",
+            "--use-llm",
+            "--llm-provider",
+            "openai",
+            "--llm-model",
+            "gpt-4.1-mini",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PATH": str(__import__("os").environ.get("PATH", ""))},
+    )
+
+    assert result.returncode != 0
+    assert "Missing credentials for provider 'openai'" in result.stderr
+
 
 def test_build_dependency_bundle_includes_llm_enricher_callable() -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 
-    deps = pipeline.build_dependency_bundle()
+    deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
 
     assert "enrich_with_llm" in deps
     assert callable(deps["enrich_with_llm"])
+
 
 def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
@@ -137,12 +197,27 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
 
     def fake_parse_cli_args(argv=None):
         captured["argv"] = argv
-        return type("Args", (), {"match_query": "juve - milan today", "top_n": 7})()
+        return type(
+            "Args",
+            (),
+            {
+                "match_query": "juve - milan today",
+                "top_n": 7,
+                "use_llm": True,
+                "llm_provider": "openai",
+                "llm_model": "gpt-4.1-mini",
+            },
+        )()
 
     deps_bundle = {"deps": "bundle"}
 
-    def fake_build_dependency_bundle():
+    def fake_build_dependency_bundle(*, use_llm, llm_provider, llm_model):
         captured["build_called"] = True
+        captured["bundle_args"] = {
+            "use_llm": use_llm,
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
+        }
         return deps_bundle
 
     def fake_run_pipeline(*, request, deps):
@@ -161,6 +236,11 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
     pipeline.main()
 
     assert captured["build_called"] is True
-    assert captured["request"] == {"match_query": "juve - milan today", "top_n": 7}
+    assert captured["bundle_args"] == {
+        "use_llm": True,
+        "llm_provider": "openai",
+        "llm_model": "gpt-4.1-mini",
+    }
+    assert captured["request"] == {"match_query": "juve - milan today", "top_n": 7, "use_llm": True}
     assert captured["deps"] is deps_bundle
     assert captured["printed"] == "mock report"
