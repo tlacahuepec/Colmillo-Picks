@@ -3,6 +3,24 @@ from __future__ import annotations
 from tests.conftest import load_script_module, sample_match_inputs
 
 
+def _section(report: str, heading: str, next_heading: str) -> str:
+    start = report.index(heading)
+    end = report.index(next_heading, start)
+    return report[start:end]
+
+
+def _markdown_data_rows(section: str) -> list[str]:
+    return [
+        line
+        for line in section.splitlines()
+        if line.startswith("|")
+        and "---" not in line
+        and "Rank |" not in line
+        and "Player | Team | Prop Type" not in line
+        and "Model Version" not in line
+    ]
+
+
 def test_end_to_end_score_then_render_flow() -> None:
     scorer = load_script_module("score_player_props.py")
     renderer = load_script_module("render_pick_report.py")
@@ -15,6 +33,20 @@ def test_end_to_end_score_then_render_flow() -> None:
     assert "Top 5 Recommended Picks" in report
     assert "| 1 |" in report
     assert "Risk Disclaimer (Mandatory)" in report
+
+    top_picks = _section(report, "## 3) Top 5 Recommended Picks", "## 4) Availability Check")
+    top_pick_rows = _markdown_data_rows(top_picks)
+    assert len(top_pick_rows) == 5
+    for row in top_pick_rows:
+        cells = [cell.strip() for cell in row.split("|")[1:-1]]
+        assert len(cells) == 9
+        assert cells[5] in {"BET", "NO-BET"}
+        assert cells[6] in {"High", "Medium", "Low"}
+        assert cells[8]
+
+    availability = _section(report, "## 4) Availability Check", "### Availability Fallback Behavior")
+    availability_rows = _markdown_data_rows(availability)
+    assert len(availability_rows) == 5
 
 
 def test_end_to_end_includes_deterministic_under_pick_from_fixture() -> None:
@@ -29,3 +61,77 @@ def test_end_to_end_includes_deterministic_under_pick_from_fixture() -> None:
 
     assert under_candidate["direction"] == "under"
     assert under_candidate["recommendation"] == "bet"
+
+
+def test_top_pick_why_includes_match_context_and_player_role_signals() -> None:
+    scorer = load_script_module("score_player_props.py")
+    renderer = load_script_module("render_pick_report.py")
+
+    match_inputs = sample_match_inputs()
+    scored = scorer.score_props(match_inputs)
+    report = renderer.render_report(scored_props=scored, match_inputs=match_inputs, availability_data={}, top_n=5)
+
+    top_picks = _section(report, "## 3) Top 5 Recommended Picks", "## 4) Availability Check")
+    top_pick_rows = _markdown_data_rows(top_picks)
+    rationale_cells = []
+    for row in top_pick_rows:
+        cells = [cell.strip() for cell in row.split("|")[1:-1]]
+        # include both "Primary Risks" and "Why This Pick" as rationale text
+        rationale_cells.append(cells[7])
+        rationale_cells.append(cells[8])
+    rationale_blob = " ".join(rationale_cells)
+
+    assert any(signal in rationale_blob for signal in {"home_context", "away_context", "home_away_adjustment", "win_probability_context", "match_state_context"})
+    assert any(signal in rationale_blob for signal in {"role_opportunity", "attacker_role_for_passes", "deep_role_for_shots"})
+
+
+def test_missing_platform_data_uses_fallback_and_resolves_final_availability() -> None:
+    scorer = load_script_module("score_player_props.py")
+    renderer = load_script_module("render_pick_report.py")
+
+    match_inputs = sample_match_inputs()
+    scored = scorer.score_props(match_inputs)
+    top = scored[:5]
+    availability_data = {
+        "fallback_mode": True,
+        "fallback_reason": "platform_timeout",
+        "picks": {
+            f"{top[0]['player_id']}:{top[0]['market']}": {
+                "prizepicks": "unknown",
+                "alternatives": {"Underdog": "available", "Sleeper": "unknown"},
+                "retrieved_at_utc": "2026-04-27T12:00:00Z",
+            },
+            f"{top[1]['player_id']}:{top[1]['market']}": {
+                "prizepicks": "unknown",
+                "alternatives": {"Underdog": "unavailable"},
+                "retrieved_at_utc": "2026-04-27T12:00:00Z",
+            },
+        },
+    }
+
+    report = renderer.render_report(scored_props=scored, match_inputs=match_inputs, availability_data=availability_data, top_n=5)
+    availability = _section(report, "## 4) Availability Check", "### Availability Fallback Behavior")
+    availability_rows = _markdown_data_rows(availability)
+
+    assert len(availability_rows) == 5
+    assert "platform_timeout" in availability
+    assert "| 1 |" in availability
+    assert "Underdog:available" in availability
+    assert "| available |" in availability
+    assert "| unknown |" in availability
+
+
+def test_guardrail_warnings_propagate_to_final_report() -> None:
+    scorer = load_script_module("score_player_props.py")
+    renderer = load_script_module("render_pick_report.py")
+
+    match_inputs = sample_match_inputs()
+    match_inputs["teams"][0]["projected_lineup"]["status"] = "projected"
+    match_inputs["market"]["source_timestamp_utc"] = "2026-04-27T00:00:00Z"
+
+    scored = scorer.score_props(match_inputs)
+    report = renderer.render_report(scored_props=scored, match_inputs=match_inputs, availability_data={}, top_n=5)
+
+    assert "## Guardrail Status" in report
+    assert "lineup_unconfirmed:Arsenal" in report
+    assert "odds_stale:" in report
