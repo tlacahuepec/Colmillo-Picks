@@ -43,6 +43,14 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan
 
 The script parses the match query, collects schema-compatible inputs, scores props, renders the markdown report, and prints it to stdout.
 
+### CLI arguments (`run_match_pick_pipeline.py`)
+
+Detailed CLI argument syntax, examples, and parser-aligned error cases now live in:
+
+- [`docs/run_match_pick_pipeline_cli.md`](docs/run_match_pick_pipeline_cli.md)
+
+Keeping this guide in a dedicated file reduces README merge conflicts and makes parser/docs updates easier to review.
+
 ### Advanced / debug flow (manual JSON steps)
 
 If you want to inspect each phase manually, use the step-by-step JSON workflow below.
