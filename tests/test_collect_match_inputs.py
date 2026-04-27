@@ -1,26 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.conftest import load_script_module
 from tests.test_input_schema_contract import _validate_payload
-
-
-def test_collect_inputs_produces_schema_compatible_complete_payload() -> None:
-    collector = load_script_module("collect_match_inputs.py")
-
-    payload = collector.collect_inputs(
-        collector.MatchInputRequest(
-            home_team="Arsenal",
-            away_team="Liverpool",
-            match_date="2026-05-03",
-            competition="Premier League",
-        )
-    )
-
-    assert _validate_payload(payload) == []
-    assert payload["validation"]["critical_missing_fields"] == []
-    assert payload["validation"]["should_reject_prediction"] is False
-    assert len(payload["market"]["sportsbook_snapshots"]) >= 2
-    assert all("captured_at_utc" in snap for snap in payload["market"]["sportsbook_snapshots"])
 
 
 class _MissingFixtureProvider:
@@ -47,6 +30,32 @@ class _SparseOddsProvider:
 class _MissingWeatherProvider:
     def get_weather(self, fixture):
         return None
+
+
+class _NoneLineupProvider:
+    def get_lineups_and_availability(self, fixture):
+        return None
+
+
+def test_collect_inputs_produces_schema_compatible_complete_payload() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(
+            home_team="Arsenal",
+            away_team="Liverpool",
+            match_date="2026-05-03",
+            competition="Premier League",
+        )
+    )
+
+    assert _validate_payload(payload) == []
+    assert payload["validation"]["critical_missing_fields"] == []
+    assert payload["validation"]["should_reject_prediction"] is False
+    assert payload.keys() >= {"schema_version", "match", "teams", "market", "players", "validation"}
+    assert payload["market"]["source_timestamp_utc"]
+    assert len(payload["market"]["sportsbook_snapshots"]) >= 2
+    assert all("captured_at_utc" in snap for snap in payload["market"]["sportsbook_snapshots"])
 
 
 def test_collect_inputs_fallbacks_are_transparent_and_flagged() -> None:
@@ -88,3 +97,24 @@ def test_collect_inputs_prefers_parsed_fields_and_competition_hints() -> None:
     assert payload["teams"][0]["team_name"] == "Real Madrid"
     assert payload["teams"][1]["team_name"] == "Barcelona"
     assert payload["match"]["kickoff_utc"].startswith("2026-05-04")
+
+
+def test_collect_inputs_date_parse_failure_raises_explicit_error() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(ValueError, match="Match date must use YYYY-MM-DD format"):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="05/03/2026")
+        )
+
+
+def test_collect_inputs_sets_provider_missing_note_when_lineups_unavailable() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+        lineup_provider=_NoneLineupProvider(),
+    )
+
+    assert payload["validation"]["should_reject_prediction"] is False
+    assert "Lineup provider unavailable" in payload["validation"]["notes"]
