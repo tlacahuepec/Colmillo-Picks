@@ -416,7 +416,79 @@ def _score_market_candidate(
     }
 
 
-def score_props(match_inputs: dict[str, Any], config_path: str | None = None) -> list[dict[str, Any]]:
+def _build_reasoning_trace(
+    *,
+    selected: list[dict[str, Any]],
+    match_inputs: dict[str, Any],
+    guardrails: dict[str, Any],
+) -> dict[str, Any]:
+    teams = match_inputs.get("teams", [])
+    home = next((team for team in teams if team.get("home_away") == "home"), teams[0] if teams else {})
+    away = next((team for team in teams if team.get("home_away") == "away"), teams[1] if len(teams) > 1 else {})
+
+    picks: list[dict[str, Any]] = []
+    for rank, candidate in enumerate(selected, start=1):
+        factors = candidate.get("explainability", {}).get("top_contributing_factors", [])
+        tactical_fit = factors[0]["factor"] if factors else "unknown"
+        risk_tags = [str(flag) for flag in candidate.get("explainability", {}).get("risk_flags", [])]
+        no_bet_reasons = [
+            tag
+            for tag in risk_tags
+            if tag
+            in {
+                "insufficient_projection_edge",
+                "ambiguous_direction",
+                "below_confidence_threshold",
+                "market_line_missing",
+            }
+        ]
+        minutes_signal = next((flag for flag in risk_tags if "minutes" in flag or "substitution" in flag), "stable_minutes")
+        why_line = "; ".join(f"{item.get('factor')}={item.get('score')}" for item in factors[:2]) or "model score"
+
+        picks.append(
+            {
+                "rank": rank,
+                "player_id": candidate.get("player_id"),
+                "market": candidate.get("market"),
+                "direction": candidate.get("direction"),
+                "recommendation": candidate.get("recommendation"),
+                "confidence": candidate.get("confidence"),
+                "risk_tags": risk_tags,
+                "no_bet_reasons": no_bet_reasons,
+                "rationale": {
+                    "minutes_signal": minutes_signal,
+                    "tactical_fit": tactical_fit,
+                    "notes": ", ".join(risk_tags) or "none",
+                    "primary_risks_summary": ", ".join(risk_tags) or "none",
+                    "why_this_pick": why_line,
+                },
+            }
+        )
+
+    return {
+        "schema_version": "v1.0.0",
+        "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "match_context_summary": {
+            "match_id": str(match_inputs.get("match_id") or match_inputs.get("match", {}).get("match_id") or "unknown"),
+            "fixture": f"{home.get('team_name', 'unknown')} vs {away.get('team_name', 'unknown')}",
+            "competition": str(match_inputs.get("competition") or match_inputs.get("match", {}).get("competition_type") or "unknown"),
+            "kickoff_utc": str(match_inputs.get("match", {}).get("kickoff_utc", "unknown")),
+        },
+        "guardrail_results": {
+            "required_timestamps": guardrails.get("required_timestamps", {}),
+            "blocking_warnings": guardrails.get("blocking_warnings", []),
+            "missing_freshness_timestamps": guardrails.get("missing_freshness_timestamps", []),
+            "guardrails_passed": not bool(guardrails.get("blocking_warnings") or guardrails.get("missing_freshness_timestamps")),
+        },
+        "picks": picks,
+    }
+
+
+def score_props(
+    match_inputs: dict[str, Any],
+    config_path: str | None = None,
+    include_trace: bool = False,
+) -> list[dict[str, Any]] | dict[str, Any]:
     """Return top-five scored props for a requested match."""
     cfg = _load_config(config_path)
     guardrails = _evaluate_guardrails(match_inputs, cfg)
@@ -445,7 +517,12 @@ def score_props(match_inputs: dict[str, Any], config_path: str | None = None) ->
             "blocking_warnings": guardrails["blocking_warnings"],
             "required_timestamps": guardrails["required_timestamps"],
         }
-    return selected
+
+    if not include_trace:
+        return selected
+
+    trace = _build_reasoning_trace(selected=selected, match_inputs=match_inputs, guardrails=guardrails)
+    return {"scores": selected, "trace": trace}
 
 
 def main() -> None:
@@ -460,10 +537,15 @@ def main() -> None:
         default=None,
         help="Optional scoring config path (defaults to repo config).",
     )
+    parser.add_argument(
+        "--emit-trace",
+        action="store_true",
+        help="Emit normalized reasoning trace with scored picks.",
+    )
     args = parser.parse_args()
 
     match_inputs = json.loads(args.input_json)
-    results = score_props(match_inputs, config_path=args.config_path)
+    results = score_props(match_inputs, config_path=args.config_path, include_trace=args.emit_trace)
     print(json.dumps(results))
 
 

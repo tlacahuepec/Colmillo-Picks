@@ -87,13 +87,22 @@ def _build_match_summary(match_inputs: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _candidate_evidence_rows(scored_props: list[dict[str, Any]]) -> str:
+def _trace_index(trace: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    picks = (trace or {}).get("picks", [])
+    return {f"{item.get('player_id')}:{item.get('market')}": item for item in picks}
+
+
+def _candidate_evidence_rows(scored_props: list[dict[str, Any]], trace: dict[str, Any] | None = None) -> str:
     rows = []
+    trace_by_pick = _trace_index(trace)
     for candidate in scored_props:
+        key = f"{candidate.get('player_id')}:{candidate.get('market')}"
+        trace_pick = trace_by_pick.get(key, {})
+        rationale = trace_pick.get("rationale", {})
         factors = candidate.get("explainability", {}).get("top_contributing_factors", [])
-        tactical_fit = factors[0]["factor"] if factors else "unknown"
+        tactical_fit = rationale.get("tactical_fit") or (factors[0]["factor"] if factors else "unknown")
         trend_value = candidate.get("baseline_projection", "unknown")
-        minutes_signal = next(
+        minutes_signal = rationale.get("minutes_signal") or next(
             (
                 flag
                 for flag in candidate.get("explainability", {}).get("risk_flags", [])
@@ -101,7 +110,7 @@ def _candidate_evidence_rows(scored_props: list[dict[str, Any]]) -> str:
             ),
             "stable_minutes",
         )
-        notes = ", ".join(candidate.get("explainability", {}).get("risk_flags", [])) or "none"
+        notes = rationale.get("notes") or ", ".join(candidate.get("explainability", {}).get("risk_flags", [])) or "none"
 
         rows.append(
             "| {player} | {team} | {market} | {line} | baseline={trend} | {minutes} | {fit} | {notes} |".format(
@@ -119,12 +128,16 @@ def _candidate_evidence_rows(scored_props: list[dict[str, Any]]) -> str:
     return "\n".join(rows) if rows else "| n/a | n/a | n/a | n/a | n/a | n/a | n/a | no candidates |"
 
 
-def _top_pick_rows(scored_props: list[dict[str, Any]], top_n: int) -> str:
+def _top_pick_rows(scored_props: list[dict[str, Any]], top_n: int, trace: dict[str, Any] | None = None) -> str:
     rows = []
+    trace_by_pick = _trace_index(trace)
     for rank, candidate in enumerate(scored_props[:top_n], start=1):
-        risks = ", ".join(candidate.get("explainability", {}).get("risk_flags", [])) or "none"
+        key = f"{candidate.get('player_id')}:{candidate.get('market')}"
+        trace_pick = trace_by_pick.get(key, {})
+        rationale = trace_pick.get("rationale", {})
+        risks = rationale.get("primary_risks_summary") or ", ".join(candidate.get("explainability", {}).get("risk_flags", [])) or "none"
         factors = candidate.get("explainability", {}).get("top_contributing_factors", [])
-        why = "; ".join(f"{f.get('factor')}={f.get('score')}" for f in factors[:2]) or "model score"
+        why = rationale.get("why_this_pick") or "; ".join(f"{f.get('factor')}={f.get('score')}" for f in factors[:2]) or "model score"
         outcome = str(candidate.get("recommendation", "bet")).upper()
         direction = str(candidate.get("direction", "over")).title() if outcome != "NO-BET" else "No Bet"
         rows.append(
@@ -227,6 +240,7 @@ def render_report(
     match_inputs: dict[str, Any],
     availability_data: dict[str, Any] | None = None,
     top_n: int = 5,
+    trace: dict[str, Any] | None = None,
 ) -> str:
     """Render a markdown report for top picks."""
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -235,8 +249,8 @@ def render_report(
     match_summary = _build_match_summary(match_inputs)
     replacements = {
         **match_summary,
-        "candidate_evidence_rows": _candidate_evidence_rows(scored_props),
-        "top_5_pick_rows": _top_pick_rows(scored_props, top_n=top_n),
+        "candidate_evidence_rows": _candidate_evidence_rows(scored_props, trace=trace),
+        "top_5_pick_rows": _top_pick_rows(scored_props, top_n=top_n, trace=trace),
         "availability_rows": _availability_rows(scored_props, top_n=top_n, availability_data=availability_data),
         "guardrail_blocking_warnings": _guardrail_warning_lines(scored_props),
         "audit_log_rows": _audit_log_lines(scored_props),
@@ -269,17 +283,24 @@ def main() -> None:
         default="{}",
         help="Serialized availability payload for PrizePicks/alternatives",
     )
+    parser.add_argument(
+        "--trace-json",
+        default="{}",
+        help="Optional serialized scoring trace payload",
+    )
     args = parser.parse_args()
 
     scored_props = json.loads(args.input_json)
     match_inputs = json.loads(args.match_input_json)
     availability_data = json.loads(args.availability_json)
+    trace = json.loads(args.trace_json)
 
     report = render_report(
         scored_props=scored_props,
         match_inputs=match_inputs,
         availability_data=availability_data,
         top_n=args.top_n,
+        trace=trace,
     )
     print(report)
 

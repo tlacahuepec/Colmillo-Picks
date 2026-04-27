@@ -34,6 +34,56 @@ def test_render_report_includes_required_sections() -> None:
     assert "Liverpool" in report
 
 
+def test_render_report_uses_trace_rationale_when_provided() -> None:
+    renderer = load_script_module("render_pick_report.py")
+    match_inputs = sample_match_inputs()
+    scored = [
+        {
+            "player": "Arsenal CM",
+            "player_id": "ars-8",
+            "team_id": "ARS",
+            "market": "passes",
+            "line": 61.5,
+            "direction": "under",
+            "recommendation": "bet",
+            "confidence": "high",
+            "baseline_projection": 54.0,
+            "model_version": "test",
+            "explainability": {
+                "risk_flags": ["old_risk"],
+                "top_contributing_factors": [{"factor": "old_factor", "score": 0.9}],
+            },
+            "guardrails": {"blocking_warnings": [], "required_timestamps": {}},
+        }
+    ]
+    trace = {
+        "picks": [
+            {
+                "player_id": "ars-8",
+                "market": "passes",
+                "rationale": {
+                    "minutes_signal": "trace_minutes_signal",
+                    "tactical_fit": "trace_tactical_fit",
+                    "notes": "trace_note",
+                    "primary_risks_summary": "trace_risk_summary",
+                    "why_this_pick": "trace_why_line",
+                },
+                "risk_tags": ["trace_risk_tag"],
+                "no_bet_reasons": [],
+            }
+        ]
+    }
+
+    report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=1, trace=trace)
+
+    assert "trace_minutes_signal" in report
+    assert "trace_tactical_fit" in report
+    assert "trace_note" in report
+    assert "trace_risk_summary" in report
+    assert "trace_why_line" in report
+    assert "old_factor" not in report
+
+
 def test_render_report_shows_under_direction_and_no_bet_label() -> None:
     renderer = load_script_module("render_pick_report.py")
     match_inputs = sample_match_inputs()
