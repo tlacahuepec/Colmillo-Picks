@@ -43,6 +43,10 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan
 
 The script parses the match query, collects schema-compatible inputs, scores props, renders the markdown report, and prints it to stdout.
 
+`--top-n` controls how many top picks to return in the report output.
+
+Match query format guidance: use `"home - away today"`, `"home - away tomorrow"`, or `"home - away YYYY-MM-DD"`.
+
 ### CLI arguments (`run_match_pick_pipeline.py`)
 
 Detailed CLI argument syntax, examples, and parser-aligned error cases now live in:
