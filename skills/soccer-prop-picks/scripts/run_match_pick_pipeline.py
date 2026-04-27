@@ -8,6 +8,9 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from collect_match_inputs import MatchInputRequest, collect_inputs
+from llm.langchain_enricher import LangChainEnricher, default_prompt_builder, default_structured_parser
+from llm.langgraph_flow import SimpleLangGraphFlow
+from llm.mock_client import DeterministicMockLLMClient
 from pipeline_service import run_pipeline
 from render_pick_report import render_report
 from score_player_props import score_props
@@ -110,6 +113,36 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _build_enrich_with_llm(*, use_langgraph: bool = False):
+    client = DeterministicMockLLMClient()
+
+    def chat_model(prompt: dict[str, str]) -> dict:
+        return client.generate_structured(system_prompt=prompt["system"], user_prompt=prompt["user"], schema={})
+
+    if use_langgraph:
+        flow = SimpleLangGraphFlow(
+            prompt_builder=default_prompt_builder,
+            chat_model=chat_model,
+            structured_parser=default_structured_parser,
+        )
+
+        def enrich_with_llm(*, scored_payload: dict, match_inputs: dict) -> dict:
+            return flow.run(scored_payload=scored_payload, match_inputs=match_inputs, top_n=5)["result"]
+
+        return enrich_with_llm
+
+    enricher = LangChainEnricher(
+        prompt_builder=default_prompt_builder,
+        chat_model=chat_model,
+        structured_parser=default_structured_parser,
+    )
+
+    def enrich_with_llm(*, scored_payload: dict, match_inputs: dict) -> dict:
+        return enricher.enrich(scored_payload=scored_payload, match_inputs=match_inputs, top_n=5)
+
+    return enrich_with_llm
+
+
 def build_dependency_bundle() -> dict[str, object]:
     return {
         "parse_match_query": parse_match_query,
@@ -122,6 +155,7 @@ def build_dependency_bundle() -> dict[str, object]:
         "collect_inputs": collect_inputs,
         "score_props": score_props,
         "render_report": render_report,
+        "enrich_with_llm": _build_enrich_with_llm(),
     }
 
 

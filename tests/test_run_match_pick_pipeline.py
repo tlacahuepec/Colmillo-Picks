@@ -121,6 +121,15 @@ def test_pipeline_cli_rejects_non_positive_top_n(invalid_top_n: str) -> None:
     assert "top-n must be a positive integer" in result.stderr
 
 
+
+def test_build_dependency_bundle_includes_llm_enricher_callable() -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    deps = pipeline.build_dependency_bundle()
+
+    assert "enrich_with_llm" in deps
+    assert callable(deps["enrich_with_llm"])
+
 def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 
