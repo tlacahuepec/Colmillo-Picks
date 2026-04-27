@@ -1,7 +1,12 @@
 {
   "global": {
     "top_k": 5,
-    "contribution_floor": 0.0
+    "contribution_floor": 0.0,
+    "model_version": "soccer-prop-v1.1-guardrails",
+    "min_confidence_for_bet": "medium",
+    "market_freshness": {
+      "max_odds_age_minutes": 30
+    }
   },
   "passes": {
     "factor_weights": {

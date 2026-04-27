@@ -125,20 +125,51 @@ def _top_pick_rows(scored_props: list[dict[str, Any]], top_n: int) -> str:
         risks = ", ".join(candidate.get("explainability", {}).get("risk_flags", [])) or "none"
         factors = candidate.get("explainability", {}).get("top_contributing_factors", [])
         why = "; ".join(f"{f.get('factor')}={f.get('score')}" for f in factors[:2]) or "model score"
+        outcome = str(candidate.get("recommendation", "bet")).upper()
+        direction = str(candidate.get("direction", "over")).title() if outcome != "NO-BET" else "No Bet"
         rows.append(
-            "| {rank} | {player} | {team} | {market} | {direction} | {confidence} | {risks} | {why} |".format(
+            "| {rank} | {player} | {team} | {market} | {direction} | {outcome} | {confidence} | {risks} | {why} |".format(
                 rank=rank,
                 player=candidate.get("player", "unknown"),
                 team=candidate.get("team_id", "unknown"),
                 market=candidate.get("market", "unknown"),
-                direction=str(candidate.get("direction", "over")).title(),
+                direction=direction,
+                outcome=outcome,
                 confidence=str(candidate.get("confidence", "unknown")).title(),
                 risks=risks,
                 why=why,
             )
         )
 
-    return "\n".join(rows) if rows else "| 1 | n/a | n/a | n/a | n/a | n/a | n/a | no picks |"
+    return "\n".join(rows) if rows else "| 1 | n/a | n/a | n/a | n/a | NO-BET | n/a | n/a | no picks |"
+
+
+def _guardrail_warning_lines(scored_props: list[dict[str, Any]]) -> str:
+    warnings: list[str] = []
+    for candidate in scored_props:
+        guardrails = candidate.get("guardrails", {})
+        warnings.extend([str(item) for item in guardrails.get("blocking_warnings", [])])
+    deduped = sorted(set(warnings))
+    if not deduped:
+        return "- none"
+    return "\n".join(f"- {item}" for item in deduped)
+
+
+def _audit_log_lines(scored_props: list[dict[str, Any]]) -> str:
+    if not scored_props:
+        return "| unknown | unknown | unknown | unknown |\n"
+    guardrails = scored_props[0].get("guardrails", {})
+    required = guardrails.get("required_timestamps", {})
+    model_version = str(scored_props[0].get("model_version", "unknown"))
+    return (
+        "| {model} | {home} | {away} | {odds} | {weather} |\n".format(
+            model=model_version,
+            home=required.get("home_lineup_timestamp_utc", "unknown"),
+            away=required.get("away_lineup_timestamp_utc", "unknown"),
+            odds=required.get("odds_timestamp_utc", "unknown"),
+            weather=required.get("weather_timestamp_utc", "unknown"),
+        )
+    )
 
 
 def _resolve_final_availability(prizepicks: str, alternatives: list[str]) -> str:
@@ -207,6 +238,8 @@ def render_report(
         "candidate_evidence_rows": _candidate_evidence_rows(scored_props),
         "top_5_pick_rows": _top_pick_rows(scored_props, top_n=top_n),
         "availability_rows": _availability_rows(scored_props, top_n=top_n, availability_data=availability_data),
+        "guardrail_blocking_warnings": _guardrail_warning_lines(scored_props),
+        "audit_log_rows": _audit_log_lines(scored_props),
         "critical_missing_fields": ", ".join(match_inputs.get("validation", {}).get("critical_missing_fields", [])) or "none",
         "should_reject_prediction": str(match_inputs.get("validation", {}).get("should_reject_prediction", False)).lower(),
     }
