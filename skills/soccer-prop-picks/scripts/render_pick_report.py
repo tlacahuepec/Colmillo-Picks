@@ -5,18 +5,217 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "templates" / "pick_report.md"
 
-def render_report(scored_props: list[dict[str, Any]], top_n: int = 5) -> str:
-    """Render a markdown report for top picks.
 
-    Placeholder interface for future deterministic report rendering.
-    """
-    header = "# Soccer Prop Pick Report\n\n"
-    body = f"Generated placeholder report with top_n={top_n}.\n"
-    top_rows = scored_props[:top_n]
-    return header + body + f"Input rows: {len(scored_props)}\nRendered rows: {len(top_rows)}"
+def _fmt_pct(value: Any) -> str:
+    if value is None:
+        return "unknown"
+    try:
+        return f"{float(value) * 100:.0f}%"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def _join_names(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "none"
+    return ", ".join(
+        f"{item.get('player_name', 'unknown')} ({item.get('status', 'unknown')})"
+        for item in items
+    )
+
+
+def _standings_line(team: dict[str, Any]) -> dict[str, Any]:
+    standings = team.get("standings_context", {})
+    return {
+        "table_position": standings.get("table_position", "unknown"),
+        "points": standings.get("points", "unknown"),
+        "games_played": standings.get("games_played", "unknown"),
+        "motivation_tag": standings.get("motivation_tag", "unknown"),
+    }
+
+
+def _build_match_summary(match_inputs: dict[str, Any]) -> dict[str, str]:
+    match = match_inputs.get("match", {})
+    teams = match_inputs.get("teams", [])
+
+    home = next((team for team in teams if team.get("home_away") == "home"), teams[0] if teams else {})
+    away = next((team for team in teams if team.get("home_away") == "away"), teams[1] if len(teams) > 1 else {})
+
+    home_lineup = home.get("projected_lineup", {})
+    away_lineup = away.get("projected_lineup", {})
+
+    home_standings = _standings_line(home)
+    away_standings = _standings_line(away)
+
+    weather = match.get("weather", {})
+    venue = match.get("venue", {})
+
+    return {
+        "home_team": str(home.get("team_name", "unknown")),
+        "away_team": str(away.get("team_name", "unknown")),
+        "competition_type": str(match.get("competition_type", "unknown")),
+        "kickoff_utc": str(match.get("kickoff_utc", "unknown")),
+        "venue_name": str(venue.get("name", "unknown")),
+        "venue_city": str(venue.get("city", "unknown")),
+        "venue_country": str(venue.get("country", "unknown")),
+        "weather_summary": str(weather.get("summary", "unknown")),
+        "temperature_c": str(weather.get("temperature_c", "unknown")),
+        "wind_kph": str(weather.get("wind_kph", "unknown")),
+        "precipitation_probability": _fmt_pct(weather.get("precipitation_probability")),
+        "home_lineup_status": str(home_lineup.get("status", "unknown")),
+        "home_formation": str(home_lineup.get("formation", "unknown")),
+        "home_starters": ", ".join(home_lineup.get("starters", [])) or "unknown",
+        "away_lineup_status": str(away_lineup.get("status", "unknown")),
+        "away_formation": str(away_lineup.get("formation", "unknown")),
+        "away_starters": ", ".join(away_lineup.get("starters", [])) or "unknown",
+        "home_injuries_suspensions": _join_names(home.get("injuries", [])) + "; " + _join_names(home.get("suspensions", [])),
+        "away_injuries_suspensions": _join_names(away.get("injuries", [])) + "; " + _join_names(away.get("suspensions", [])),
+        "home_table_position": str(home_standings["table_position"]),
+        "home_points": str(home_standings["points"]),
+        "home_games_played": str(home_standings["games_played"]),
+        "home_motivation_tag": str(home_standings["motivation_tag"]),
+        "away_table_position": str(away_standings["table_position"]),
+        "away_points": str(away_standings["points"]),
+        "away_games_played": str(away_standings["games_played"]),
+        "away_motivation_tag": str(away_standings["motivation_tag"]),
+    }
+
+
+def _candidate_evidence_rows(scored_props: list[dict[str, Any]]) -> str:
+    rows = []
+    for candidate in scored_props:
+        factors = candidate.get("explainability", {}).get("top_contributing_factors", [])
+        tactical_fit = factors[0]["factor"] if factors else "unknown"
+        trend_value = candidate.get("baseline_projection", "unknown")
+        minutes_signal = next(
+            (
+                flag
+                for flag in candidate.get("explainability", {}).get("risk_flags", [])
+                if "minutes" in flag or "substitution" in flag
+            ),
+            "stable_minutes",
+        )
+        notes = ", ".join(candidate.get("explainability", {}).get("risk_flags", [])) or "none"
+
+        rows.append(
+            "| {player} | {team} | {market} | {line} | baseline={trend} | {minutes} | {fit} | {notes} |".format(
+                player=candidate.get("player", "unknown"),
+                team=candidate.get("team_id", "unknown"),
+                market=candidate.get("market", "unknown"),
+                line=candidate.get("line", "unknown"),
+                trend=trend_value,
+                minutes=minutes_signal,
+                fit=tactical_fit,
+                notes=notes,
+            )
+        )
+
+    return "\n".join(rows) if rows else "| n/a | n/a | n/a | n/a | n/a | n/a | n/a | no candidates |"
+
+
+def _top_pick_rows(scored_props: list[dict[str, Any]], top_n: int) -> str:
+    rows = []
+    for rank, candidate in enumerate(scored_props[:top_n], start=1):
+        risks = ", ".join(candidate.get("explainability", {}).get("risk_flags", [])) or "none"
+        factors = candidate.get("explainability", {}).get("top_contributing_factors", [])
+        why = "; ".join(f"{f.get('factor')}={f.get('score')}" for f in factors[:2]) or "model score"
+        rows.append(
+            "| {rank} | {player} | {team} | {market} | {direction} | {confidence} | {risks} | {why} |".format(
+                rank=rank,
+                player=candidate.get("player", "unknown"),
+                team=candidate.get("team_id", "unknown"),
+                market=candidate.get("market", "unknown"),
+                direction=str(candidate.get("direction", "over")).title(),
+                confidence=str(candidate.get("confidence", "unknown")).title(),
+                risks=risks,
+                why=why,
+            )
+        )
+
+    return "\n".join(rows) if rows else "| 1 | n/a | n/a | n/a | n/a | n/a | n/a | no picks |"
+
+
+def _resolve_final_availability(prizepicks: str, alternatives: list[str]) -> str:
+    statuses = [prizepicks] + alternatives
+    if any(status == "available" for status in statuses):
+        return "available"
+    if statuses and all(status == "unavailable" for status in statuses):
+        return "unavailable"
+    return "unknown"
+
+
+def _availability_rows(scored_props: list[dict[str, Any]], top_n: int, availability_data: dict[str, Any]) -> str:
+    now_utc = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    rows = []
+    fallback_mode = bool(availability_data.get("fallback_mode", False))
+    fallback_reason = availability_data.get("fallback_reason", "data fetch ok")
+
+    for rank, candidate in enumerate(scored_props[:top_n], start=1):
+        player_id = candidate.get("player_id")
+        market = candidate.get("market")
+        key = f"{player_id}:{market}"
+        entry = availability_data.get("picks", {}).get(key, {})
+
+        prizepicks_status = str(entry.get("prizepicks", "unknown"))
+        alternatives = entry.get("alternatives", {})
+        alt_summary_parts = [f"{name}:{status}" for name, status in alternatives.items()]
+        alt_summary = ", ".join(alt_summary_parts) if alt_summary_parts else "none configured"
+
+        retrieved_at = str(entry.get("retrieved_at_utc", now_utc))
+        alt_statuses = [str(value) for value in alternatives.values()]
+        final_status = str(entry.get("final_status") or _resolve_final_availability(prizepicks_status, alt_statuses))
+
+        fallback_applied = "yes" if fallback_mode else "no"
+        if fallback_mode:
+            fallback_applied = f"yes ({fallback_reason})"
+
+        rows.append(
+            "| {rank} | {player} | {market} | {prizepicks} | {alternatives} | {final} | {retrieved} | {fallback} |".format(
+                rank=rank,
+                player=candidate.get("player", "unknown"),
+                market=market,
+                prizepicks=prizepicks_status,
+                alternatives=alt_summary,
+                final=final_status,
+                retrieved=retrieved_at,
+                fallback=fallback_applied,
+            )
+        )
+
+    return "\n".join(rows) if rows else "| 1 | n/a | n/a | unknown | none configured | unknown | n/a | yes (no picks) |"
+
+
+def render_report(
+    scored_props: list[dict[str, Any]],
+    match_inputs: dict[str, Any],
+    availability_data: dict[str, Any] | None = None,
+    top_n: int = 5,
+) -> str:
+    """Render a markdown report for top picks."""
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    availability_data = availability_data or {}
+
+    match_summary = _build_match_summary(match_inputs)
+    replacements = {
+        **match_summary,
+        "candidate_evidence_rows": _candidate_evidence_rows(scored_props),
+        "top_5_pick_rows": _top_pick_rows(scored_props, top_n=top_n),
+        "availability_rows": _availability_rows(scored_props, top_n=top_n, availability_data=availability_data),
+        "critical_missing_fields": ", ".join(match_inputs.get("validation", {}).get("critical_missing_fields", [])) or "none",
+        "should_reject_prediction": str(match_inputs.get("validation", {}).get("should_reject_prediction", False)).lower(),
+    }
+
+    report = template
+    for key, value in replacements.items():
+        report = report.replace(f"{{{{{key}}}}}", str(value))
+
+    return report
 
 
 def main() -> None:
@@ -27,10 +226,28 @@ def main() -> None:
         default="[]",
         help="Serialized scored props payload",
     )
+    parser.add_argument(
+        "--match-input-json",
+        default="{}",
+        help="Serialized match input payload used for summary sections",
+    )
+    parser.add_argument(
+        "--availability-json",
+        default="{}",
+        help="Serialized availability payload for PrizePicks/alternatives",
+    )
     args = parser.parse_args()
 
     scored_props = json.loads(args.input_json)
-    report = render_report(scored_props, top_n=args.top_n)
+    match_inputs = json.loads(args.match_input_json)
+    availability_data = json.loads(args.availability_json)
+
+    report = render_report(
+        scored_props=scored_props,
+        match_inputs=match_inputs,
+        availability_data=availability_data,
+        top_n=args.top_n,
+    )
     print(report)
 
 
