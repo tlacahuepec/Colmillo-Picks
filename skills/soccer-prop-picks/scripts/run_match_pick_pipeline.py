@@ -8,9 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from collect_match_inputs import MatchInputRequest, collect_inputs
-from llm.langchain_enricher import LangChainEnricher, default_prompt_builder, default_structured_parser
-from llm.langgraph_flow import SimpleLangGraphFlow
-from llm.mock_client import DeterministicMockLLMClient
+from llm.provider_adapter import build_enrich_with_llm
 from pipeline_service import run_pipeline
 from render_pick_report import render_report
 from score_player_props import score_props
@@ -110,40 +108,31 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=5,
         help="Number of picks to render (1-5)",
     )
-    return parser.parse_args(argv)
-
-
-def _build_enrich_with_llm(*, use_langgraph: bool = False):
-    client = DeterministicMockLLMClient()
-
-    def chat_model(prompt: dict[str, str]) -> dict:
-        return client.generate_structured(system_prompt=prompt["system"], user_prompt=prompt["user"], schema={})
-
-    if use_langgraph:
-        flow = SimpleLangGraphFlow(
-            prompt_builder=default_prompt_builder,
-            chat_model=chat_model,
-            structured_parser=default_structured_parser,
-        )
-
-        def enrich_with_llm(*, scored_payload: dict, match_inputs: dict) -> dict:
-            return flow.run(scored_payload=scored_payload, match_inputs=match_inputs, top_n=5)["result"]
-
-        return enrich_with_llm
-
-    enricher = LangChainEnricher(
-        prompt_builder=default_prompt_builder,
-        chat_model=chat_model,
-        structured_parser=default_structured_parser,
+    parser.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Enable LLM enrichment for the scored picks.",
+    )
+    parser.add_argument(
+        "--llm-provider",
+        default=None,
+        help="LLM provider to use when --use-llm is set (supported: openai).",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help="Model name for the selected LLM provider.",
     )
 
-    def enrich_with_llm(*, scored_payload: dict, match_inputs: dict) -> dict:
-        return enricher.enrich(scored_payload=scored_payload, match_inputs=match_inputs, top_n=5)
+    args = parser.parse_args(argv)
+    if args.use_llm and not args.llm_provider:
+        parser.error("--llm-provider is required when --use-llm is set.")
+    return args
 
-    return enrich_with_llm
 
 
-def build_dependency_bundle() -> dict[str, object]:
+
+def build_dependency_bundle(*, use_llm: bool, llm_provider: str | None, llm_model: str | None) -> dict[str, object]:
     return {
         "parse_match_query": parse_match_query,
         "build_match_input_request": lambda *, parsed, competition: MatchInputRequest(
@@ -155,15 +144,26 @@ def build_dependency_bundle() -> dict[str, object]:
         "collect_inputs": collect_inputs,
         "score_props": score_props,
         "render_report": render_report,
-        "enrich_with_llm": _build_enrich_with_llm(),
+        "enrich_with_llm": build_enrich_with_llm(
+            use_llm=use_llm,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+        ),
     }
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_cli_args(argv)
-    deps = build_dependency_bundle()
+    try:
+        deps = build_dependency_bundle(
+            use_llm=args.use_llm,
+            llm_provider=args.llm_provider,
+            llm_model=args.llm_model,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
     report = run_pipeline(
-        request={"match_query": args.match_query, "top_n": args.top_n},
+        request={"match_query": args.match_query, "top_n": args.top_n, "use_llm": args.use_llm},
         deps=deps,
     )
     print(report)
