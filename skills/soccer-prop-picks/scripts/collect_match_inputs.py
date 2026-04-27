@@ -7,6 +7,20 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from normalizers import normalize_match_date, normalize_player, normalize_snapshots, normalize_team_name, normalize_weather
+from payload_builder import build_payload, build_teams_payload
+from provider_resolution import (
+    ResolutionContext,
+    append_insufficient_snapshots,
+    append_players_missing,
+    build_validation,
+    resolve_fixture,
+    resolve_lineup,
+    resolve_market,
+    resolve_timestamp,
+    resolve_weather,
+)
+
 
 class FixtureLookupProvider(Protocol):
     """Adapter contract for fixture lookup."""
@@ -59,38 +73,16 @@ def _team_id(team_name: str) -> str:
     return (alpha + "XXX")[:3]
 
 
-def _normalize_team_name(team_name: str) -> str:
-    tokens = [token for token in team_name.strip().split() if token]
-    return " ".join(token.capitalize() for token in tokens) if tokens else team_name.strip()
-
-
-def _normalize_match_date(match_date: str) -> str:
-    try:
-        return datetime.strptime(match_date.strip(), "%Y-%m-%d").date().isoformat()
-    except ValueError as exc:
-        raise ValueError("Match date must use YYYY-MM-DD format.") from exc
-
-
 def _deterministic_last5(seed: str) -> list[str]:
     vals = ["W", "D", "L"]
     return [vals[(sum(ord(c) for c in f"{seed}-{idx}") + idx) % 3] for idx in range(5)]
 
 
-def _derive_position_group(role_tag: str) -> str:
-    if role_tag in {"GK"}:
-        return "GK"
-    if role_tag in {"CB", "LB", "RB", "LWB", "RWB"}:
-        return "DEF"
-    if role_tag in {"CM", "CDM", "CAM", "LM", "RM", "DM"}:
-        return "MID"
-    return "FWD"
-
-
 class DeterministicFixtureProvider:
     def lookup_fixture(self, request: MatchInputRequest) -> dict[str, Any]:
-        home = _normalize_team_name(request.parsed_home_team or request.home_team)
-        away = _normalize_team_name(request.parsed_away_team or request.away_team)
-        date = _normalize_match_date(request.parsed_match_date or request.match_date)
+        home = normalize_team_name(request.parsed_home_team or request.home_team)
+        away = normalize_team_name(request.parsed_away_team or request.away_team)
+        date = normalize_match_date(request.parsed_match_date or request.match_date)
         competition = (request.competition_hints or [request.competition])[0]
         home_id = _team_id(home)
         away_id = _team_id(away)
@@ -251,162 +243,65 @@ def collect_inputs(
     odds_provider = odds_provider or DeterministicOddsProvider()
     weather_provider = weather_provider or DeterministicWeatherProvider()
 
-    critical_missing_fields: list[str] = []
-    notes: list[str] = []
+    fallback_lineup_provider = DeterministicLineupProvider()
+    fallback_odds_provider = DeterministicOddsProvider()
+    fallback_weather_provider = DeterministicWeatherProvider()
 
-    fixture = fixture_provider.lookup_fixture(request)
-    if not fixture:
-        critical_missing_fields.append("match")
-        notes.append("Fixture provider unavailable; used deterministic fallback fixture metadata.")
-        fixture = _default_fixture_from_request(request)
+    context = ResolutionContext()
+    fixture = resolve_fixture(request, fixture_provider, _default_fixture_from_request, context)
+    lineup_payload = resolve_lineup(fixture, lineup_provider, fallback_lineup_provider, context)
+    market_payload = resolve_market(fixture, odds_provider, fallback_odds_provider, context)
+    weather_payload = resolve_weather(fixture, weather_provider, fallback_weather_provider, context)
 
-    lineup_payload = lineup_provider.get_lineups_and_availability(fixture)
-    if not lineup_payload:
-        critical_missing_fields.append("teams.projected_lineup")
-        notes.append("Lineup provider unavailable; used deterministic projected lineups and players.")
-        lineup_payload = DeterministicLineupProvider().get_lineups_and_availability(fixture)
-
-    market_payload = odds_provider.get_odds_snapshots(fixture)
-    if not market_payload:
-        critical_missing_fields.append("market.sportsbook_snapshots")
-        notes.append("Odds provider unavailable; used deterministic synthetic odds snapshots.")
-        market_payload = DeterministicOddsProvider().get_odds_snapshots(fixture)
-
-    weather_payload = weather_provider.get_weather(fixture)
-    if not weather_payload:
-        critical_missing_fields.append("match.weather")
-        notes.append("Weather provider unavailable; used neutral weather assumptions.")
-        weather_payload = DeterministicWeatherProvider().get_weather(fixture)
-
-    lineup_ts = lineup_payload.get("source_timestamp_utc") or _utc_now_z()
-    if "source_timestamp_utc" not in lineup_payload:
-        notes.append("Lineup timestamp missing in provider payload; populated with collection timestamp.")
-
-    market_ts = market_payload.get("source_timestamp_utc") or _utc_now_z()
-    if "source_timestamp_utc" not in market_payload:
-        notes.append("Market timestamp missing in provider payload; populated with collection timestamp.")
-
-    home_team = fixture["teams"]["home"]
-    away_team = fixture["teams"]["away"]
-    teams_payload = []
-    for side, home_away in (("home", "home"), ("away", "away")):
-        team_info = fixture["teams"][side]
-        lineup_info = (lineup_payload.get("teams") or {}).get(side, {})
-        teams_payload.append(
-            {
-                "team_id": team_info["team_id"],
-                "team_name": team_info["team_name"],
-                "home_away": home_away,
-                "projected_lineup": {
-                    "status": lineup_info.get("status", "unknown"),
-                    "formation": lineup_info.get("formation", "unknown"),
-                    "starters": lineup_info.get("starters", []),
-                    "source_timestamp_utc": lineup_info.get("source_timestamp_utc", lineup_ts),
-                },
-                "injuries": lineup_info.get("injuries", []),
-                "suspensions": lineup_info.get("suspensions", []),
-                "team_win_probability": float(team_info.get("team_win_probability", 0.33)),
-                "last_5_results": team_info.get("last_5_results", ["D", "D", "D", "D", "D"]),
-                "possession_profile": team_info.get(
-                    "possession_profile",
-                    {"avg_possession_pct": 50, "style_tag": "balanced"},
-                ),
-                "standings_context": team_info.get(
-                    "standings_context",
-                    {
-                        "table_position": 10,
-                        "points": 40,
-                        "games_played": 30,
-                        "motivation_tag": "midtable",
-                    },
-                ),
-            }
-        )
-
-    def _normalize_player(player: dict[str, Any]) -> dict[str, Any]:
-        role = player.get("role_tag") or player.get("specific_role") or "CM"
-        return {
-            "player_id": player.get("player_id", "unknown-player"),
-            "player_name": player.get("player_name", "Unknown Player"),
-            "team_id": player.get("team_id", home_team["team_id"]),
-            "position_group": player.get("position_group", _derive_position_group(role)),
-            "specific_role": player.get("specific_role", role),
-            "role_tag": role,
-            "expected_minutes": int(player.get("expected_minutes", 75)),
-            "substitution_risk": player.get("substitution_risk", "medium"),
-            "captain": bool(player.get("captain", False)),
-            "is_lone_striker": bool(player.get("is_lone_striker", False)),
-            "expected_passes_baseline": float(player.get("expected_passes_baseline", 25)),
-            "expected_shots_baseline": float(player.get("expected_shots_baseline", 1)),
-            "market_lines": {
-                "passes": float((player.get("market_lines") or {}).get("passes", 20.5)),
-                "shots": float((player.get("market_lines") or {}).get("shots", 1.5)),
-            },
-        }
-
-    players = lineup_payload.get("players") or []
-    normalized_players: list[dict[str, Any]] = [_normalize_player(player) for player in players]
-
-    if not normalized_players:
-        critical_missing_fields.append("players")
-        notes.append("No player-level provider data returned; used deterministic fallback players.")
-        fallback_players = DeterministicLineupProvider().get_lineups_and_availability(fixture)["players"]
-        normalized_players = [_normalize_player(player) for player in fallback_players]
-
-    snapshots = market_payload.get("sportsbook_snapshots") or []
-    normalized_snapshots = [
-        {
-            "source": snap.get("source", "unknown_book"),
-            "odds_decimal": float(snap.get("odds_decimal", 2.0)),
-            "captured_at_utc": snap.get("captured_at_utc", market_ts),
-        }
-        for snap in snapshots
-    ]
-
-    if len(normalized_snapshots) < 2:
-        critical_missing_fields.append("market.sportsbook_snapshots")
-        notes.append("Insufficient odds snapshots from provider; padded with deterministic fallback snapshots.")
-        fallback_snaps = DeterministicOddsProvider().get_odds_snapshots(fixture)["sportsbook_snapshots"]
-        normalized_snapshots = (normalized_snapshots + fallback_snaps)[:2]
-
-    should_reject = any(
-        field in {"match", "players", "market.sportsbook_snapshots"} for field in critical_missing_fields
+    lineup_ts = resolve_timestamp(
+        lineup_payload,
+        "source_timestamp_utc",
+        "Lineup timestamp missing in provider payload; populated with collection timestamp.",
+        _utc_now_z,
+        context,
+    )
+    market_ts = resolve_timestamp(
+        market_payload,
+        "source_timestamp_utc",
+        "Market timestamp missing in provider payload; populated with collection timestamp.",
+        _utc_now_z,
+        context,
     )
 
-    payload = {
-        "schema_version": "v1.1.0",
-        "match_id": fixture.get("match_id"),
-        "competition": fixture.get("competition", request.competition),
-        "match": {
-            "match_id": fixture.get("match_id"),
-            "competition_type": fixture.get("competition_type", "league"),
-            "is_elimination": bool(fixture.get("is_elimination", False)),
-            "overtime_possible": bool(fixture.get("overtime_possible", False)),
-            "kickoff_utc": fixture.get("kickoff_utc", f"{_normalize_match_date(request.match_date)}T19:45:00Z"),
-            "venue": fixture.get(
-                "venue", {"name": "Unknown Venue", "city": "Unknown", "country": "Unknown"}
-            ),
-            "weather": {
-                "summary": weather_payload.get("summary", "Unknown"),
-                "temperature_c": float(weather_payload.get("temperature_c", 15)),
-                "wind_kph": float(weather_payload.get("wind_kph", 10)),
-                "precipitation_probability": float(weather_payload.get("precipitation_probability", 0.2)),
-                "source_timestamp_utc": weather_payload.get("source_timestamp_utc", _utc_now_z()),
-            },
-        },
-        "teams": teams_payload,
-        "market": {
-            "source_timestamp_utc": market_ts,
-            "sportsbook_snapshots": normalized_snapshots,
-        },
-        "players": normalized_players,
-        "validation": {
-            "critical_missing_fields": sorted(set(critical_missing_fields)),
-            "should_reject_prediction": should_reject,
-            "notes": " ".join(notes) if notes else "All required providers returned data.",
-        },
-    }
-    return payload
+    home_team = fixture["teams"]["home"]
+    teams_payload = build_teams_payload(fixture, lineup_payload, lineup_ts)
+
+    players = lineup_payload.get("players") or []
+    normalized_players: list[dict[str, Any]] = [normalize_player(player, home_team["team_id"]) for player in players]
+
+    if not normalized_players:
+        append_players_missing(context)
+        fallback_players = fallback_lineup_provider.get_lineups_and_availability(fixture)["players"]
+        normalized_players = [normalize_player(player, home_team["team_id"]) for player in fallback_players]
+
+    snapshots = market_payload.get("sportsbook_snapshots") or []
+    normalized_snapshots = normalize_snapshots(snapshots, market_ts)
+
+    if len(normalized_snapshots) < 2:
+        append_insufficient_snapshots(context)
+        fallback_snaps = fallback_odds_provider.get_odds_snapshots(fixture)["sportsbook_snapshots"]
+        normalized_snapshots = (normalized_snapshots + fallback_snaps)[:2]
+
+    validation = build_validation(context)
+    default_kickoff_utc = f"{normalize_match_date(request.match_date)}T19:45:00Z"
+    weather = normalize_weather(weather_payload, _utc_now_z())
+
+    return build_payload(
+        request=request,
+        fixture=fixture,
+        teams_payload=teams_payload,
+        normalized_snapshots=normalized_snapshots,
+        normalized_players=normalized_players,
+        weather=weather,
+        market_ts=market_ts,
+        validation=validation,
+        default_kickoff_utc=default_kickoff_utc,
+    )
 
 
 def main() -> None:
