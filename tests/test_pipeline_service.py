@@ -90,3 +90,89 @@ def test_run_pipeline_surfaces_predictable_stage_errors() -> None:
         assert exc_info.value.stage == stage
         assert str(exc_info.value) == f"Pipeline failed during '{stage}' stage."
         assert exc_info.value.__cause__ is not None
+
+
+def test_run_pipeline_skips_llm_enrichment_by_default() -> None:
+    pipeline_service = load_script_module("pipeline_service.py")
+    calls = {"llm": 0}
+    scored_payload = {"scores": [{"player": "A"}], "trace": {"picks": []}}
+
+    def enrich_with_llm(*, scored_payload, match_inputs):
+        calls["llm"] += 1
+        return scored_payload
+
+    report = pipeline_service.run_pipeline(
+        request={"match_query": "juve - milan today", "top_n": 1},
+        deps={
+            "parse_match_query": lambda _: SimpleNamespace(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            "build_match_input_request": lambda **_: {"request": True},
+            "collect_inputs": lambda _: {"match": {"id": "x"}},
+            "score_props": lambda **_: scored_payload,
+            "enrich_with_llm": enrich_with_llm,
+            "render_report": lambda **kwargs: kwargs["scored_props"][0]["player"],
+        },
+    )
+
+    assert report == "A"
+    assert calls["llm"] == 0
+
+
+def test_run_pipeline_invokes_llm_enrichment_when_requested() -> None:
+    pipeline_service = load_script_module("pipeline_service.py")
+    calls = {"llm": 0}
+    match_inputs = {"match": {"id": "x"}}
+    scored_payload = {"scores": [{"player": "A"}], "trace": {"picks": []}}
+
+    def enrich_with_llm(*, scored_payload, match_inputs):
+        calls["llm"] += 1
+        assert match_inputs == {"match": {"id": "x"}}
+        return {
+            "scores": [{"player": "A+"}],
+            "trace": {"picks": [], "notes": ["LLM enriched"]},
+        }
+
+    report = pipeline_service.run_pipeline(
+        request={"match_query": "juve - milan today", "top_n": 1, "use_llm": True},
+        deps={
+            "parse_match_query": lambda _: SimpleNamespace(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            "build_match_input_request": lambda **_: {"request": True},
+            "collect_inputs": lambda _: match_inputs,
+            "score_props": lambda **_: scored_payload,
+            "enrich_with_llm": enrich_with_llm,
+            "render_report": lambda **kwargs: kwargs["scored_props"][0]["player"],
+        },
+    )
+
+    assert report == "A+"
+    assert calls["llm"] == 1
+
+
+def test_run_pipeline_falls_back_when_llm_enrichment_fails() -> None:
+    pipeline_service = load_script_module("pipeline_service.py")
+    scored_payload = {"scores": [{"player": "A"}], "trace": {"picks": []}}
+
+    def enrich_with_llm(*, scored_payload, match_inputs):
+        raise RuntimeError("LLM unavailable")
+
+    captured = {}
+
+    def render_report(*, scored_props, match_inputs, availability_data, top_n: int, trace):
+        captured["scored_props"] = scored_props
+        captured["trace"] = trace
+        return "rendered fallback report"
+
+    report = pipeline_service.run_pipeline(
+        request={"match_query": "juve - milan today", "top_n": 1, "use_llm": True},
+        deps={
+            "parse_match_query": lambda _: SimpleNamespace(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            "build_match_input_request": lambda **_: {"request": True},
+            "collect_inputs": lambda _: {"match": {"id": "x"}},
+            "score_props": lambda **_: scored_payload,
+            "enrich_with_llm": enrich_with_llm,
+            "render_report": render_report,
+        },
+    )
+
+    assert report == "rendered fallback report"
+    assert captured["scored_props"] == [{"player": "A"}]
+    assert captured["trace"]["notes"] == ["LLM enrichment failed; using deterministic results."]
