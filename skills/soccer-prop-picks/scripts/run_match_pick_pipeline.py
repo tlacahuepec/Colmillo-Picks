@@ -29,14 +29,6 @@ class ParsedMatchQuery(tuple):
         return self[2]
 
 
-_SUPPORTED_TEAMS = {
-    "arsenal",
-    "liverpool",
-    "juve",
-    "milan",
-    "real madrid",
-    "barcelona",
-}
 _MIN_TOP_N = 1
 _MAX_TOP_N = 5
 
@@ -45,12 +37,7 @@ def _normalize_team_name(raw_team: str) -> str:
     parts = [part for part in raw_team.strip().split() if part]
     if not parts:
         raise ValueError("Team name cannot be empty")
-    team = " ".join(part.capitalize() for part in parts)
-    if team.lower() not in _SUPPORTED_TEAMS:
-        raise ValueError(
-            "Unknown teams in query. Supported examples include: juve, milan, arsenal, liverpool."
-        )
-    return team
+    return " ".join(part.capitalize() for part in parts)
 
 
 def _normalize_match_date(raw_date: str) -> str:
@@ -70,19 +57,34 @@ def _normalize_match_date(raw_date: str) -> str:
 
 
 def parse_match_query(match_query: str) -> ParsedMatchQuery:
-    """Parse '<home> - <away> <date>' into normalized components."""
+    """Parse free-form match query into normalized components."""
     text = match_query.strip()
-    pattern = re.compile(r"^(?P<home>.+?)\s*-\s*(?P<away>.+?)\s+(?P<date>\S+)$", re.IGNORECASE)
-    match = pattern.match(text)
-    if not match:
+    date_pattern = re.compile(r"\b(today|tomorrow|\d{4}-\d{2}-\d{2})\b", re.IGNORECASE)
+    date_match = date_pattern.search(text)
+    if not date_match:
         raise ValueError(
-            "Invalid match query format. Expected e.g. 'juve - milan today' or 'juve - milan 2026-05-03'."
+            "Invalid match date. Use 'today', 'tomorrow', or YYYY-MM-DD format."
+        )
+    date_token = date_match.group(1)
+
+    teams_text = (text[: date_match.start()] + text[date_match.end() :]).strip(" ,;")
+    teams_text = re.sub(r"\b(for|on)\s*$", "", teams_text, flags=re.IGNORECASE).strip()
+    team_parts: tuple[str, str] | None = None
+    for separator_pattern in (r"\s*-\s*", r"\s+vs\.?\s+", r"\s+v\.?\s+"):
+        parts = re.split(separator_pattern, teams_text, maxsplit=1, flags=re.IGNORECASE)
+        if len(parts) == 2:
+            team_parts = (parts[0], parts[1])
+            break
+
+    if not team_parts:
+        raise ValueError(
+            "Invalid match query format. Expected teams separated by '-', 'vs', or 'v'."
         )
 
     return ParsedMatchQuery((
-        _normalize_team_name(match.group("home")),
-        _normalize_team_name(match.group("away")),
-        _normalize_match_date(match.group("date")),
+        _normalize_team_name(team_parts[0]),
+        _normalize_team_name(team_parts[1]),
+        _normalize_match_date(date_token),
     ))
 
 
