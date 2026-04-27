@@ -65,7 +65,10 @@ def _normalize_team_name(team_name: str) -> str:
 
 
 def _normalize_match_date(match_date: str) -> str:
-    return datetime.strptime(match_date.strip(), "%Y-%m-%d").date().isoformat()
+    try:
+        return datetime.strptime(match_date.strip(), "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise ValueError("Match date must use YYYY-MM-DD format.") from exc
 
 
 def _deterministic_last5(seed: str) -> list[str]:

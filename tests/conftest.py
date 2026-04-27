@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
+
+import pytest
 from typing import Any
 
 
@@ -151,3 +153,13 @@ def sample_match_inputs() -> dict[str, Any]:
         ],
         "validation": {"critical_missing_fields": [], "should_reject_prediction": False},
     }
+
+
+@pytest.fixture
+def parsed_query_fixture() -> str:
+    return "juve - milan today"
+
+
+@pytest.fixture
+def resolved_match_date() -> str:
+    return datetime.now(timezone.utc).date().isoformat()

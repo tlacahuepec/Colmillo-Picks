@@ -28,11 +28,26 @@ class ParsedMatchQuery(tuple):
         return self[2]
 
 
+_SUPPORTED_TEAMS = {
+    "arsenal",
+    "liverpool",
+    "juve",
+    "milan",
+    "real madrid",
+    "barcelona",
+}
+
+
 def _normalize_team_name(raw_team: str) -> str:
     parts = [part for part in raw_team.strip().split() if part]
     if not parts:
         raise ValueError("Team name cannot be empty")
-    return " ".join(part.capitalize() for part in parts)
+    team = " ".join(part.capitalize() for part in parts)
+    if team.lower() not in _SUPPORTED_TEAMS:
+        raise ValueError(
+            "Unknown teams in query. Supported examples include: juve, milan, arsenal, liverpool."
+        )
+    return team
 
 
 def _normalize_match_date(raw_date: str) -> str:
@@ -54,7 +69,7 @@ def _normalize_match_date(raw_date: str) -> str:
 def parse_match_query(match_query: str) -> ParsedMatchQuery:
     """Parse '<home> - <away> <date>' into normalized components."""
     text = match_query.strip()
-    pattern = re.compile(r"^(?P<home>.+?)\s*-\s*(?P<away>.+?)\s+(?P<date>today|tomorrow|\d{4}-\d{2}-\d{2})$", re.IGNORECASE)
+    pattern = re.compile(r"^(?P<home>.+?)\s*-\s*(?P<away>.+?)\s+(?P<date>\S+)$", re.IGNORECASE)
     match = pattern.match(text)
     if not match:
         raise ValueError(

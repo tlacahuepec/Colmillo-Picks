@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from availability.mock_adapter import DeterministicMockAvailabilityAdapter
 
 from tests.conftest import load_script_module, sample_match_inputs
@@ -211,3 +214,18 @@ def test_fallback_mode_with_partial_adapter_data_marks_missing_picks_unknown() -
     assert "Underdog:available" in availability
     assert "| unavailable |" in availability
     assert "| unknown |" in availability
+
+
+def test_end_to_end_user_path_is_single_command_cli() -> None:
+    script = load_script_module("run_match_pick_pipeline.py").__file__
+
+    result = subprocess.run(
+        [sys.executable, script, "arsenal - liverpool today", "--top-n", "2"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    report = result.stdout
+    assert "Top 5 Recommended Picks" in report
+    assert "## 4) Availability Check" in report
