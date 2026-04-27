@@ -75,6 +75,8 @@
         "projected_lineup",
         "injuries",
         "suspensions",
+        "team_win_probability",
+        "last_5_results",
         "possession_profile",
         "standings_context"
       ],
@@ -106,6 +108,7 @@
           "type": "array",
           "items": { "$ref": "#/$defs/squadAvailabilityItem" }
         },
+        "team_win_probability": { "type": "number", "minimum": 0, "maximum": 1 },
         "last_5_results": {
           "type": "array",
           "minItems": 5,
