@@ -342,10 +342,13 @@ def _resolve_direction_and_recommendation(
     line: Any,
     confidence: str,
     min_confidence_for_bet: str,
+    guardrail_warnings: list[str],
     cfg: dict[str, Any],
 ) -> tuple[str, str, list[str]]:
     edge_cfg = cfg.get("global", {}).get("directional_edge", {})
     min_edge = float(edge_cfg.get("min_absolute_edge", 0.2))
+    guardrail_cfg = cfg.get("global", {}).get("guardrail_thresholds", {})
+    severe_warning_threshold = int(guardrail_cfg.get("severe_blocking_warning_count", 2))
 
     confidence_rank = {"low": 0, "medium": 1, "high": 2}
     confidence_ok = confidence_rank.get(confidence, 0) >= confidence_rank.get(min_confidence_for_bet, 1)
@@ -353,15 +356,19 @@ def _resolve_direction_and_recommendation(
     try:
         market_line = float(line)
     except (TypeError, ValueError):
-        return "no-bet", "no-bet", ["market_line_missing", "ambiguous_direction"]
+        return "over", "no-bet", ["market_line_missing"]
 
     edge = baseline - market_line
-    if abs(edge) < min_edge:
-        return "no-bet", "no-bet", ["insufficient_projection_edge", "ambiguous_direction"]
-
     direction = "over" if edge > 0 else "under"
+    if abs(edge) < min_edge:
+        return direction, "no-bet", ["insufficient_projection_edge"]
+
+    guardrail_warning_count = len(guardrail_warnings)
+    if guardrail_warning_count >= severe_warning_threshold:
+        return direction, "no-bet", ["severe_guardrail_conditions"]
+
     if not confidence_ok:
-        return "no-bet", "no-bet", ["below_confidence_threshold"]
+        return direction, "no-bet", ["below_confidence_threshold"]
     return direction, "bet", []
 
 
@@ -438,11 +445,16 @@ def _score_market_candidate(
 
     min_confidence_for_bet = str(cfg.get("global", {}).get("min_confidence_for_bet", "medium")).lower()
     line = player.get("market_lines", {}).get(market_type)
+    try:
+        directional_edge = round(baseline - float(line), 4)
+    except (TypeError, ValueError):
+        directional_edge = 0.0
     direction, recommendation, direction_flags = _resolve_direction_and_recommendation(
         baseline=baseline,
         line=line,
         confidence=confidence,
         min_confidence_for_bet=min_confidence_for_bet,
+        guardrail_warnings=list(blocking_warnings),
         cfg=cfg,
     )
     all_flags = sorted(set(all_flags + direction_flags))
@@ -468,6 +480,7 @@ def _score_market_candidate(
         "market": market_type,
         "line": line,
         "direction": direction,
+        "directional_edge": directional_edge,
         "score": round(overall_score, 4),
         "confidence": confidence,
         "recommendation": recommendation,
@@ -502,6 +515,7 @@ def _build_reasoning_trace(
                 "ambiguous_direction",
                 "below_confidence_threshold",
                 "market_line_missing",
+                "severe_guardrail_conditions",
             }
         ]
         minutes_signal = next((flag for flag in risk_tags if "minutes" in flag or "substitution" in flag), "stable_minutes")
