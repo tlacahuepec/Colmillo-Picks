@@ -8,6 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from collect_match_inputs import MatchInputRequest, collect_inputs
+from pipeline_service import run_pipeline
 from render_pick_report import render_report
 from score_player_props import score_props
 
@@ -83,29 +84,34 @@ def parse_match_query(match_query: str) -> ParsedMatchQuery:
     ))
 
 
-def main() -> None:
+def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run soccer prop pick pipeline for a match query.")
     parser.add_argument("match_query", help="Match query like 'juve - milan today'")
     parser.add_argument("--top-n", type=int, default=5, help="Number of picks to render")
-    args = parser.parse_args()
+    return parser.parse_args(argv)
 
-    parsed = parse_match_query(args.match_query)
-    match_inputs = collect_inputs(
-        MatchInputRequest(
+
+def build_dependency_bundle() -> dict[str, object]:
+    return {
+        "parse_match_query": parse_match_query,
+        "build_match_input_request": lambda *, parsed, competition: MatchInputRequest(
             home_team=parsed.home_team,
             away_team=parsed.away_team,
             match_date=parsed.match_date,
-            competition="League",
-        )
-    )
+            competition=competition,
+        ),
+        "collect_inputs": collect_inputs,
+        "score_props": score_props,
+        "render_report": render_report,
+    }
 
-    scored_payload = score_props(match_inputs=match_inputs, include_trace=True)
-    report = render_report(
-        scored_props=scored_payload["scores"],
-        match_inputs=match_inputs,
-        availability_data={},
-        top_n=args.top_n,
-        trace=scored_payload["trace"],
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_cli_args(argv)
+    deps = build_dependency_bundle()
+    report = run_pipeline(
+        request={"match_query": args.match_query, "top_n": args.top_n},
+        deps=deps,
     )
     print(report)
 
