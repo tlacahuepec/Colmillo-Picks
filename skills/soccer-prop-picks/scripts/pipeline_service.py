@@ -18,9 +18,18 @@ def _raise_stage_error(stage: str, exc: Exception) -> None:
     raise PipelineServiceError(stage=stage) from exc
 
 
+def _append_note(trace: dict[str, Any] | None, note: str) -> dict[str, Any]:
+    normalized_trace = dict(trace or {})
+    notes = list(normalized_trace.get("notes", []))
+    notes.append(note)
+    normalized_trace["notes"] = notes
+    return normalized_trace
+
+
 def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -> str:
-    """Run parse → collect → score → render and return a markdown report."""
+    """Run parse → collect → score → [optional llm] → render and return a markdown report."""
     top_n = int(request.get("top_n", 5))
+    use_llm = bool(request.get("use_llm", False))
 
     try:
         parsed = deps["parse_match_query"](request["match_query"])
@@ -41,6 +50,19 @@ def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -
         scored_payload = deps["score_props"](match_inputs=match_inputs, include_trace=True)
     except Exception as exc:  # pragma: no cover - intentionally broad boundary
         _raise_stage_error("score", exc)
+
+    if use_llm:
+        try:
+            scored_payload = deps["enrich_with_llm"](
+                scored_payload=scored_payload,
+                match_inputs=match_inputs,
+            )
+        except Exception:
+            scored_payload = dict(scored_payload)
+            scored_payload["trace"] = _append_note(
+                scored_payload.get("trace"),
+                "LLM enrichment failed; using deterministic results.",
+            )
 
     return deps["render_report"](
         scored_props=scored_payload["scores"],
