@@ -37,6 +37,8 @@ _SUPPORTED_TEAMS = {
     "real madrid",
     "barcelona",
 }
+_MIN_TOP_N = 1
+_MAX_TOP_N = 5
 
 
 def _normalize_team_name(raw_team: str) -> str:
@@ -84,10 +86,25 @@ def parse_match_query(match_query: str) -> ParsedMatchQuery:
     ))
 
 
+def _cli_top_n(raw_value: str) -> int:
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("top-n must be an integer") from exc
+    if not _MIN_TOP_N <= value <= _MAX_TOP_N:
+        raise argparse.ArgumentTypeError("top-n must be a positive integer between 1 and 5")
+    return value
+
+
 def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run soccer prop pick pipeline for a match query.")
     parser.add_argument("match_query", help="Match query like 'juve - milan today'")
-    parser.add_argument("--top-n", type=int, default=5, help="Number of picks to render")
+    parser.add_argument(
+        "--top-n",
+        type=_cli_top_n,
+        default=5,
+        help="Number of picks to render (1-5)",
+    )
     return parser.parse_args(argv)
 
 

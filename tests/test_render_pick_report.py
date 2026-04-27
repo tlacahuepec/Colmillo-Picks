@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.conftest import load_script_module, sample_match_inputs
 
 
@@ -126,3 +128,26 @@ def test_render_report_shows_under_direction_and_no_bet_label() -> None:
 
     assert "| 1 | Arsenal CM | ARS | passes | Under | BET | High |" in report
     assert "| 2 | Arsenal ST | ARS | shots | Under | NO-BET | Low |" in report
+
+
+@pytest.mark.parametrize("invalid_top_n", [0, -1])
+def test_render_report_rejects_non_positive_top_n_programmatically(invalid_top_n: int) -> None:
+    scorer = load_script_module("score_player_props.py")
+    renderer = load_script_module("render_pick_report.py")
+    match_inputs = sample_match_inputs()
+    scored = scorer.score_props(match_inputs)
+
+    with pytest.raises(ValueError, match="top_n must be between 1 and 5 inclusive"):
+        renderer.render_report(scored, match_inputs, availability_data={}, top_n=invalid_top_n)
+
+
+def test_render_report_honors_valid_top_n_row_count() -> None:
+    scorer = load_script_module("score_player_props.py")
+    renderer = load_script_module("render_pick_report.py")
+    match_inputs = sample_match_inputs()
+    scored = scorer.score_props(match_inputs)
+
+    report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=3)
+    top_picks_section = report.split("## 3) Top 5 Recommended Picks", 1)[1].split("## 4) Availability Check", 1)[0]
+    top_pick_rows = [line for line in top_picks_section.splitlines() if line.startswith("| 1 |") or line.startswith("| 2 |") or line.startswith("| 3 |")]
+    assert len(top_pick_rows) == 3

@@ -99,6 +99,21 @@ def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
     assert "| 1 |" in report
 
 
+@pytest.mark.parametrize("invalid_top_n", ["0", "-1"])
+def test_pipeline_cli_rejects_non_positive_top_n(invalid_top_n: str) -> None:
+    script = REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts" / "run_match_pick_pipeline.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script), "juve - milan today", "--top-n", invalid_top_n],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "top-n must be a positive integer" in result.stderr
+
+
 def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 

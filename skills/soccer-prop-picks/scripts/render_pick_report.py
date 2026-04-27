@@ -11,6 +11,8 @@ from typing import Any
 from availability.contract import standardize_availability_payload
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "templates" / "pick_report.md"
+_MIN_TOP_N = 1
+_MAX_TOP_N = 5
 
 
 def _fmt_pct(value: Any) -> str:
@@ -229,6 +231,11 @@ def _availability_rows(scored_props: list[dict[str, Any]], top_n: int, availabil
     return "\n".join(rows) if rows else "| 1 | n/a | n/a | unknown | none configured | unknown | n/a | yes (no picks) |"
 
 
+def _validate_top_n(top_n: int) -> None:
+    if not _MIN_TOP_N <= top_n <= _MAX_TOP_N:
+        raise ValueError("top_n must be between 1 and 5 inclusive")
+
+
 def render_report(
     scored_props: list[dict[str, Any]],
     match_inputs: dict[str, Any],
@@ -237,6 +244,7 @@ def render_report(
     trace: dict[str, Any] | None = None,
 ) -> str:
     """Render a markdown report for top picks."""
+    _validate_top_n(top_n)
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     availability_data = availability_data or {}
 
