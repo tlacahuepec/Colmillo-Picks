@@ -97,3 +97,39 @@ def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
     assert "Milan" in report
     assert "Top 5 Recommended Picks" in report
     assert "| 1 |" in report
+
+
+def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    captured: dict[str, object] = {}
+
+    def fake_parse_cli_args(argv=None):
+        captured["argv"] = argv
+        return type("Args", (), {"match_query": "juve - milan today", "top_n": 7})()
+
+    deps_bundle = {"deps": "bundle"}
+
+    def fake_build_dependency_bundle():
+        captured["build_called"] = True
+        return deps_bundle
+
+    def fake_run_pipeline(*, request, deps):
+        captured["request"] = request
+        captured["deps"] = deps
+        return "mock report"
+
+    def fake_print(value: str):
+        captured["printed"] = value
+
+    monkeypatch.setattr(pipeline, "parse_cli_args", fake_parse_cli_args)
+    monkeypatch.setattr(pipeline, "build_dependency_bundle", fake_build_dependency_bundle)
+    monkeypatch.setattr(pipeline, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("builtins.print", fake_print)
+
+    pipeline.main()
+
+    assert captured["build_called"] is True
+    assert captured["request"] == {"match_query": "juve - milan today", "top_n": 7}
+    assert captured["deps"] is deps_bundle
+    assert captured["printed"] == "mock report"
