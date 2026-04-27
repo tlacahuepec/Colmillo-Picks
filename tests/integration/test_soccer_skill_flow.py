@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from availability.mock_adapter import DeterministicMockAvailabilityAdapter
+
 from tests.conftest import load_script_module, sample_match_inputs
 
 
@@ -173,3 +175,39 @@ def test_trace_to_report_consistency_for_top_pick() -> None:
     top_pick = trace["picks"][0]
     assert top_pick["rationale"]["why_this_pick"] in report
     assert top_pick["rationale"]["primary_risks_summary"] in report
+
+
+def test_fallback_mode_with_partial_adapter_data_marks_missing_picks_unknown() -> None:
+    scorer = load_script_module("score_player_props.py")
+    renderer = load_script_module("render_pick_report.py")
+
+    match_inputs = sample_match_inputs()
+    scored = scorer.score_props(match_inputs)
+    top = scored[:5]
+    adapter = DeterministicMockAvailabilityAdapter(
+        seed_data={
+            f"{top[0]['player_id']}:{top[0]['market']}": {
+                "prizepicks": "unknown",
+                "alternatives": {"Underdog": "available"},
+                "retrieved_at_utc": "2026-04-27T12:00:00Z",
+            },
+            f"{top[1]['player_id']}:{top[1]['market']}": {
+                "prizepicks": "unavailable",
+                "alternatives": {"Underdog": "unavailable"},
+                "retrieved_at_utc": "2026-04-27T12:00:00Z",
+            },
+        },
+        fallback_mode=True,
+        fallback_reason="partial_platform_data",
+    )
+    availability_data = adapter.check_picks(
+        [{"player_id": item["player_id"], "market": item["market"]} for item in top]
+    )
+
+    report = renderer.render_report(scored_props=scored, match_inputs=match_inputs, availability_data=availability_data, top_n=5)
+    availability = _section(report, "## 4) Availability Check", "### Availability Fallback Behavior")
+
+    assert "yes (partial_platform_data)" in availability
+    assert "Underdog:available" in availability
+    assert "| unavailable |" in availability
+    assert "| unknown |" in availability
