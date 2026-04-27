@@ -63,13 +63,10 @@ def test_parse_match_query_rejects_malformed_query_format() -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 
     try:
-        pipeline.parse_match_query("juve vs milan today")
+        pipeline.parse_match_query("juve milan today")
         assert False, "Expected ValueError for malformed match query"
     except ValueError as exc:
-        assert str(exc) == (
-            "Invalid match query format. Expected e.g. 'juve - milan today' or "
-            "'juve - milan 2026-05-03'."
-        )
+        assert str(exc) == "Invalid match query format. Expected teams separated by '-', 'vs', or 'v'."
 
 
 def test_parse_match_query_rejects_invalid_iso_date_values() -> None:
@@ -80,6 +77,16 @@ def test_parse_match_query_rejects_invalid_iso_date_values() -> None:
         assert False, "Expected ValueError for invalid ISO date values"
     except ValueError as exc:
         assert str(exc) == "Invalid match date. Use 'today', 'tomorrow', or YYYY-MM-DD format."
+
+
+def test_parse_match_query_accepts_free_form_vs_input_for_unknown_teams() -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    parsed = pipeline.parse_match_query("bayern munich vs psg for tomorrow")
+
+    assert parsed.home_team == "Bayern Munich"
+    assert parsed.away_team == "Psg"
+    assert parsed.match_date == (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
 
 
 def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
