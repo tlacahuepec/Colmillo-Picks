@@ -1,0 +1,76 @@
+{
+  "global": {
+    "top_k": 5,
+    "contribution_floor": 0.0
+  },
+  "passes": {
+    "factor_weights": {
+      "minutes_sub_risk": 0.34,
+      "role_opportunity": 0.2,
+      "team_possession_opponent_style": 0.18,
+      "match_state_context": 0.1,
+      "weather_penalty": 0.08,
+      "market_agreement": 0.1
+    },
+    "role_scores": {
+      "CM": 1.0,
+      "CB": 0.88,
+      "DM": 0.84,
+      "WB": 0.72,
+      "AM": 0.68,
+      "DEF": 0.66,
+      "MID": 0.62,
+      "FWD": 0.38,
+      "GK": 0.2
+    }
+  },
+  "shots": {
+    "factor_weights": {
+      "minutes_sub_risk": 0.32,
+      "role_opportunity": 0.26,
+      "team_possession_opponent_style": 0.16,
+      "match_state_context": 0.1,
+      "weather_penalty": 0.06,
+      "market_agreement": 0.1
+    },
+    "role_scores": {
+      "ST": 1.0,
+      "CF": 0.95,
+      "LW": 0.79,
+      "RW": 0.79,
+      "AM": 0.7,
+      "FWD": 0.68,
+      "MID": 0.43,
+      "DEF": 0.22,
+      "GK": 0.05
+    },
+    "lone_striker_bonus": 0.12
+  },
+  "calibration": {
+    "substitution_risk": {
+      "low": 1.0,
+      "medium": 0.78,
+      "high": 0.52
+    },
+    "opponent_style_impact": {
+      "high_possession": -0.08,
+      "balanced": 0.0,
+      "direct_transition": 0.07,
+      "low_block_counter": 0.12
+    },
+    "motivation_bonus": {
+      "must_win": 0.16,
+      "title_race": 0.12,
+      "promotion_race": 0.1,
+      "europe_race": 0.08,
+      "relegation_battle": 0.06,
+      "midtable": 0.0
+    },
+    "weather": {
+      "rain_probability_threshold": 0.55,
+      "wind_kph_threshold": 28,
+      "pass_penalty": 0.16,
+      "shots_penalty": 0.05
+    }
+  }
+}
