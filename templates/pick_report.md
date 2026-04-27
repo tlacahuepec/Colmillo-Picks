@@ -1,5 +1,9 @@
 # Soccer Prop Pick Report
 
+> **Risk Disclaimer (Mandatory):**
+> This report is informational analysis only, not financial advice, and does not guarantee outcomes.
+> Sports outcomes and player usage can change rapidly; always verify market availability and your own risk tolerance before placing any wager.
+
 ## 1) Match Summary
 - **Fixture:** {{home_team}} vs {{away_team}}
 - **Competition Type:** {{competition_type}}
@@ -22,8 +26,8 @@
 {{candidate_evidence_rows}}
 
 ## 3) Top 5 Recommended Picks
-| Rank | Player | Team | Prop Type | O/U Direction | Confidence Tier | Primary Risks | Why This Pick |
-|---:|---|---|---|---|---|---|---|
+| Rank | Player | Team | Prop Type | O/U Direction | Outcome | Confidence Tier | Primary Risks | Why This Pick |
+|---:|---|---|---|---|---|---|---|---|
 {{top_5_pick_rows}}
 
 ## 4) Availability Check
@@ -40,6 +44,15 @@ When platform availability data cannot be fetched:
    - `unavailable` if all verified sources explicitly deny listing.
    - `unknown` if data retrieval fails or sources conflict.
 4. Record the retrieval attempt timestamp in UTC and include the blocking error in notes.
+
+## Guardrail Status
+Blocking warnings:
+{{guardrail_blocking_warnings}}
+
+## Audit Log
+| Model Version | Home Lineup Timestamp (UTC) | Away Lineup Timestamp (UTC) | Odds Timestamp (UTC) | Weather Timestamp (UTC) |
+|---|---|---|---|---|
+{{audit_log_rows}}
 
 ## Data Quality Notes
 - Missing fields: {{critical_missing_fields}}

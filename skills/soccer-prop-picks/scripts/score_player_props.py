@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,72 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.scoring_weights.j
 
 def _clip(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
     return max(minimum, min(maximum, value))
+
+
+def _parse_utc_timestamp(raw_value: Any) -> datetime | None:
+    if not raw_value:
+        return None
+    value = str(raw_value).strip()
+    if not value:
+        return None
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _degrade_confidence(confidence: str) -> str:
+    ladder = {"high": "medium", "medium": "low", "low": "low"}
+    return ladder.get(confidence, "low")
+
+
+def _required_freshness_timestamps(match_inputs: dict[str, Any]) -> dict[str, Any]:
+    teams = match_inputs.get("teams", [])
+    home = next((team for team in teams if team.get("home_away") == "home"), teams[0] if teams else {})
+    away = next((team for team in teams if team.get("home_away") == "away"), teams[1] if len(teams) > 1 else {})
+    return {
+        "home_lineup_timestamp_utc": home.get("projected_lineup", {}).get("source_timestamp_utc"),
+        "away_lineup_timestamp_utc": away.get("projected_lineup", {}).get("source_timestamp_utc"),
+        "odds_timestamp_utc": match_inputs.get("market", {}).get("source_timestamp_utc"),
+        "weather_timestamp_utc": match_inputs.get("match", {}).get("weather", {}).get("source_timestamp_utc"),
+    }
+
+
+def _evaluate_guardrails(match_inputs: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    now_utc = datetime.now(timezone.utc)
+    market_cfg = cfg.get("global", {}).get("market_freshness", {})
+    max_odds_age_minutes = int(market_cfg.get("max_odds_age_minutes", 30))
+    missing_fields: list[str] = []
+    blocking_warnings: list[str] = []
+
+    required_timestamps = _required_freshness_timestamps(match_inputs)
+    for field_name, raw_value in required_timestamps.items():
+        if _parse_utc_timestamp(raw_value) is None:
+            missing_fields.append(field_name)
+
+    teams = match_inputs.get("teams", [])
+    for team in teams:
+        lineup_status = str(team.get("projected_lineup", {}).get("status", "unknown")).lower()
+        if lineup_status != "confirmed":
+            team_name = str(team.get("team_name") or team.get("team_id") or "unknown_team")
+            blocking_warnings.append(f"lineup_unconfirmed:{team_name}")
+
+    odds_timestamp = _parse_utc_timestamp(required_timestamps.get("odds_timestamp_utc"))
+    if odds_timestamp is not None:
+        age_minutes = (now_utc - odds_timestamp).total_seconds() / 60.0
+        if age_minutes > max_odds_age_minutes:
+            blocking_warnings.append(f"odds_stale:{age_minutes:.1f}m_old")
+
+    return {
+        "required_timestamps": required_timestamps,
+        "blocking_warnings": sorted(set(blocking_warnings)),
+        "missing_freshness_timestamps": missing_fields,
+    }
 
 
 def _load_config(config_path: str | None = None) -> dict[str, Any]:
@@ -168,6 +235,7 @@ def _score_market_candidate(
     opponent = next((t for tid, t in teams_by_id.items() if tid != player.get("team_id")), {})
     match = match_inputs.get("match", {})
     market_block = match_inputs.get("market", {})
+    guardrails = match_inputs.get("guardrails", {})
 
     minutes_score, minutes_flags = _minutes_sub_score(player, cfg)
     role_score, role_flags = _role_score(player, market_type, cfg)
@@ -203,6 +271,18 @@ def _score_market_candidate(
         confidence = "medium"
 
     all_flags = sorted(set(minutes_flags + role_flags + poss_flags + state_flags + weather_flags + market_flags))
+    blocking_warnings = guardrails.get("blocking_warnings", [])
+    if blocking_warnings:
+        overall_score = _clip(overall_score - 0.12)
+        confidence = _degrade_confidence(confidence)
+        all_flags = sorted(set(all_flags + ["blocking_warning_active"] + list(blocking_warnings)))
+
+    min_confidence_for_bet = str(cfg.get("global", {}).get("min_confidence_for_bet", "medium")).lower()
+    confidence_rank = {"low": 0, "medium": 1, "high": 2}
+    recommendation = "bet"
+    if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence_for_bet, 1):
+        recommendation = "no-bet"
+        all_flags = sorted(set(all_flags + ["below_confidence_threshold"]))
     explainability = {
         "top_contributing_factors": _build_factor_payload(
             factors,
@@ -222,8 +302,10 @@ def _score_market_candidate(
         "direction": "over",
         "score": round(overall_score, 4),
         "confidence": confidence,
+        "recommendation": recommendation,
         "baseline_projection": round(baseline, 4),
         "market_agreement_score": round(market_score, 4),
+        "model_version": str(cfg.get("global", {}).get("model_version", "unknown")),
         "explainability": explainability,
     }
 
@@ -231,6 +313,13 @@ def _score_market_candidate(
 def score_props(match_inputs: dict[str, Any], config_path: str | None = None) -> list[dict[str, Any]]:
     """Return top-five scored props for a requested match."""
     cfg = _load_config(config_path)
+    guardrails = _evaluate_guardrails(match_inputs, cfg)
+    if guardrails["missing_freshness_timestamps"]:
+        raise ValueError(
+            "Missing required freshness timestamps: "
+            + ", ".join(guardrails["missing_freshness_timestamps"])
+        )
+    match_inputs["guardrails"] = guardrails
 
     players = match_inputs.get("players", [])
     teams_by_id = _team_index(match_inputs)
@@ -244,7 +333,13 @@ def score_props(match_inputs: dict[str, Any], config_path: str | None = None) ->
     top_k = int(cfg["global"].get("top_k", 5))
     if len(candidates) < top_k:
         raise ValueError(f"Need at least {top_k} scored candidates, found {len(candidates)}")
-    return candidates[:top_k]
+    selected = candidates[:top_k]
+    for candidate in selected:
+        candidate["guardrails"] = {
+            "blocking_warnings": guardrails["blocking_warnings"],
+            "required_timestamps": guardrails["required_timestamps"],
+        }
+    return selected
 
 
 def main() -> None:
