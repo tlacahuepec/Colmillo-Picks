@@ -58,6 +58,8 @@ def sample_match_inputs() -> dict[str, Any]:
                 },
                 "injuries": [{"player_name": "Injured A", "reason": "hamstring", "status": "out"}],
                 "suspensions": [],
+                "team_win_probability": 0.49,
+                "last_5_results": ["W", "W", "D", "L", "W"],
                 "possession_profile": {"avg_possession_pct": 58, "style_tag": "high_possession"},
                 "standings_context": {
                     "table_position": 2,
@@ -78,6 +80,8 @@ def sample_match_inputs() -> dict[str, Any]:
                 },
                 "injuries": [],
                 "suspensions": [{"player_name": "Suspended B", "reason": "red_card", "status": "suspended"}],
+                "team_win_probability": 0.26,
+                "last_5_results": ["W", "D", "L", "W", "D"],
                 "possession_profile": {"avg_possession_pct": 54, "style_tag": "high_possession"},
                 "standings_context": {
                     "table_position": 3,

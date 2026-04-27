@@ -186,6 +186,56 @@ def _match_state_score(match: dict[str, Any], team: dict[str, Any], cfg: dict[st
     return score, flags
 
 
+def _win_probability_context_score(team: dict[str, Any], opponent: dict[str, Any]) -> tuple[float, list[str]]:
+    team_prob = float(team.get("team_win_probability", 0.5))
+    opp_prob = float(opponent.get("team_win_probability", 0.5))
+    win_prob_component = (team_prob - 0.5) * 0.8
+    matchup_edge_component = (team_prob - opp_prob) * 0.2
+    score = _clip(0.5 + win_prob_component + matchup_edge_component)
+
+    flags: list[str] = []
+    if team_prob < 0.33:
+        flags.append("low_team_win_probability")
+    if team_prob > 0.62:
+        flags.append("strong_favorite_context")
+    return score, flags
+
+
+def _last_5_form_momentum_score(team: dict[str, Any]) -> tuple[float, list[str]]:
+    results = team.get("last_5_results") or []
+    if not isinstance(results, list) or len(results) != 5:
+        return 0.5, ["missing_last_5_results"]
+
+    points_map = {"W": 1.0, "D": 0.5, "L": 0.0}
+    recency_weights = [0.12, 0.16, 0.2, 0.24, 0.28]
+    weighted_score = 0.0
+    for result, weight in zip(results, recency_weights):
+        weighted_score += points_map.get(str(result).upper(), 0.25) * weight
+    score = _clip(weighted_score)
+
+    flags: list[str] = []
+    wins = sum(1 for item in results if str(item).upper() == "W")
+    if wins >= 4:
+        flags.append("strong_last_5_form")
+    if wins == 0:
+        flags.append("poor_last_5_form")
+    return score, flags
+
+
+def _home_away_adjustment_score(team: dict[str, Any], cfg: dict[str, Any]) -> tuple[float, list[str]]:
+    home_away_cfg = cfg.get("calibration", {}).get("home_away", {})
+    home_bonus = float(home_away_cfg.get("home_bonus", 0.08))
+    away_penalty = float(home_away_cfg.get("away_penalty", 0.06))
+    venue_context = str(team.get("home_away", "away")).lower()
+
+    base = 0.5
+    if venue_context == "home":
+        return _clip(base + home_bonus), ["home_context"]
+    if venue_context == "away":
+        return _clip(base - away_penalty), ["away_context"]
+    return base, ["unknown_venue_context"]
+
+
 def _weather_score(match: dict[str, Any], market_type: str, cfg: dict[str, Any]) -> tuple[float, list[str]]:
     weather = match.get("weather", {})
     rain_prob = float(weather.get("precipitation_probability", 0.0))
@@ -240,6 +290,9 @@ def _score_market_candidate(
     minutes_score, minutes_flags = _minutes_sub_score(player, cfg)
     role_score, role_flags = _role_score(player, market_type, cfg)
     poss_score, poss_flags = _possession_opponent_style_score(team, opponent, cfg)
+    win_prob_score, win_prob_flags = _win_probability_context_score(team, opponent)
+    form_score, form_flags = _last_5_form_momentum_score(team)
+    home_away_score, home_away_flags = _home_away_adjustment_score(team, cfg)
     state_score, state_flags = _match_state_score(match, team, cfg)
     weather_score, weather_flags = _weather_score(match, market_type, cfg)
     market_score, market_flags = _market_agreement(player, market_block)
@@ -252,6 +305,9 @@ def _score_market_candidate(
             "score": poss_score,
             "weight": float(weights["team_possession_opponent_style"]),
         },
+        "win_probability_context": {"score": win_prob_score, "weight": float(weights["win_probability_context"])},
+        "last_5_form_momentum": {"score": form_score, "weight": float(weights["last_5_form_momentum"])},
+        "home_away_adjustment": {"score": home_away_score, "weight": float(weights["home_away_adjustment"])},
         "match_state_context": {"score": state_score, "weight": float(weights["match_state_context"])},
         "weather_penalty": {"score": weather_score, "weight": float(weights["weather_penalty"])},
         "market_agreement": {"score": market_score, "weight": float(weights["market_agreement"])},
@@ -270,7 +326,19 @@ def _score_market_candidate(
     elif overall_score >= 0.6:
         confidence = "medium"
 
-    all_flags = sorted(set(minutes_flags + role_flags + poss_flags + state_flags + weather_flags + market_flags))
+    all_flags = sorted(
+        set(
+            minutes_flags
+            + role_flags
+            + poss_flags
+            + win_prob_flags
+            + form_flags
+            + home_away_flags
+            + state_flags
+            + weather_flags
+            + market_flags
+        )
+    )
     blocking_warnings = guardrails.get("blocking_warnings", [])
     if blocking_warnings:
         overall_score = _clip(overall_score - 0.12)
@@ -288,6 +356,11 @@ def _score_market_candidate(
             factors,
             float(cfg["global"].get("contribution_floor", 0.0)),
         )[:3],
+        "context_signals": {
+            "win_probability_context": round(win_prob_score, 4),
+            "last_5_form_momentum": round(form_score, 4),
+            "home_away_adjustment": round(home_away_score, 4),
+        },
         "risk_flags": all_flags,
     }
 
