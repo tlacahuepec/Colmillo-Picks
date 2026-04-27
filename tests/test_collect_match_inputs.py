@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+from tests.conftest import load_script_module
+from tests.test_input_schema_contract import _validate_payload
+
+
+def test_collect_inputs_produces_schema_compatible_complete_payload() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(
+            home_team="Arsenal",
+            away_team="Liverpool",
+            match_date="2026-05-03",
+            competition="Premier League",
+        )
+    )
+
+    assert _validate_payload(payload) == []
+    assert payload["validation"]["critical_missing_fields"] == []
+    assert payload["validation"]["should_reject_prediction"] is False
+    assert len(payload["market"]["sportsbook_snapshots"]) >= 2
+    assert all("captured_at_utc" in snap for snap in payload["market"]["sportsbook_snapshots"])
+
+
+class _MissingFixtureProvider:
+    def lookup_fixture(self, request):
+        return None
+
+
+class _SparseLineupProvider:
+    def get_lineups_and_availability(self, fixture):
+        return {
+            "teams": {
+                "home": {"status": "unknown", "formation": "unknown", "starters": []},
+                "away": {"status": "unknown", "formation": "unknown", "starters": []},
+            },
+            "players": [],
+        }
+
+
+class _SparseOddsProvider:
+    def get_odds_snapshots(self, fixture):
+        return {"sportsbook_snapshots": [{"source": "book1", "odds_decimal": 1.9}]}
+
+
+class _MissingWeatherProvider:
+    def get_weather(self, fixture):
+        return None
+
+
+def test_collect_inputs_fallbacks_are_transparent_and_flagged() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+        fixture_provider=_MissingFixtureProvider(),
+        lineup_provider=_SparseLineupProvider(),
+        odds_provider=_SparseOddsProvider(),
+        weather_provider=_MissingWeatherProvider(),
+    )
+
+    assert _validate_payload(payload) == []
+    assert "match" in payload["validation"]["critical_missing_fields"]
+    assert "market.sportsbook_snapshots" in payload["validation"]["critical_missing_fields"]
+    assert "players" in payload["validation"]["critical_missing_fields"]
+    assert payload["validation"]["should_reject_prediction"] is True
+    assert "fallback" in payload["validation"]["notes"].lower()
+
+
+def test_collect_inputs_prefers_parsed_fields_and_competition_hints() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(
+            home_team="raw home",
+            away_team="raw away",
+            match_date="2026-05-03",
+            competition="League",
+            parsed_home_team="Real Madrid",
+            parsed_away_team="Barcelona",
+            parsed_match_date="2026-05-04",
+            competition_hints=["La Liga", "Spain"],
+        )
+    )
+
+    assert payload["competition"] == "La Liga"
+    assert payload["teams"][0]["team_name"] == "Real Madrid"
+    assert payload["teams"][1]["team_name"] == "Barcelona"
+    assert payload["match"]["kickoff_utc"].startswith("2026-05-04")
