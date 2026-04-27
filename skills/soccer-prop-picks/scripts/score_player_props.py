@@ -377,14 +377,13 @@ def _score_market_candidate(
     market_type: str,
     match_inputs: dict[str, Any],
     teams_by_id: dict[str, dict[str, Any]],
+    guardrails: dict[str, Any],
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
     team = teams_by_id.get(player.get("team_id"), {})
     opponent = next((t for tid, t in teams_by_id.items() if tid != player.get("team_id")), {})
     match = match_inputs.get("match", {})
     market_block = match_inputs.get("market", {})
-    guardrails = match_inputs.get("guardrails", {})
-
     minutes_score, minutes_flags = _minutes_sub_score(player, cfg)
     role_score, role_flags = _role_score(player, market_type, cfg)
     poss_score, poss_flags = _possession_opponent_style_score(team, opponent, cfg)
@@ -573,15 +572,14 @@ def score_props(
             "Missing required freshness timestamps: "
             + ", ".join(guardrails["missing_freshness_timestamps"])
         )
-    match_inputs["guardrails"] = guardrails
 
     players = match_inputs.get("players", [])
     teams_by_id = _team_index(match_inputs)
     candidates: list[dict[str, Any]] = []
 
     for player in players:
-        candidates.append(_score_market_candidate(player, "passes", match_inputs, teams_by_id, cfg))
-        candidates.append(_score_market_candidate(player, "shots", match_inputs, teams_by_id, cfg))
+        candidates.append(_score_market_candidate(player, "passes", match_inputs, teams_by_id, guardrails, cfg))
+        candidates.append(_score_market_candidate(player, "shots", match_inputs, teams_by_id, guardrails, cfg))
 
     candidates.sort(key=lambda item: item["score"], reverse=True)
     top_k = int(cfg["global"].get("top_k", 5))

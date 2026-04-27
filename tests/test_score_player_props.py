@@ -54,6 +54,30 @@ def test_score_props_can_optionally_emit_reasoning_trace() -> None:
         assert isinstance(pick["rationale"]["why_this_pick"], str)
 
 
+def test_score_props_does_not_mutate_match_inputs() -> None:
+    scorer = load_script_module("score_player_props.py")
+    match_inputs = sample_match_inputs()
+    original = copy.deepcopy(match_inputs)
+
+    scorer.score_props(match_inputs)
+
+    assert match_inputs == original
+    assert "guardrails" not in match_inputs
+
+
+def test_score_props_is_stable_across_repeated_calls_with_same_input() -> None:
+    scorer = load_script_module("score_player_props.py")
+    match_inputs = sample_match_inputs()
+    original = copy.deepcopy(match_inputs)
+
+    first = scorer.score_props(match_inputs)
+    second = scorer.score_props(match_inputs)
+
+    assert first == second
+    assert match_inputs == original
+    assert "guardrails" not in match_inputs
+
+
 def test_unconfirmed_lineup_creates_blocking_warning_flag() -> None:
     scorer = load_script_module("score_player_props.py")
     match_inputs = sample_match_inputs()
