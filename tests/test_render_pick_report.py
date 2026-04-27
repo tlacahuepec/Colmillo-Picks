@@ -27,3 +27,46 @@ def test_render_report_includes_required_sections() -> None:
     assert "## 4) Availability Check" in report
     assert "Arsenal" in report
     assert "Liverpool" in report
+
+
+def test_render_report_shows_under_direction_and_no_bet_label() -> None:
+    renderer = load_script_module("render_pick_report.py")
+    match_inputs = sample_match_inputs()
+    scored = [
+        {
+            "player": "Arsenal CM",
+            "player_id": "ars-8",
+            "team_id": "ARS",
+            "market": "passes",
+            "line": 61.5,
+            "direction": "under",
+            "recommendation": "bet",
+            "confidence": "high",
+            "baseline_projection": 54.0,
+            "model_version": "test",
+            "explainability": {
+                "risk_flags": ["test_flag"],
+                "top_contributing_factors": [{"factor": "role_opportunity", "score": 0.9}],
+            },
+            "guardrails": {"blocking_warnings": [], "required_timestamps": {}},
+        },
+        {
+            "player": "Arsenal ST",
+            "player_id": "ars-9",
+            "team_id": "ARS",
+            "market": "shots",
+            "line": 2.5,
+            "direction": "under",
+            "recommendation": "no-bet",
+            "confidence": "low",
+            "baseline_projection": 2.5,
+            "model_version": "test",
+            "explainability": {"risk_flags": ["ambiguous_direction"], "top_contributing_factors": []},
+            "guardrails": {"blocking_warnings": [], "required_timestamps": {}},
+        },
+    ]
+
+    report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=2)
+
+    assert "| 1 | Arsenal CM | ARS | passes | Under | BET | High |" in report
+    assert "| 2 | Arsenal ST | ARS | shots | No Bet | NO-BET | Low |" in report

@@ -101,3 +101,47 @@ def test_new_context_factors_can_surface_in_top_contributors() -> None:
     top_factor_names = {item["factor"] for item in candidate["explainability"]["top_contributing_factors"]}
 
     assert top_factor_names & {"win_probability_context", "last_5_form_momentum", "home_away_adjustment"}
+
+
+def test_clear_over_edge_sets_over_direction_and_bet() -> None:
+    scorer = load_script_module("score_player_props.py")
+    match_inputs = sample_match_inputs()
+    player = next(item for item in match_inputs["players"] if item["player_id"] == "ars-8")
+    player["expected_passes_baseline"] = 72.0
+    player["market_lines"]["passes"] = 61.5
+
+    results = scorer.score_props(match_inputs)
+    candidate = _get_candidate(results, "ars-8", "passes")
+
+    assert candidate["direction"] == "over"
+    assert candidate["recommendation"] == "bet"
+
+
+def test_clear_under_edge_sets_under_direction_and_bet() -> None:
+    scorer = load_script_module("score_player_props.py")
+    match_inputs = sample_match_inputs()
+    player = next(item for item in match_inputs["players"] if item["player_id"] == "ars-8")
+    player["expected_passes_baseline"] = 49.0
+    player["market_lines"]["passes"] = 61.5
+
+    results = scorer.score_props(match_inputs)
+    candidate = _get_candidate(results, "ars-8", "passes")
+
+    assert candidate["direction"] == "under"
+    assert candidate["recommendation"] == "bet"
+
+
+def test_no_edge_returns_no_bet_with_ambiguous_flags() -> None:
+    scorer = load_script_module("score_player_props.py")
+    match_inputs = sample_match_inputs()
+    player = next(item for item in match_inputs["players"] if item["player_id"] == "ars-8")
+    player["expected_passes_baseline"] = 61.55
+    player["market_lines"]["passes"] = 61.5
+
+    results = scorer.score_props(match_inputs)
+    candidate = _get_candidate(results, "ars-8", "passes")
+
+    assert candidate["direction"] == "no-bet"
+    assert candidate["recommendation"] == "no-bet"
+    assert "insufficient_projection_edge" in candidate["explainability"]["risk_flags"]
+    assert "ambiguous_direction" in candidate["explainability"]["risk_flags"]

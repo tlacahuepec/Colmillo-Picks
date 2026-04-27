@@ -274,6 +274,35 @@ def _build_factor_payload(factors: dict[str, dict[str, Any]], contribution_floor
     ]
 
 
+def _resolve_direction_and_recommendation(
+    *,
+    baseline: float,
+    line: Any,
+    confidence: str,
+    min_confidence_for_bet: str,
+    cfg: dict[str, Any],
+) -> tuple[str, str, list[str]]:
+    edge_cfg = cfg.get("global", {}).get("directional_edge", {})
+    min_edge = float(edge_cfg.get("min_absolute_edge", 0.2))
+
+    confidence_rank = {"low": 0, "medium": 1, "high": 2}
+    confidence_ok = confidence_rank.get(confidence, 0) >= confidence_rank.get(min_confidence_for_bet, 1)
+
+    try:
+        market_line = float(line)
+    except (TypeError, ValueError):
+        return "no-bet", "no-bet", ["market_line_missing", "ambiguous_direction"]
+
+    edge = baseline - market_line
+    if abs(edge) < min_edge:
+        return "no-bet", "no-bet", ["insufficient_projection_edge", "ambiguous_direction"]
+
+    direction = "over" if edge > 0 else "under"
+    if not confidence_ok:
+        return "no-bet", "no-bet", ["below_confidence_threshold"]
+    return direction, "bet", []
+
+
 def _score_market_candidate(
     player: dict[str, Any],
     market_type: str,
@@ -346,11 +375,15 @@ def _score_market_candidate(
         all_flags = sorted(set(all_flags + ["blocking_warning_active"] + list(blocking_warnings)))
 
     min_confidence_for_bet = str(cfg.get("global", {}).get("min_confidence_for_bet", "medium")).lower()
-    confidence_rank = {"low": 0, "medium": 1, "high": 2}
-    recommendation = "bet"
-    if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence_for_bet, 1):
-        recommendation = "no-bet"
-        all_flags = sorted(set(all_flags + ["below_confidence_threshold"]))
+    line = player.get("market_lines", {}).get(market_type)
+    direction, recommendation, direction_flags = _resolve_direction_and_recommendation(
+        baseline=baseline,
+        line=line,
+        confidence=confidence,
+        min_confidence_for_bet=min_confidence_for_bet,
+        cfg=cfg,
+    )
+    all_flags = sorted(set(all_flags + direction_flags))
     explainability = {
         "top_contributing_factors": _build_factor_payload(
             factors,
@@ -371,8 +404,8 @@ def _score_market_candidate(
         "player": player.get("player_name"),
         "team_id": player.get("team_id"),
         "market": market_type,
-        "line": player.get("market_lines", {}).get(market_type),
-        "direction": "over",
+        "line": line,
+        "direction": direction,
         "score": round(overall_score, 4),
         "confidence": confidence,
         "recommendation": recommendation,
