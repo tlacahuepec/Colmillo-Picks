@@ -25,9 +25,45 @@ This repository includes both unit tests and an integration test:
 
 - Unit tests: scoring behavior and report rendering.
 - Integration test: end-to-end flow from scoring to report generation.
+- CLI integration test: runs the scoring and rendering scripts as a user would from the terminal.
 
 Run tests:
 
 ```bash
 pytest -q
+```
+
+## Run the program from the CLI
+
+You can run the full scoring + report flow directly with the Python scripts.
+
+1) Build an input payload JSON file (matching `docs/schemas/soccer_pick_input.schema.json`):
+
+```bash
+python -c 'import json; from tests.conftest import sample_match_inputs; print(json.dumps(sample_match_inputs()))' \
+  > /tmp/match-input.json
+```
+
+2) Score props from the input payload:
+
+```bash
+python skills/soccer-prop-picks/scripts/score_player_props.py \
+  --input-json "$(cat /tmp/match-input.json)" \
+  --emit-trace > /tmp/scored-with-trace.json
+```
+
+3) Render the markdown report:
+
+```bash
+python skills/soccer-prop-picks/scripts/render_pick_report.py \
+  --input-json "$(python -c 'import json; print(json.dumps(json.load(open("/tmp/scored-with-trace.json"))["scores"]))')" \
+  --match-input-json "$(cat /tmp/match-input.json)" \
+  --trace-json "$(python -c 'import json; print(json.dumps(json.load(open("/tmp/scored-with-trace.json"))["trace"]))')" \
+  > /tmp/pick-report.md
+```
+
+4) Open the report:
+
+```bash
+cat /tmp/pick-report.md
 ```
