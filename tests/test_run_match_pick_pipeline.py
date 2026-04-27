@@ -37,6 +37,29 @@ def test_parse_match_query_with_iso_date() -> None:
     assert parsed.match_date == "2026-05-03"
 
 
+def test_parse_match_query_rejects_malformed_query_format() -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    try:
+        pipeline.parse_match_query("juve vs milan today")
+        assert False, "Expected ValueError for malformed match query"
+    except ValueError as exc:
+        assert str(exc) == (
+            "Invalid match query format. Expected e.g. 'juve - milan today' or "
+            "'juve - milan 2026-05-03'."
+        )
+
+
+def test_parse_match_query_rejects_invalid_iso_date_values() -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    try:
+        pipeline.parse_match_query("juve - milan 2026-99-99")
+        assert False, "Expected ValueError for invalid ISO date values"
+    except ValueError as exc:
+        assert str(exc) == "Invalid match date. Use 'today', 'tomorrow', or YYYY-MM-DD format."
+
+
 def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
     script = REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts" / "run_match_pick_pipeline.py"
 
