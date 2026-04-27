@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://colmillo-picks/schemas/llm_pick_explanation.schema.json",
+  "title": "LLMPickExplanation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "player_id",
+    "market_type",
+    "recommended_side",
+    "confidence_band",
+    "rationale",
+    "risk_flags"
+  ],
+  "properties": {
+    "player_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "market_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recommended_side": {
+      "type": "string",
+      "enum": ["over", "under"]
+    },
+    "confidence_band": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "risk_flags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
