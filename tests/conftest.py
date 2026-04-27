@@ -27,6 +27,7 @@ def _now_utc_z() -> str:
 def sample_match_inputs() -> dict[str, Any]:
     ts = _now_utc_z()
     return {
+        "schema_version": "v1.1.0",
         "match_id": "EPL-ARS-LIV-2026-04-27",
         "competition": "Premier League",
         "match": {
@@ -55,7 +56,7 @@ def sample_match_inputs() -> dict[str, Any]:
                     "starters": ["Player A", "Player B"],
                     "source_timestamp_utc": ts,
                 },
-                "injuries": [{"player_name": "Injured A", "status": "out"}],
+                "injuries": [{"player_name": "Injured A", "reason": "hamstring", "status": "out"}],
                 "suspensions": [],
                 "possession_profile": {"avg_possession_pct": 58, "style_tag": "high_possession"},
                 "standings_context": {
@@ -76,13 +77,13 @@ def sample_match_inputs() -> dict[str, Any]:
                     "source_timestamp_utc": ts,
                 },
                 "injuries": [],
-                "suspensions": [{"player_name": "Suspended B", "status": "suspended"}],
+                "suspensions": [{"player_name": "Suspended B", "reason": "red_card", "status": "suspended"}],
                 "possession_profile": {"avg_possession_pct": 54, "style_tag": "high_possession"},
                 "standings_context": {
                     "table_position": 3,
                     "points": 70,
                     "games_played": 33,
-                    "motivation_tag": "top4_race",
+                    "motivation_tag": "europe_race",
                 },
             },
         ],

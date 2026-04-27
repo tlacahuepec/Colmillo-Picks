@@ -2,79 +2,43 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://colmillo-picks/schemas/soccer_pick_input.schema.json",
   "title": "Soccer Pick Input Schema",
-  "description": "Stable input contract for generating soccer picks across match, team, player, and market contexts.",
+  "description": "Canonical input contract consumed by score_player_props.py and render_pick_report.py.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "match",
-    "teams",
-    "players",
-    "market"
-  ],
+  "required": ["schema_version", "match", "teams", "players", "market", "validation"],
   "properties": {
     "schema_version": {
       "type": "string",
-      "description": "Semver for backward/forward compatibility of consuming scripts.",
       "pattern": "^v\\d+\\.\\d+\\.\\d+$"
     },
-    "match": {
-      "$ref": "#/$defs/match"
-    },
+    "match_id": { "type": "string" },
+    "competition": { "type": "string" },
+    "match": { "$ref": "#/$defs/match" },
     "teams": {
       "type": "array",
-      "description": "Exactly two teams in the fixture.",
       "minItems": 2,
       "maxItems": 2,
-      "items": {
-        "$ref": "#/$defs/team"
-      }
+      "items": { "$ref": "#/$defs/team" }
     },
     "players": {
       "type": "array",
-      "description": "Player-level signals used by the pick model.",
       "minItems": 1,
-      "items": {
-        "$ref": "#/$defs/player"
-      }
+      "items": { "$ref": "#/$defs/player" }
     },
-    "market": {
-      "$ref": "#/$defs/market"
-    },
-    "validation": {
-      "$ref": "#/$defs/validation"
-    }
+    "market": { "$ref": "#/$defs/market" },
+    "validation": { "$ref": "#/$defs/validation" }
   },
   "$defs": {
     "match": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "competition_type",
-        "is_elimination",
-        "overtime_possible",
-        "kickoff_utc",
-        "venue",
-        "weather"
-      ],
+      "required": ["competition_type", "is_elimination", "overtime_possible", "kickoff_utc", "venue", "weather"],
       "properties": {
-        "competition_type": {
-          "type": "string",
-          "description": "Stable competition bucket (e.g., league, cup, friendly, continental)."
-        },
-        "is_elimination": {
-          "type": "boolean",
-          "description": "True when winner must be decided over this tie format."
-        },
-        "overtime_possible": {
-          "type": "boolean",
-          "description": "Whether extra time can occur and affect minutes/markets."
-        },
-        "kickoff_utc": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Kickoff timestamp in UTC."
-        },
+        "match_id": { "type": "string" },
+        "competition_type": { "type": "string" },
+        "is_elimination": { "type": "boolean" },
+        "overtime_possible": { "type": "boolean" },
+        "kickoff_utc": { "type": "string", "format": "date-time" },
         "venue": {
           "type": "object",
           "additionalProperties": false,
@@ -90,16 +54,13 @@
         "weather": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["summary", "temperature_c", "wind_kph", "precipitation_probability"],
+          "required": ["summary", "temperature_c", "wind_kph", "precipitation_probability", "source_timestamp_utc"],
           "properties": {
             "summary": { "type": "string" },
             "temperature_c": { "type": "number" },
             "wind_kph": { "type": "number", "minimum": 0 },
-            "precipitation_probability": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            }
+            "precipitation_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+            "source_timestamp_utc": { "type": "string", "format": "date-time" }
           }
         }
       }
@@ -114,75 +75,52 @@
         "projected_lineup",
         "injuries",
         "suspensions",
-        "last_5_results",
         "possession_profile",
         "standings_context"
       ],
       "properties": {
         "team_id": { "type": "string" },
         "team_name": { "type": "string" },
-        "home_away": {
-          "type": "string",
-          "enum": ["home", "away"]
-        },
+        "home_away": { "type": "string", "enum": ["home", "away"] },
         "projected_lineup": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status", "formation", "starters"],
+          "required": ["status", "formation", "starters", "source_timestamp_utc"],
           "properties": {
-            "status": {
-              "type": "string",
-              "enum": ["confirmed", "projected", "unknown"]
-            },
+            "status": { "type": "string", "enum": ["confirmed", "projected", "unknown"] },
             "formation": { "type": "string" },
             "starters": {
               "type": "array",
               "items": { "type": "string" },
               "minItems": 0,
               "maxItems": 11
-            }
+            },
+            "source_timestamp_utc": { "type": "string", "format": "date-time" }
           }
         },
         "injuries": {
           "type": "array",
-          "items": {
-            "$ref": "#/$defs/squadAvailabilityItem"
-          }
+          "items": { "$ref": "#/$defs/squadAvailabilityItem" }
         },
         "suspensions": {
           "type": "array",
-          "items": {
-            "$ref": "#/$defs/squadAvailabilityItem"
-          }
+          "items": { "$ref": "#/$defs/squadAvailabilityItem" }
         },
         "last_5_results": {
           "type": "array",
-          "description": "Most recent first; use W/D/L tokens.",
           "minItems": 5,
           "maxItems": 5,
-          "items": {
-            "type": "string",
-            "enum": ["W", "D", "L"]
-          }
+          "items": { "type": "string", "enum": ["W", "D", "L"] }
         },
         "possession_profile": {
           "type": "object",
           "additionalProperties": false,
           "required": ["avg_possession_pct", "style_tag"],
           "properties": {
-            "avg_possession_pct": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 100
-            },
+            "avg_possession_pct": { "type": "number", "minimum": 0, "maximum": 100 },
             "style_tag": {
               "type": "string",
-              "enum": [
-                "high_possession",
-                "balanced",
-                "direct_transition",
-                "low_block_counter"
-              ]
+              "enum": ["high_possession", "balanced", "direct_transition", "low_block_counter"]
             }
           }
         },
@@ -196,14 +134,7 @@
             "games_played": { "type": "integer", "minimum": 0 },
             "motivation_tag": {
               "type": "string",
-              "enum": [
-                "title_race",
-                "promotion_race",
-                "europe_race",
-                "midtable",
-                "relegation_battle",
-                "must_win"
-              ]
+              "enum": ["must_win", "title_race", "promotion_race", "europe_race", "relegation_battle", "midtable"]
             }
           }
         }
@@ -212,13 +143,13 @@
     "squadAvailabilityItem": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["player_name", "reason", "status"],
+      "required": ["player_name", "status"],
       "properties": {
         "player_name": { "type": "string" },
         "reason": { "type": "string" },
         "status": {
           "type": "string",
-          "enum": ["out", "doubtful", "questionable", "probable"]
+          "enum": ["out", "doubtful", "questionable", "probable", "suspended"]
         }
       }
     },
@@ -232,122 +163,73 @@
         "position_group",
         "expected_minutes",
         "substitution_risk",
-        "is_captain",
-        "set_piece_role",
         "expected_passes_baseline",
-        "expected_shots_baseline"
+        "expected_shots_baseline",
+        "market_lines"
       ],
       "properties": {
         "player_id": { "type": "string" },
         "player_name": { "type": "string" },
         "team_id": { "type": "string" },
-        "position_group": {
-          "type": "string",
-          "enum": ["GK", "DEF", "MID", "FWD"]
-        },
-        "expected_minutes": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 130
-        },
-        "substitution_risk": {
-          "type": "string",
-          "enum": ["low", "medium", "high"]
-        },
+        "position_group": { "type": "string", "enum": ["GK", "DEF", "MID", "FWD"] },
+        "specific_role": { "type": "string" },
+        "role_tag": { "type": "string" },
+        "expected_minutes": { "type": "integer", "minimum": 0, "maximum": 130 },
+        "substitution_risk": { "type": "string", "enum": ["low", "medium", "high"] },
         "is_captain": { "type": "boolean" },
+        "captain": { "type": "boolean" },
+        "is_lone_striker": { "type": "boolean" },
         "set_piece_role": {
           "type": "string",
           "enum": ["none", "corners", "direct_free_kicks", "penalties", "multiple"]
         },
-        "expected_passes_baseline": {
-          "type": "number",
-          "minimum": 0
-        },
-        "expected_shots_baseline": {
-          "type": "number",
-          "minimum": 0
+        "expected_passes_baseline": { "type": "number", "minimum": 0 },
+        "expected_shots_baseline": { "type": "number", "minimum": 0 },
+        "market_lines": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["passes", "shots"],
+          "properties": {
+            "passes": { "type": "number", "minimum": 0 },
+            "shots": { "type": "number", "minimum": 0 }
+          }
         }
       }
     },
     "market": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sportsbook_snapshots", "line_value", "implied_probability"],
+      "required": ["source_timestamp_utc", "sportsbook_snapshots"],
       "properties": {
+        "source_timestamp_utc": { "type": "string", "format": "date-time" },
         "sportsbook_snapshots": {
           "type": "array",
-          "description": "Exactly five distinct sportsbook snapshots.",
-          "minItems": 5,
-          "maxItems": 5,
+          "minItems": 2,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["book", "odds_decimal", "captured_at_utc"],
+            "required": ["source", "odds_decimal"],
             "properties": {
-              "book": { "type": "string" },
-              "odds_decimal": {
-                "type": "number",
-                "exclusiveMinimum": 1
-              },
-              "captured_at_utc": {
-                "type": "string",
-                "format": "date-time"
-              }
+              "source": { "type": "string" },
+              "odds_decimal": { "type": "number", "exclusiveMinimum": 1 },
+              "captured_at_utc": { "type": "string", "format": "date-time" }
             }
           }
-        },
-        "line_value": {
-          "type": "number",
-          "description": "Model-estimated edge, positive indicates favorable price."
-        },
-        "implied_probability": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
         }
       }
     },
     "validation": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["critical_missing_fields", "should_reject_prediction"],
       "properties": {
         "critical_missing_fields": {
           "type": "array",
           "items": { "type": "string" }
         },
-        "should_reject_prediction": {
-          "type": "boolean",
-          "description": "Recommended gate before scoring; true when critical fields are missing."
-        },
+        "should_reject_prediction": { "type": "boolean" },
         "notes": { "type": "string" }
       }
     }
-  },
-  "allOf": [
-    {
-      "description": "Reject inputs where both teams have unknown projected lineups.",
-      "not": {
-        "properties": {
-          "teams": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "projected_lineup": {
-                  "type": "object",
-                  "properties": {
-                    "status": { "const": "unknown" }
-                  },
-                  "required": ["status"]
-                }
-              },
-              "required": ["projected_lineup"]
-            },
-            "minItems": 2,
-            "maxItems": 2
-          }
-        }
-      }
-    }
-  ]
+  }
 }
