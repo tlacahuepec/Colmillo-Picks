@@ -31,6 +31,11 @@ def test_end_to_end_score_then_render_flow() -> None:
 
     assert len(scored) == 5
     assert "Top 5 Recommended Picks" in report
+    assert "Decision Playbook Checkpoints" in report
+    assert "Response Contract" in report
+    assert "Assumptions Disclosure" in report
+    assert "Confidence Explanation Rules" in report
+    assert "No-Bet Trigger Rules" in report
     assert "| 1 |" in report
     assert "Risk Disclaimer (Mandatory)" in report
 

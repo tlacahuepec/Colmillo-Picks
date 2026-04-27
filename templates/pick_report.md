@@ -45,6 +45,27 @@ When platform availability data cannot be fetched:
    - `unknown` if data retrieval fails or sources conflict.
 4. Record the retrieval attempt timestamp in UTC and include the blocking error in notes.
 
+## 5) Decision Playbook Checkpoints
+- **Lineups / Injuries / Suspensions:** Confirm both teams and note any unresolved assumptions.
+- **Form + Standings + Home/Away:** Ensure game-state rationale aligns with venue and motivation context.
+- **Weather Impact:** Confirm adverse-weather signals are reflected only when present in model flags.
+- **Market Agreement Sanity:** Verify market agreement flags before finalizing confidence or no-bet.
+
+## 6) Response Contract
+### Assumptions Disclosure
+- List unresolved assumptions that could materially affect the pick direction.
+- Mark each assumption as likely positive, negative, or neutral for the recommended side.
+
+### Confidence Explanation Rules
+- Explain confidence using scorer-produced factors and risk flags.
+- Keep confidence tiers to High/Medium/Low only.
+- Avoid manual numeric confidence scales in narrative text.
+
+### No-Bet Trigger Rules
+- Use `NO-BET` when scorer output returns no-bet direction/recommendation.
+- Include blocking warnings and risk flags behind no-bet outcomes.
+- Prefer no-bet when key checkpoints are contradictory or unverifiable.
+
 ## Guardrail Status
 Blocking warnings:
 {{guardrail_blocking_warnings}}

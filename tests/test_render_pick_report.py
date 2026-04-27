@@ -25,6 +25,11 @@ def test_render_report_includes_required_sections() -> None:
     assert "# Soccer Prop Pick Report" in report
     assert "## 3) Top 5 Recommended Picks" in report
     assert "## 4) Availability Check" in report
+    assert "## 5) Decision Playbook Checkpoints" in report
+    assert "## 6) Response Contract" in report
+    assert "### Assumptions Disclosure" in report
+    assert "### Confidence Explanation Rules" in report
+    assert "### No-Bet Trigger Rules" in report
     assert "Arsenal" in report
     assert "Liverpool" in report
 
