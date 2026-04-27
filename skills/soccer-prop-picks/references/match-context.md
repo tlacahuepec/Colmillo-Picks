@@ -3,8 +3,9 @@
 Use these context variables before scoring props:
 
 - **Home vs away effects**
-  - Home favorites often sustain possession and can support higher pass volumes for midfielders/center-backs.
-  - Away underdogs may reduce team pass counts and increase defensive clearances.
+  - Home venue alone does not determine control: prioritize each team's possession profile and game-model fit first.
+  - Strong possession sides can maintain pass volume away from home, while low-possession sides can remain direct even at home.
+  - Use league-table position as a secondary tiebreaker for expected control when stylistic signals are mixed.
 
 - **Weather and pitch conditions**
   - Heavy rain/wind can suppress shot quality and passing efficiency.

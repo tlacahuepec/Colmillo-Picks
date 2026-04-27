@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -13,7 +15,7 @@ class MatchInputRequest:
     competition: str
 
 
-def collect_inputs(request: MatchInputRequest) -> dict:
+def collect_inputs(request: MatchInputRequest) -> dict[str, Any]:
     """Return normalized match inputs.
 
     Placeholder interface for future deterministic data collection.
@@ -32,7 +34,7 @@ def main() -> None:
     args = parser.parse_args()
 
     payload = collect_inputs(MatchInputRequest(args.match_id, args.competition))
-    print(payload)
+    print(json.dumps(payload))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from typing import Any
 
 
@@ -14,15 +15,22 @@ def render_report(scored_props: list[dict[str, Any]], top_n: int = 5) -> str:
     """
     header = "# Soccer Prop Pick Report\n\n"
     body = f"Generated placeholder report with top_n={top_n}.\n"
-    return header + body + f"Input rows: {len(scored_props)}"
+    top_rows = scored_props[:top_n]
+    return header + body + f"Input rows: {len(scored_props)}\nRendered rows: {len(top_rows)}"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render soccer prop pick report.")
     parser.add_argument("--top-n", type=int, default=5, help="Number of picks to render")
+    parser.add_argument(
+        "--input-json",
+        default="[]",
+        help="Serialized scored props payload",
+    )
     args = parser.parse_args()
 
-    report = render_report([], top_n=args.top_n)
+    scored_props = json.loads(args.input_json)
+    report = render_report(scored_props, top_n=args.top_n)
     print(report)
 
 

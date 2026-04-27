@@ -7,12 +7,14 @@ Apply these heuristics when evaluating player props:
   - Leadership status can stabilize baseline pass volume for central organizers.
 
 - **Likely 90-minute players**
-  - Prioritize center-backs, holding midfielders, and elite keepers of possession systems.
+  - Prioritize center-backs, holding midfielders, elite keepers of possession systems, and world-class strikers with secure roles.
+  - Validate minutes probability with each player's last 5 matches (starts, substitution minute, and workload signals).
   - Downgrade players with recurring substitution patterns or workload management risk.
 
 - **Lone striker logic**
   - Lone strikers may have volatile shot volume dependent on service quality.
   - Against low blocks, lone strikers may still accumulate shots via central box occupancy.
+  - If one striker projects high shots/shots on target volume, consider correlated upside for the opposing goalkeeper saves market.
 
 - **Substitution risk framework**
   - Flag wide forwards and attack-minded fullbacks as elevated sub-risk in high-tempo matches.
