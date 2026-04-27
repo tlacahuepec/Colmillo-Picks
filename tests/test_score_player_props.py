@@ -30,6 +30,30 @@ def test_score_props_attaches_guardrails_and_model_metadata() -> None:
     assert "context_signals" in first["explainability"]
 
 
+def test_score_props_can_optionally_emit_reasoning_trace() -> None:
+    scorer = load_script_module("score_player_props.py")
+    match_inputs = sample_match_inputs()
+
+    payload = scorer.score_props(match_inputs, include_trace=True)
+
+    assert set(payload.keys()) == {"scores", "trace"}
+    assert isinstance(payload["scores"], list)
+    trace = payload["trace"]
+    assert isinstance(trace, dict)
+    assert trace["match_context_summary"]["fixture"] == "Arsenal vs Liverpool"
+    assert trace["guardrail_results"]["required_timestamps"]["odds_timestamp_utc"]
+    assert isinstance(trace["picks"], list)
+    assert len(trace["picks"]) == len(payload["scores"])
+
+    for pick in trace["picks"]:
+        assert isinstance(pick["rank"], int)
+        assert isinstance(pick["risk_tags"], list)
+        assert isinstance(pick["no_bet_reasons"], list)
+        assert isinstance(pick["rationale"], dict)
+        assert isinstance(pick["rationale"]["primary_risks_summary"], str)
+        assert isinstance(pick["rationale"]["why_this_pick"], str)
+
+
 def test_unconfirmed_lineup_creates_blocking_warning_flag() -> None:
     scorer = load_script_module("score_player_props.py")
     match_inputs = sample_match_inputs()

@@ -140,3 +140,19 @@ def test_guardrail_warnings_propagate_to_final_report() -> None:
     assert "## Guardrail Status" in report
     assert "lineup_unconfirmed:Arsenal" in report
     assert "odds_stale:" in report
+
+
+def test_trace_to_report_consistency_for_top_pick() -> None:
+    scorer = load_script_module("score_player_props.py")
+    renderer = load_script_module("render_pick_report.py")
+
+    match_inputs = sample_match_inputs()
+    scored_payload = scorer.score_props(match_inputs, include_trace=True)
+    scored = scored_payload["scores"]
+    trace = scored_payload["trace"]
+
+    report = renderer.render_report(scored_props=scored, match_inputs=match_inputs, availability_data={}, top_n=5, trace=trace)
+
+    top_pick = trace["picks"][0]
+    assert top_pick["rationale"]["why_this_pick"] in report
+    assert top_pick["rationale"]["primary_risks_summary"] in report

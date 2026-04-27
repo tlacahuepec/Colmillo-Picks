@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Soccer Analysis Reasoning Trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at_utc",
+    "match_context_summary",
+    "guardrail_results",
+    "picks"
+  ],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "generated_at_utc": {"type": "string", "format": "date-time"},
+    "match_context_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match_id", "fixture", "competition", "kickoff_utc"],
+      "properties": {
+        "match_id": {"type": "string"},
+        "fixture": {"type": "string"},
+        "competition": {"type": "string"},
+        "kickoff_utc": {"type": "string", "format": "date-time"}
+      }
+    },
+    "guardrail_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_timestamps",
+        "blocking_warnings",
+        "missing_freshness_timestamps",
+        "guardrails_passed"
+      ],
+      "properties": {
+        "required_timestamps": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "home_lineup_timestamp_utc",
+            "away_lineup_timestamp_utc",
+            "odds_timestamp_utc",
+            "weather_timestamp_utc"
+          ],
+          "properties": {
+            "home_lineup_timestamp_utc": {"type": "string", "format": "date-time"},
+            "away_lineup_timestamp_utc": {"type": "string", "format": "date-time"},
+            "odds_timestamp_utc": {"type": "string", "format": "date-time"},
+            "weather_timestamp_utc": {"type": "string", "format": "date-time"}
+          }
+        },
+        "blocking_warnings": {"type": "array", "items": {"type": "string"}},
+        "missing_freshness_timestamps": {"type": "array", "items": {"type": "string"}},
+        "guardrails_passed": {"type": "boolean"}
+      }
+    },
+    "picks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rank",
+          "player_id",
+          "market",
+          "direction",
+          "recommendation",
+          "confidence",
+          "risk_tags",
+          "no_bet_reasons",
+          "rationale"
+        ],
+        "properties": {
+          "rank": {"type": "integer", "minimum": 1},
+          "player_id": {"type": "string"},
+          "market": {"type": "string", "enum": ["passes", "shots"]},
+          "direction": {"type": "string", "enum": ["over", "under", "no-bet"]},
+          "recommendation": {"type": "string", "enum": ["bet", "no-bet"]},
+          "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+          "risk_tags": {"type": "array", "items": {"type": "string"}},
+          "no_bet_reasons": {"type": "array", "items": {"type": "string"}},
+          "rationale": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "minutes_signal",
+              "tactical_fit",
+              "notes",
+              "primary_risks_summary",
+              "why_this_pick"
+            ],
+            "properties": {
+              "minutes_signal": {"type": "string"},
+              "tactical_fit": {"type": "string"},
+              "notes": {"type": "string"},
+              "primary_risks_summary": {"type": "string"},
+              "why_this_pick": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
