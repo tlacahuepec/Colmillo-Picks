@@ -62,7 +62,7 @@ When platform availability data cannot be fetched:
 - Avoid manual numeric confidence scales in narrative text.
 
 ### No-Bet Trigger Rules
-- Use `NO-BET` when scorer output returns no-bet direction/recommendation.
+- Use `NO-BET` when scorer outcome status is `no-bet` (direction can still be over/under).
 - Include blocking warnings and risk flags behind no-bet outcomes.
 - Prefer no-bet when key checkpoints are contradictory or unverifiable.
 

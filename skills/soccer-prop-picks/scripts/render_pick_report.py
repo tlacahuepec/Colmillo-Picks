@@ -139,7 +139,7 @@ def _top_pick_rows(scored_props: list[dict[str, Any]], top_n: int, trace: dict[s
         factors = candidate.get("explainability", {}).get("top_contributing_factors", [])
         why = rationale.get("why_this_pick") or "; ".join(f"{f.get('factor')}={f.get('score')}" for f in factors[:2]) or "model score"
         outcome = str(candidate.get("recommendation", "bet")).upper()
-        direction = str(candidate.get("direction", "over")).title() if outcome != "NO-BET" else "No Bet"
+        direction = str(candidate.get("direction", "over")).title()
         rows.append(
             "| {rank} | {player} | {team} | {market} | {direction} | {outcome} | {confidence} | {risks} | {why} |".format(
                 rank=rank,

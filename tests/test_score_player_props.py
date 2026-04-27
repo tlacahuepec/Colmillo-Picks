@@ -165,10 +165,27 @@ def test_no_edge_returns_no_bet_with_ambiguous_flags() -> None:
     results = scorer.score_props(match_inputs)
     candidate = _get_candidate(results, "ars-8", "passes")
 
-    assert candidate["direction"] == "no-bet"
+    assert candidate["direction"] == "over"
     assert candidate["recommendation"] == "no-bet"
+    assert candidate["directional_edge"] == 0.05
     assert "insufficient_projection_edge" in candidate["explainability"]["risk_flags"]
-    assert "ambiguous_direction" in candidate["explainability"]["risk_flags"]
+
+
+def test_severe_guardrails_force_no_bet_even_when_direction_is_clear() -> None:
+    scorer = load_script_module("score_player_props.py")
+    match_inputs = sample_match_inputs()
+    match_inputs["teams"][0]["projected_lineup"]["status"] = "projected"
+    match_inputs["teams"][1]["projected_lineup"]["status"] = "projected"
+    player = next(item for item in match_inputs["players"] if item["player_id"] == "ars-8")
+    player["expected_passes_baseline"] = 74.0
+    player["market_lines"]["passes"] = 61.5
+
+    results = scorer.score_props(match_inputs)
+    candidate = _get_candidate(results, "ars-8", "passes")
+
+    assert candidate["direction"] == "over"
+    assert candidate["recommendation"] == "no-bet"
+    assert "severe_guardrail_conditions" in candidate["explainability"]["risk_flags"]
 
 
 def test_win_probability_factor_direction_and_bounds() -> None:

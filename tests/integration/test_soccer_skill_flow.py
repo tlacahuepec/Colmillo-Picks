@@ -68,6 +68,23 @@ def test_end_to_end_includes_deterministic_under_pick_from_fixture() -> None:
     assert under_candidate["recommendation"] == "bet"
 
 
+def test_end_to_end_top_five_contains_mixed_over_and_under_directions() -> None:
+    scorer = load_script_module("score_player_props.py")
+    match_inputs = sample_match_inputs()
+    ars_mid = next(item for item in match_inputs["players"] if item["player_id"] == "ars-8")
+    liv_cb = next(item for item in match_inputs["players"] if item["player_id"] == "liv-4")
+    ars_mid["expected_passes_baseline"] = 47.0
+    ars_mid["market_lines"]["passes"] = 61.5
+    liv_cb["expected_passes_baseline"] = 77.0
+    liv_cb["market_lines"]["passes"] = 64.5
+
+    scored = scorer.score_props(match_inputs)
+    top_five_directions = {item["direction"] for item in scored[:5]}
+
+    assert "under" in top_five_directions
+    assert "over" in top_five_directions
+
+
 def test_top_pick_why_includes_match_context_and_player_role_signals() -> None:
     scorer = load_script_module("score_player_props.py")
     renderer = load_script_module("render_pick_report.py")

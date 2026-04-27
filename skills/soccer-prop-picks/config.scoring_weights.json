@@ -4,6 +4,12 @@
     "contribution_floor": 0.0,
     "model_version": "soccer-prop-v1.3-context-normalized-form",
     "min_confidence_for_bet": "medium",
+    "directional_edge": {
+      "min_absolute_edge": 0.2
+    },
+    "guardrail_thresholds": {
+      "severe_blocking_warning_count": 2
+    },
     "market_freshness": {
       "max_odds_age_minutes": 30
     }

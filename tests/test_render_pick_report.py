@@ -115,6 +115,7 @@ def test_render_report_shows_under_direction_and_no_bet_label() -> None:
             "recommendation": "no-bet",
             "confidence": "low",
             "baseline_projection": 2.5,
+            "directional_edge": 0.0,
             "model_version": "test",
             "explainability": {"risk_flags": ["ambiguous_direction"], "top_contributing_factors": []},
             "guardrails": {"blocking_warnings": [], "required_timestamps": {}},
@@ -124,4 +125,4 @@ def test_render_report_shows_under_direction_and_no_bet_label() -> None:
     report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=2)
 
     assert "| 1 | Arsenal CM | ARS | passes | Under | BET | High |" in report
-    assert "| 2 | Arsenal ST | ARS | shots | No Bet | NO-BET | Low |" in report
+    assert "| 2 | Arsenal ST | ARS | shots | Under | NO-BET | Low |" in report
