@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from availability.contract import standardize_availability_payload
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "templates" / "pick_report.md"
 
@@ -185,39 +186,32 @@ def _audit_log_lines(scored_props: list[dict[str, Any]]) -> str:
     )
 
 
-def _resolve_final_availability(prizepicks: str, alternatives: list[str]) -> str:
-    statuses = [prizepicks] + alternatives
-    if any(status == "available" for status in statuses):
-        return "available"
-    if statuses and all(status == "unavailable" for status in statuses):
-        return "unavailable"
-    return "unknown"
-
-
 def _availability_rows(scored_props: list[dict[str, Any]], top_n: int, availability_data: dict[str, Any]) -> str:
-    now_utc = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     rows = []
-    fallback_mode = bool(availability_data.get("fallback_mode", False))
-    fallback_reason = availability_data.get("fallback_reason", "data fetch ok")
+    candidate_slice = scored_props[:top_n]
+    pick_keys = [f"{candidate.get('player_id')}:{candidate.get('market')}" for candidate in candidate_slice]
+    normalized = standardize_availability_payload(availability_data, pick_keys=pick_keys)
+    fallback_mode = normalized["fallback_mode"]
+    fallback_reason = normalized["fallback_reason"]
 
-    for rank, candidate in enumerate(scored_props[:top_n], start=1):
+    for rank, candidate in enumerate(candidate_slice, start=1):
         player_id = candidate.get("player_id")
         market = candidate.get("market")
         key = f"{player_id}:{market}"
-        entry = availability_data.get("picks", {}).get(key, {})
+        entry = normalized["picks"].get(key, {})
 
         prizepicks_status = str(entry.get("prizepicks", "unknown"))
-        alternatives = entry.get("alternatives", {})
+        alternatives = dict(entry.get("alternatives", {}))
         alt_summary_parts = [f"{name}:{status}" for name, status in alternatives.items()]
         alt_summary = ", ".join(alt_summary_parts) if alt_summary_parts else "none configured"
 
-        retrieved_at = str(entry.get("retrieved_at_utc", now_utc))
-        alt_statuses = [str(value) for value in alternatives.values()]
-        final_status = str(entry.get("final_status") or _resolve_final_availability(prizepicks_status, alt_statuses))
+        retrieved_at = str(entry.get("retrieved_at_utc"))
+        final_status = str(entry.get("final_status", "unknown"))
 
         fallback_applied = "yes" if fallback_mode else "no"
         if fallback_mode:
-            fallback_applied = f"yes ({fallback_reason})"
+            entry_reason = str(entry.get("fallback_reason", fallback_reason))
+            fallback_applied = f"yes ({entry_reason})"
 
         rows.append(
             "| {rank} | {player} | {market} | {prizepicks} | {alternatives} | {final} | {retrieved} | {fallback} |".format(
