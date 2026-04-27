@@ -37,6 +37,46 @@ class _NoneLineupProvider:
         return None
 
 
+class _MissingTimestampsProviders:
+    def get_lineups_and_availability(self, fixture):
+        return {
+            "teams": {
+                "home": {"status": "projected", "formation": "4-3-3", "starters": []},
+                "away": {"status": "projected", "formation": "4-4-2", "starters": []},
+            },
+            "players": [
+                {
+                    "player_id": "h-1",
+                    "player_name": "Home Mid",
+                    "team_id": fixture["teams"]["home"]["team_id"],
+                    "role_tag": "CM",
+                }
+            ],
+        }
+
+    def get_odds_snapshots(self, fixture):
+        return {
+            "sportsbook_snapshots": [
+                {
+                    "source": "solo-book",
+                    "odds_decimal": 2.01,
+                }
+            ]
+        }
+
+
+class _EmptyPlayersProvider:
+    def get_lineups_and_availability(self, fixture):
+        return {
+            "source_timestamp_utc": "2026-05-03T08:00:00Z",
+            "teams": {
+                "home": {"status": "unknown", "formation": "unknown", "starters": []},
+                "away": {"status": "unknown", "formation": "unknown", "starters": []},
+            },
+            "players": [],
+        }
+
+
 def test_collect_inputs_produces_schema_compatible_complete_payload() -> None:
     collector = load_script_module("collect_match_inputs.py")
 
@@ -118,3 +158,43 @@ def test_collect_inputs_sets_provider_missing_note_when_lineups_unavailable() ->
 
     assert payload["validation"]["should_reject_prediction"] is False
     assert "Lineup provider unavailable" in payload["validation"]["notes"]
+
+
+def test_collect_inputs_characterizes_timestamp_defaults_when_missing() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+    providers = _MissingTimestampsProviders()
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+        lineup_provider=providers,
+        odds_provider=providers,
+    )
+
+    assert payload["market"]["source_timestamp_utc"]
+    assert payload["teams"][0]["projected_lineup"]["source_timestamp_utc"]
+    assert "Lineup timestamp missing" in payload["validation"]["notes"]
+    assert "Market timestamp missing" in payload["validation"]["notes"]
+
+
+def test_collect_inputs_characterizes_snapshot_padding_to_schema_minimum() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+        odds_provider=_SparseOddsProvider(),
+    )
+
+    assert len(payload["market"]["sportsbook_snapshots"]) == 2
+    assert "market.sportsbook_snapshots" in payload["validation"]["critical_missing_fields"]
+
+
+def test_collect_inputs_characterizes_rejection_when_players_missing() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+        lineup_provider=_EmptyPlayersProvider(),
+    )
+
+    assert "players" in payload["validation"]["critical_missing_fields"]
+    assert payload["validation"]["should_reject_prediction"] is True
