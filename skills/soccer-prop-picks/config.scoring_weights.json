@@ -2,7 +2,7 @@
   "global": {
     "top_k": 5,
     "contribution_floor": 0.0,
-    "model_version": "soccer-prop-v1.2-context-signals",
+    "model_version": "soccer-prop-v1.3-context-normalized-form",
     "min_confidence_for_bet": "medium",
     "market_freshness": {
       "max_odds_age_minutes": 30
@@ -10,15 +10,15 @@
   },
   "passes": {
     "factor_weights": {
-      "minutes_sub_risk": 0.28,
-      "role_opportunity": 0.17,
-      "team_possession_opponent_style": 0.14,
-      "win_probability_context": 0.12,
-      "last_5_form_momentum": 0.08,
-      "home_away_adjustment": 0.07,
+      "minutes_sub_risk": 0.25,
+      "role_opportunity": 0.16,
+      "team_possession_opponent_style": 0.13,
+      "win_probability_context": 0.13,
+      "last_5_form_momentum": 0.09,
+      "home_away_adjustment": 0.08,
       "match_state_context": 0.08,
       "weather_penalty": 0.06,
-      "market_agreement": 0.1
+      "market_agreement": 0.08
     },
     "role_scores": {
       "CM": 1.0,
@@ -34,15 +34,15 @@
   },
   "shots": {
     "factor_weights": {
-      "minutes_sub_risk": 0.27,
-      "role_opportunity": 0.23,
-      "team_possession_opponent_style": 0.12,
-      "win_probability_context": 0.12,
-      "last_5_form_momentum": 0.09,
-      "home_away_adjustment": 0.07,
+      "minutes_sub_risk": 0.25,
+      "role_opportunity": 0.22,
+      "team_possession_opponent_style": 0.11,
+      "win_probability_context": 0.13,
+      "last_5_form_momentum": 0.1,
+      "home_away_adjustment": 0.08,
       "match_state_context": 0.08,
       "weather_penalty": 0.04,
-      "market_agreement": 0.08
+      "market_agreement": 0.07
     },
     "role_scores": {
       "ST": 1.0,
