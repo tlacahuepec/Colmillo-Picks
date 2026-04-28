@@ -97,3 +97,72 @@ def test_lookup_fixture_returns_none_when_fixture_not_found() -> None:
     )
 
     assert fixture is None
+
+
+def test_get_odds_snapshots_maps_api_football_player_prop_odds() -> None:
+    module = load_script_module("api_football_provider.py")
+
+    call_urls: list[str] = []
+
+    def fake_urlopen(request, timeout=0):
+        call_urls.append(request.full_url)
+        return _FakeResponse(
+            {
+                "response": [
+                    {
+                        "bookmakers": [
+                            {
+                                "name": "Book One",
+                                "bets": [
+                                    {
+                                        "name": "Shots On Goal - Player",
+                                        "values": [
+                                            {"value": "Player A - Over 1.5", "odd": "1.83"},
+                                            {"value": "Player A - Under 1.5", "odd": "1.95"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            {
+                                "name": "Book Two",
+                                "bets": [
+                                    {
+                                        "name": "Shots On Goal - Player",
+                                        "values": [{"value": "Player A - Over 1.5", "odd": "1.88"}],
+                                    }
+                                ],
+                            },
+                        ]
+                    }
+                ]
+            }
+        )
+
+    provider = module.ApiFootballOddsSnapshotProvider(
+        api_key="secret",
+        urlopen_fn=fake_urlopen,
+        timeout_seconds=2,
+    )
+
+    market_payload = provider.get_odds_snapshots({"match_id": "12345"})
+
+    assert market_payload is not None
+    assert market_payload["source_timestamp_utc"]
+    assert [snap["source"] for snap in market_payload["sportsbook_snapshots"]] == ["Book One", "Book Two"]
+    assert [snap["odds_decimal"] for snap in market_payload["sportsbook_snapshots"]] == [1.83, 1.88]
+    assert all(snap["captured_at_utc"] for snap in market_payload["sportsbook_snapshots"])
+    assert "odds?fixture=12345" in call_urls[0]
+
+
+def test_get_odds_snapshots_returns_empty_snapshots_when_api_has_no_markets() -> None:
+    module = load_script_module("api_football_provider.py")
+
+    def fake_urlopen(request, timeout=0):
+        return _FakeResponse({"response": []})
+
+    provider = module.ApiFootballOddsSnapshotProvider(api_key="secret", urlopen_fn=fake_urlopen)
+
+    market_payload = provider.get_odds_snapshots({"match_id": "12345"})
+
+    assert market_payload is not None
+    assert market_payload["sportsbook_snapshots"] == []

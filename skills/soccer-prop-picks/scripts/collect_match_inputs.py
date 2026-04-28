@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from api_football_provider import ApiFootballFixtureProvider
+from api_football_provider import ApiFootballFixtureProvider, ApiFootballOddsSnapshotProvider
 from normalizers import normalize_match_date, normalize_player, normalize_snapshots, normalize_team_name, normalize_weather
 from payload_builder import build_payload, build_teams_payload
 from provider_resolution import (
@@ -238,6 +238,13 @@ def _default_fixture_provider() -> FixtureLookupProvider:
     return DeterministicFixtureProvider()
 
 
+def _default_odds_provider() -> OddsSnapshotProvider:
+    api_provider = ApiFootballOddsSnapshotProvider()
+    if getattr(api_provider, "api_key", None):
+        return api_provider
+    return DeterministicOddsProvider()
+
+
 def collect_inputs(
     request: MatchInputRequest,
     fixture_provider: FixtureLookupProvider | None = None,
@@ -248,7 +255,7 @@ def collect_inputs(
     """Return normalized schema-compatible match inputs with transparent fallbacks."""
     fixture_provider = fixture_provider or _default_fixture_provider()
     lineup_provider = lineup_provider or DeterministicLineupProvider()
-    odds_provider = odds_provider or DeterministicOddsProvider()
+    odds_provider = odds_provider or _default_odds_provider()
     weather_provider = weather_provider or DeterministicWeatherProvider()
 
     fallback_lineup_provider = DeterministicLineupProvider()

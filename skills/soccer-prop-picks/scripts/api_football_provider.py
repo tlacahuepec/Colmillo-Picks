@@ -136,3 +136,97 @@ class ApiFootballFixtureProvider:
                 },
             },
         }
+
+
+class ApiFootballOddsSnapshotProvider:
+    """Fetch fixture odds snapshots through API-Football and normalize bookmaker snapshots."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str = _DEFAULT_BASE_URL,
+        host: str = _DEFAULT_HOST,
+        timeout_seconds: int = 8,
+        urlopen_fn: Callable[..., Any] = urlopen,
+    ) -> None:
+        self.api_key = api_key or os.getenv("API_FOOTBALL_API_KEY")
+        self.base_url = base_url
+        self.host = host
+        self.timeout_seconds = timeout_seconds
+        self.urlopen_fn = urlopen_fn
+
+    def get_odds_snapshots(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
+        if not self.api_key:
+            return None
+
+        fixture_id = fixture.get("match_id")
+        if not fixture_id:
+            return {"source_timestamp_utc": self._utc_now_z(), "sportsbook_snapshots": []}
+
+        try:
+            payload = self._fetch_json("/odds", {"fixture": fixture_id})
+        except Exception:
+            return None
+
+        source_ts = self._utc_now_z()
+        snapshots: list[dict[str, Any]] = []
+        for market_row in payload.get("response") or []:
+            update_ts = self._as_utc_z((market_row.get("update") or {}).get("date")) or source_ts
+            for bookmaker in market_row.get("bookmakers") or []:
+                odds_decimal = self._extract_decimal_odd(bookmaker.get("bets") or [])
+                if odds_decimal is None:
+                    continue
+                snapshots.append(
+                    {
+                        "source": bookmaker.get("name") or "unknown_book",
+                        "odds_decimal": odds_decimal,
+                        "captured_at_utc": update_ts,
+                    }
+                )
+
+        return {"source_timestamp_utc": source_ts, "sportsbook_snapshots": snapshots}
+
+    def _fetch_json(self, path: str, query: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self.base_url}{path}?{urlencode(query)}"
+        request = Request(
+            url,
+            headers={
+                "x-apisports-key": self.api_key or "",
+                "x-rapidapi-host": self.host,
+            },
+        )
+        with self.urlopen_fn(request, timeout=self.timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @staticmethod
+    def _extract_decimal_odd(bets: list[dict[str, Any]]) -> float | None:
+        for bet in bets:
+            for value in bet.get("values") or []:
+                label = str(value.get("value") or "").lower()
+                odd = value.get("odd")
+                if "over" not in label:
+                    continue
+                try:
+                    return float(odd)
+                except (TypeError, ValueError):
+                    continue
+
+        for bet in bets:
+            for value in bet.get("values") or []:
+                try:
+                    return float(value.get("odd"))
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    @staticmethod
+    def _as_utc_z(raw_datetime: str | None) -> str | None:
+        if not raw_datetime:
+            return None
+        dt = datetime.fromisoformat(raw_datetime.replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _utc_now_z() -> str:
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
