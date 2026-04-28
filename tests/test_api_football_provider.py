@@ -101,6 +101,47 @@ def test_lookup_fixture_returns_none_when_fixture_not_found() -> None:
     assert fixture is None
 
 
+def test_lookup_fixture_maps_partial_api_payload_with_safe_defaults() -> None:
+    module = load_script_module("api_football_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    def fake_urlopen(request, timeout=0):
+        if "teams" in request.full_url:
+            return _FakeResponse({"response": [{"team": {"id": 9, "name": "Juve"}}]})
+        return _FakeResponse(
+            {
+                "response": [
+                    {
+                        "fixture": {
+                            "id": 321,
+                            "date": "2026-05-01T19:00:00+00:00",
+                            "venue": {},
+                        },
+                        "league": {"name": "", "type": "", "country": ""},
+                        "teams": {"home": {}, "away": {}},
+                    }
+                ]
+            }
+        )
+
+    provider = module.ApiFootballFixtureProvider(api_key="secret", urlopen_fn=fake_urlopen)
+    fixture = provider.lookup_fixture(
+        collector.MatchInputRequest(
+            home_team="Juve",
+            away_team="Milan",
+            match_date="2026-05-01",
+            competition="Serie A",
+        )
+    )
+
+    assert fixture is not None
+    assert fixture["competition"] == "Serie A"
+    assert fixture["competition_type"] == "league"
+    assert fixture["venue"] == {"name": "Unknown Venue", "city": "Unknown", "country": "Unknown"}
+    assert fixture["teams"]["home"]["team_id"] == "9"
+    assert fixture["teams"]["away"]["team_name"] == "Juve"
+
+
 def test_get_odds_snapshots_maps_api_football_player_prop_odds() -> None:
     module = load_script_module("api_football_provider.py")
 
@@ -168,6 +209,46 @@ def test_get_odds_snapshots_returns_empty_snapshots_when_api_has_no_markets() ->
 
     assert market_payload is not None
     assert market_payload["sportsbook_snapshots"] == []
+
+
+def test_get_odds_snapshots_skips_malformed_odds_and_uses_non_over_fallback_value() -> None:
+    module = load_script_module("api_football_provider.py")
+
+    def fake_urlopen(request, timeout=0):
+        return _FakeResponse(
+            {
+                "response": [
+                    {
+                        "bookmakers": [
+                            {
+                                "name": "Book One",
+                                "bets": [
+                                    {
+                                        "name": "Shots On Goal - Player",
+                                        "values": [
+                                            {"value": "Player A - Over 1.5", "odd": "N/A"},
+                                            {"value": "Player A - Under 1.5", "odd": "2.02"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            {
+                                "name": "Book Two",
+                                "bets": [{"name": "Shots On Goal - Player", "values": [{"value": "missing", "odd": None}]}],
+                            },
+                        ]
+                    }
+                ]
+            }
+        )
+
+    provider = module.ApiFootballOddsSnapshotProvider(api_key="secret", urlopen_fn=fake_urlopen)
+    market_payload = provider.get_odds_snapshots({"match_id": "12345"})
+
+    assert market_payload is not None
+    assert [snap["source"] for snap in market_payload["sportsbook_snapshots"]] == ["Book One"]
+    assert [snap["odds_decimal"] for snap in market_payload["sportsbook_snapshots"]] == [2.02]
+    assert market_payload["sportsbook_snapshots"][0]["captured_at_utc"]
 
 
 def test_api_football_providers_raise_clear_error_when_credentials_missing() -> None:

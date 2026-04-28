@@ -310,3 +310,54 @@ def test_build_dependency_bundle_requires_api_football_credentials(monkeypatch: 
 
     with pytest.raises(ValueError, match=r"Missing credentials for provider 'api-football'\. Set API_FOOTBALL_API_KEY\."):
         pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
+
+
+def test_build_dependency_bundle_wires_real_api_providers_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+    monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
+
+    deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
+    closure_cells = [cell.cell_contents for cell in deps["collect_inputs"].__closure__ or ()]
+
+    assert any(isinstance(value, pipeline.ApiFootballFixtureProvider) for value in closure_cells)
+    assert any(isinstance(value, pipeline.ApiFootballOddsSnapshotProvider) for value in closure_cells)
+
+
+def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payloads_are_none_or_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+    monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
+
+    class _FixtureProvider:
+        def __init__(self, *, config):
+            self.config = config
+
+        def lookup_fixture(self, request):
+            return None
+
+    class _OddsProvider:
+        def __init__(self, *, config):
+            self.config = config
+
+        def get_odds_snapshots(self, fixture):
+            return {"source_timestamp_utc": "2026-05-03T10:00:00Z", "sportsbook_snapshots": [{"source": "bad-book"}]}
+
+    monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", _FixtureProvider)
+    monkeypatch.setattr(pipeline, "ApiFootballOddsSnapshotProvider", _OddsProvider)
+
+    deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
+    payload = deps["collect_inputs"](
+        pipeline.MatchInputRequest(
+            home_team="Juve",
+            away_team="Milan",
+            match_date="2026-05-03",
+            competition="Serie A",
+        )
+    )
+
+    assert payload["match"]["match_id"]
+    assert len(payload["market"]["sportsbook_snapshots"]) == 2
+    assert payload["validation"]["should_reject_prediction"] is True
+    assert "match" in payload["validation"]["critical_missing_fields"]
+    assert "market.sportsbook_snapshots" in payload["validation"]["critical_missing_fields"]
