@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -224,6 +225,7 @@ def test_end_to_end_user_path_is_single_command_cli() -> None:
         check=True,
         capture_output=True,
         text=True,
+        env={"PATH": str(os.environ.get("PATH", "")), "API_FOOTBALL_API_KEY": "dummy-test-key"},
     )
 
     report = result.stdout

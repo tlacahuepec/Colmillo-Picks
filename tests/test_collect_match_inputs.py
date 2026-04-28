@@ -212,7 +212,8 @@ def test_collect_inputs_uses_api_provider_by_default_when_available(monkeypatch:
             called["lookup"] = request.home_team
             return collector.DeterministicFixtureProvider().lookup_fixture(request)
 
-    monkeypatch.setattr(collector, "ApiFootballFixtureProvider", lambda: _Provider())
+    monkeypatch.setenv("API_FOOTBALL_API_KEY", "fake")
+    monkeypatch.setattr(collector, "ApiFootballFixtureProvider", lambda *, config: _Provider())
 
     payload = collector.collect_inputs(
         collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03")
@@ -241,7 +242,8 @@ def test_collect_inputs_uses_api_odds_provider_by_default_when_available(monkeyp
                 ],
             }
 
-    monkeypatch.setattr(collector, "ApiFootballOddsSnapshotProvider", lambda: _OddsProvider())
+    monkeypatch.setenv("API_FOOTBALL_API_KEY", "fake")
+    monkeypatch.setattr(collector, "ApiFootballOddsSnapshotProvider", lambda *, config: _OddsProvider())
 
     payload = collector.collect_inputs(
         collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03")
