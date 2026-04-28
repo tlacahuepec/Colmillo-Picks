@@ -220,3 +220,32 @@ def test_collect_inputs_uses_api_provider_by_default_when_available(monkeypatch:
 
     assert called["lookup"] == "Juve"
     assert payload["match"]["match_id"]
+
+
+def test_collect_inputs_uses_api_odds_provider_by_default_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    called: dict[str, object] = {}
+
+    class _OddsProvider:
+        api_key = "fake"
+
+        def get_odds_snapshots(self, fixture):
+            called["fixture"] = fixture["match_id"]
+            ts = "2026-05-03T10:00:00Z"
+            return {
+                "source_timestamp_utc": ts,
+                "sportsbook_snapshots": [
+                    {"source": "api-book-1", "odds_decimal": 1.81, "captured_at_utc": ts},
+                    {"source": "api-book-2", "odds_decimal": 1.84, "captured_at_utc": ts},
+                ],
+            }
+
+    monkeypatch.setattr(collector, "ApiFootballOddsSnapshotProvider", lambda: _OddsProvider())
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03")
+    )
+
+    assert called["fixture"] == payload["match"]["match_id"]
+    assert [snap["source"] for snap in payload["market"]["sportsbook_snapshots"][:2]] == ["api-book-1", "api-book-2"]
