@@ -250,3 +250,25 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
     }
     assert captured["deps"] is deps_bundle
     assert captured["printed"] == "mock report"
+
+
+def test_build_dependency_bundle_wires_api_fixture_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    captured: dict[str, object] = {}
+
+    class _FakeProvider:
+        pass
+
+    monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", lambda: _FakeProvider())
+
+    def fake_collect_inputs(request, fixture_provider=None, **kwargs):
+        captured["fixture_provider"] = fixture_provider
+        return {"ok": True}
+
+    monkeypatch.setattr(pipeline, "collect_inputs", fake_collect_inputs)
+
+    deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
+    deps["collect_inputs"](object())
+
+    assert isinstance(captured["fixture_provider"], _FakeProvider)
