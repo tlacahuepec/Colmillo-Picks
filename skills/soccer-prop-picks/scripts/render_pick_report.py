@@ -188,6 +188,19 @@ def _audit_log_lines(scored_props: list[dict[str, Any]]) -> str:
     )
 
 
+def _llm_status_line(trace: dict[str, Any] | None) -> str:
+    metadata = dict(trace or {})
+    status = str(metadata.get("llm_status", "unknown"))
+    provider = str(metadata.get("llm_provider", "unknown"))
+    model = str(metadata.get("llm_model", "unknown"))
+    latency = metadata.get("llm_latency_ms", "unknown")
+    fallback_used = "yes" if bool(metadata.get("llm_fallback_used", False)) else "no"
+    return (
+        f"{status} | provider={provider} | model={model} "
+        f"| latency_ms={latency} | fallback_used={fallback_used}"
+    )
+
+
 def _availability_rows(scored_props: list[dict[str, Any]], top_n: int, availability_data: dict[str, Any]) -> str:
     rows = []
     candidate_slice = scored_props[:top_n]
@@ -258,6 +271,7 @@ def render_report(
         "audit_log_rows": _audit_log_lines(scored_props),
         "critical_missing_fields": ", ".join(match_inputs.get("validation", {}).get("critical_missing_fields", [])) or "none",
         "should_reject_prediction": str(match_inputs.get("validation", {}).get("should_reject_prediction", False)).lower(),
+        "llm_status_line": _llm_status_line(trace),
     }
 
     report = template

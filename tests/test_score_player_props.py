@@ -42,6 +42,8 @@ def test_score_props_can_optionally_emit_reasoning_trace() -> None:
     assert isinstance(trace, dict)
     assert trace["match_context_summary"]["fixture"] == "Arsenal vs Liverpool"
     assert trace["guardrail_results"]["required_timestamps"]["odds_timestamp_utc"]
+    assert trace["llm_status"] == "not_requested"
+    assert trace["llm_fallback_used"] is False
     assert isinstance(trace["picks"], list)
     assert len(trace["picks"]) == len(payload["scores"])
 

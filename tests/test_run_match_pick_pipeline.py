@@ -241,6 +241,12 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
         "llm_provider": "openai",
         "llm_model": "gpt-4.1-mini",
     }
-    assert captured["request"] == {"match_query": "juve - milan today", "top_n": 7, "use_llm": True}
+    assert captured["request"] == {
+        "match_query": "juve - milan today",
+        "top_n": 7,
+        "use_llm": True,
+        "llm_provider": "openai",
+        "llm_model": "gpt-4.1-mini",
+    }
     assert captured["deps"] is deps_bundle
     assert captured["printed"] == "mock report"

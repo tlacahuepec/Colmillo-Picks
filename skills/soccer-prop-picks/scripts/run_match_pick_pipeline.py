@@ -163,7 +163,13 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         raise SystemExit(f"Error: {exc}") from exc
     report = run_pipeline(
-        request={"match_query": args.match_query, "top_n": args.top_n, "use_llm": args.use_llm},
+        request={
+            "match_query": args.match_query,
+            "top_n": args.top_n,
+            "use_llm": args.use_llm,
+            "llm_provider": args.llm_provider,
+            "llm_model": args.llm_model,
+        },
         deps=deps,
     )
     print(report)
