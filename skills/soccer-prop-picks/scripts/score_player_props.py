@@ -543,6 +543,11 @@ def _build_reasoning_trace(
     return {
         "schema_version": "v1.0.0",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "llm_provider": "none",
+        "llm_model": "none",
+        "llm_latency_ms": 0,
+        "llm_status": "not_requested",
+        "llm_fallback_used": False,
         "match_context_summary": {
             "match_id": str(match_inputs.get("match_id") or match_inputs.get("match", {}).get("match_id") or "unknown"),
             "fixture": f"{home.get('team_name', 'unknown')} vs {away.get('team_name', 'unknown')}",

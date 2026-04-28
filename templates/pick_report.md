@@ -78,3 +78,4 @@ Blocking warnings:
 ## Data Quality Notes
 - Missing fields: {{critical_missing_fields}}
 - Reject prediction: {{should_reject_prediction}}
+- LLM status: {{llm_status_line}}

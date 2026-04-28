@@ -45,7 +45,8 @@ def test_run_pipeline_calls_collaborators_in_order() -> None:
         assert match_inputs == {"match": {"id": "x"}}
         assert availability_data == {}
         assert top_n == 3
-        assert trace == scored_payload["trace"]
+        assert trace["picks"] == scored_payload["trace"]["picks"]
+        assert trace["llm_status"] == "not_requested"
         return "rendered report"
 
     report = pipeline_service.run_pipeline(
@@ -117,6 +118,32 @@ def test_run_pipeline_skips_llm_enrichment_by_default() -> None:
     assert calls["llm"] == 0
 
 
+def test_run_pipeline_sets_trace_llm_metadata_when_llm_not_requested() -> None:
+    pipeline_service = load_script_module("pipeline_service.py")
+    captured: dict[str, object] = {}
+    scored_payload = {"scores": [{"player": "A"}], "trace": {"picks": []}}
+
+    def render_report(*, scored_props, match_inputs, availability_data, top_n: int, trace):
+        captured["trace"] = trace
+        return "rendered"
+
+    pipeline_service.run_pipeline(
+        request={"match_query": "juve - milan today", "top_n": 1, "use_llm": False},
+        deps={
+            "parse_match_query": lambda _: SimpleNamespace(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            "build_match_input_request": lambda **_: {"request": True},
+            "collect_inputs": lambda _: {"match": {"id": "x"}},
+            "score_props": lambda **_: scored_payload,
+            "enrich_with_llm": lambda **_: scored_payload,
+            "render_report": render_report,
+        },
+    )
+
+    trace = captured["trace"]
+    assert trace["llm_status"] == "not_requested"
+    assert trace["llm_fallback_used"] is False
+
+
 def test_run_pipeline_invokes_llm_enrichment_when_requested() -> None:
     pipeline_service = load_script_module("pipeline_service.py")
     calls = {"llm": 0}
@@ -132,7 +159,13 @@ def test_run_pipeline_invokes_llm_enrichment_when_requested() -> None:
         }
 
     report = pipeline_service.run_pipeline(
-        request={"match_query": "juve - milan today", "top_n": 1, "use_llm": True},
+        request={
+            "match_query": "juve - milan today",
+            "top_n": 1,
+            "use_llm": True,
+            "llm_provider": "openai",
+            "llm_model": "gpt-4.1-mini",
+        },
         deps={
             "parse_match_query": lambda _: SimpleNamespace(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
             "build_match_input_request": lambda **_: {"request": True},
@@ -145,6 +178,42 @@ def test_run_pipeline_invokes_llm_enrichment_when_requested() -> None:
 
     assert report == "A+"
     assert calls["llm"] == 1
+
+
+def test_run_pipeline_sets_success_llm_trace_metadata() -> None:
+    pipeline_service = load_script_module("pipeline_service.py")
+    captured: dict[str, object] = {}
+    scored_payload = {"scores": [{"player": "A"}], "trace": {"picks": []}}
+
+    def render_report(*, scored_props, match_inputs, availability_data, top_n: int, trace):
+        captured["trace"] = trace
+        return "rendered report"
+
+    pipeline_service.run_pipeline(
+        request={
+            "match_query": "juve - milan today",
+            "top_n": 1,
+            "use_llm": True,
+            "llm_provider": "openai",
+            "llm_model": "gpt-4.1-mini",
+        },
+        deps={
+            "parse_match_query": lambda _: SimpleNamespace(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            "build_match_input_request": lambda **_: {"request": True},
+            "collect_inputs": lambda _: {"match": {"id": "x"}},
+            "score_props": lambda **_: scored_payload,
+            "enrich_with_llm": lambda **_: {"scores": [{"player": "A+"}], "trace": {"picks": []}},
+            "render_report": render_report,
+        },
+    )
+
+    trace = captured["trace"]
+    assert trace["llm_provider"] == "openai"
+    assert trace["llm_model"] == "gpt-4.1-mini"
+    assert trace["llm_status"] == "success"
+    assert trace["llm_fallback_used"] is False
+    assert isinstance(trace["llm_latency_ms"], int)
+    assert trace["llm_latency_ms"] >= 0
 
 
 def test_run_pipeline_falls_back_when_llm_enrichment_fails() -> None:
@@ -162,7 +231,13 @@ def test_run_pipeline_falls_back_when_llm_enrichment_fails() -> None:
         return "rendered fallback report"
 
     report = pipeline_service.run_pipeline(
-        request={"match_query": "juve - milan today", "top_n": 1, "use_llm": True},
+        request={
+            "match_query": "juve - milan today",
+            "top_n": 1,
+            "use_llm": True,
+            "llm_provider": "openai",
+            "llm_model": "gpt-4.1-mini",
+        },
         deps={
             "parse_match_query": lambda _: SimpleNamespace(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
             "build_match_input_request": lambda **_: {"request": True},
@@ -176,3 +251,5 @@ def test_run_pipeline_falls_back_when_llm_enrichment_fails() -> None:
     assert report == "rendered fallback report"
     assert captured["scored_props"] == [{"player": "A"}]
     assert captured["trace"]["notes"] == ["LLM enrichment failed; using deterministic results."]
+    assert captured["trace"]["llm_status"] == "failed"
+    assert captured["trace"]["llm_fallback_used"] is True

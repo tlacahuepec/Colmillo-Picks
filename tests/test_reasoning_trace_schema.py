@@ -32,3 +32,15 @@ def test_trace_schema_rejects_wrong_pick_field_type() -> None:
 
     assert errors
     assert any(e.path == ["picks", 0, "risk_tags"] for e in errors)
+
+
+def test_trace_schema_rejects_wrong_llm_latency_type() -> None:
+    schema = _load_schema()
+    scorer = load_script_module("score_player_props.py")
+    payload = scorer.score_props(sample_match_inputs(), include_trace=True)["trace"]
+    payload["llm_latency_ms"] = "fast"
+
+    errors = _validate_instance(payload, schema, schema, [])
+
+    assert errors
+    assert any(e.path == ["llm_latency_ms"] for e in errors)

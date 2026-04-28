@@ -151,3 +151,36 @@ def test_render_report_honors_valid_top_n_row_count() -> None:
     top_picks_section = report.split("## 3) Top 5 Recommended Picks", 1)[1].split("## 4) Availability Check", 1)[0]
     top_pick_rows = [line for line in top_picks_section.splitlines() if line.startswith("| 1 |") or line.startswith("| 2 |") or line.startswith("| 3 |")]
     assert len(top_pick_rows) == 3
+
+
+def test_render_report_includes_llm_status_metadata_line() -> None:
+    renderer = load_script_module("render_pick_report.py")
+    match_inputs = sample_match_inputs()
+    scored = [
+        {
+            "player": "Arsenal CM",
+            "player_id": "ars-8",
+            "team_id": "ARS",
+            "market": "passes",
+            "line": 61.5,
+            "direction": "under",
+            "recommendation": "bet",
+            "confidence": "high",
+            "baseline_projection": 54.0,
+            "model_version": "test",
+            "explainability": {"risk_flags": [], "top_contributing_factors": []},
+            "guardrails": {"blocking_warnings": [], "required_timestamps": {}},
+        }
+    ]
+    trace = {
+        "llm_provider": "openai",
+        "llm_model": "gpt-4.1-mini",
+        "llm_latency_ms": 432,
+        "llm_status": "success",
+        "llm_fallback_used": False,
+        "picks": [],
+    }
+
+    report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=1, trace=trace)
+
+    assert "- LLM status: success | provider=openai | model=gpt-4.1-mini | latency_ms=432 | fallback_used=no" in report

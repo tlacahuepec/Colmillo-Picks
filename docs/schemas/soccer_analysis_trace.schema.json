@@ -6,6 +6,11 @@
   "required": [
     "schema_version",
     "generated_at_utc",
+    "llm_provider",
+    "llm_model",
+    "llm_latency_ms",
+    "llm_status",
+    "llm_fallback_used",
     "match_context_summary",
     "guardrail_results",
     "picks"
@@ -13,6 +18,11 @@
   "properties": {
     "schema_version": {"type": "string"},
     "generated_at_utc": {"type": "string", "format": "date-time"},
+    "llm_provider": {"type": "string"},
+    "llm_model": {"type": "string"},
+    "llm_latency_ms": {"type": "integer", "minimum": 0},
+    "llm_status": {"type": "string", "enum": ["not_requested", "success", "failed"]},
+    "llm_fallback_used": {"type": "boolean"},
     "match_context_summary": {
       "type": "object",
       "additionalProperties": false,
