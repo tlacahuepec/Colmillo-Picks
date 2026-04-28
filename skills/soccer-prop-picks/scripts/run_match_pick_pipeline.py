@@ -7,6 +7,7 @@ import argparse
 import re
 from datetime import datetime, timedelta, timezone
 
+from api_football_provider import ApiFootballFixtureProvider
 from collect_match_inputs import MatchInputRequest, collect_inputs
 from llm.provider_adapter import build_enrich_with_llm
 from pipeline_service import run_pipeline
@@ -141,7 +142,10 @@ def build_dependency_bundle(*, use_llm: bool, llm_provider: str | None, llm_mode
             match_date=parsed.match_date,
             competition=competition,
         ),
-        "collect_inputs": collect_inputs,
+        "collect_inputs": lambda request: collect_inputs(
+            request,
+            fixture_provider=ApiFootballFixtureProvider(),
+        ),
         "score_props": score_props,
         "render_report": render_report,
         "enrich_with_llm": build_enrich_with_llm(

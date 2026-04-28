@@ -198,3 +198,25 @@ def test_collect_inputs_characterizes_rejection_when_players_missing() -> None:
 
     assert "players" in payload["validation"]["critical_missing_fields"]
     assert payload["validation"]["should_reject_prediction"] is True
+
+
+def test_collect_inputs_uses_api_provider_by_default_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    called: dict[str, object] = {}
+
+    class _Provider:
+        api_key = "fake"
+
+        def lookup_fixture(self, request):
+            called["lookup"] = request.home_team
+            return collector.DeterministicFixtureProvider().lookup_fixture(request)
+
+    monkeypatch.setattr(collector, "ApiFootballFixtureProvider", lambda: _Provider())
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03")
+    )
+
+    assert called["lookup"] == "Juve"
+    assert payload["match"]["match_id"]
