@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-_DEFAULT_BASE_URL = "https://v3.football.api-sports.io"
-_DEFAULT_HOST = "v3.football.api-sports.io"
+from provider_config import ApiFootballProviderConfig
 
 
 class ApiFootballFixtureProvider:
@@ -20,21 +18,21 @@ class ApiFootballFixtureProvider:
         self,
         *,
         api_key: str | None = None,
-        base_url: str = _DEFAULT_BASE_URL,
-        host: str = _DEFAULT_HOST,
+        base_url: str | None = None,
+        host: str | None = None,
+        config: ApiFootballProviderConfig | None = None,
         timeout_seconds: int = 8,
         urlopen_fn: Callable[..., Any] = urlopen,
     ) -> None:
-        self.api_key = api_key or os.getenv("API_FOOTBALL_API_KEY")
-        self.base_url = base_url
-        self.host = host
+        resolved = config or ApiFootballProviderConfig.from_env()
+        self.api_key = api_key or resolved.api_key
+        self.base_url = base_url or resolved.base_url
+        self.host = host or resolved.host
+        ApiFootballProviderConfig(api_key=self.api_key, base_url=self.base_url, host=self.host).validate()
         self.timeout_seconds = timeout_seconds
         self.urlopen_fn = urlopen_fn
 
     def lookup_fixture(self, request: Any) -> dict[str, Any] | None:
-        if not self.api_key:
-            return None
-
         try:
             match_date = getattr(request, "parsed_match_date", None) or request.match_date
             home_name = getattr(request, "parsed_home_team", None) or request.home_team
@@ -145,21 +143,21 @@ class ApiFootballOddsSnapshotProvider:
         self,
         *,
         api_key: str | None = None,
-        base_url: str = _DEFAULT_BASE_URL,
-        host: str = _DEFAULT_HOST,
+        base_url: str | None = None,
+        host: str | None = None,
+        config: ApiFootballProviderConfig | None = None,
         timeout_seconds: int = 8,
         urlopen_fn: Callable[..., Any] = urlopen,
     ) -> None:
-        self.api_key = api_key or os.getenv("API_FOOTBALL_API_KEY")
-        self.base_url = base_url
-        self.host = host
+        resolved = config or ApiFootballProviderConfig.from_env()
+        self.api_key = api_key or resolved.api_key
+        self.base_url = base_url or resolved.base_url
+        self.host = host or resolved.host
+        ApiFootballProviderConfig(api_key=self.api_key, base_url=self.base_url, host=self.host).validate()
         self.timeout_seconds = timeout_seconds
         self.urlopen_fn = urlopen_fn
 
     def get_odds_snapshots(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
-        if not self.api_key:
-            return None
-
         fixture_id = fixture.get("match_id")
         if not fixture_id:
             return {"source_timestamp_utc": self._utc_now_z(), "sportsbook_snapshots": []}

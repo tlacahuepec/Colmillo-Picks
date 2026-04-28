@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.conftest import load_script_module
 
 
@@ -166,3 +168,13 @@ def test_get_odds_snapshots_returns_empty_snapshots_when_api_has_no_markets() ->
 
     assert market_payload is not None
     assert market_payload["sportsbook_snapshots"] == []
+
+
+def test_api_football_providers_raise_clear_error_when_credentials_missing() -> None:
+    module = load_script_module("api_football_provider.py")
+
+    with pytest.raises(ValueError, match="Missing credentials for provider 'api-football'\\. Set API_FOOTBALL_API_KEY\\."):
+        module.ApiFootballFixtureProvider(api_key=None)
+
+    with pytest.raises(ValueError, match="Missing credentials for provider 'api-football'\\. Set API_FOOTBALL_API_KEY\\."):
+        module.ApiFootballOddsSnapshotProvider(api_key=None)

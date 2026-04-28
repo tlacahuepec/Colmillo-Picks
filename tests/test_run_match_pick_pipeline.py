@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -116,6 +117,10 @@ def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
         check=True,
         capture_output=True,
         text=True,
+        env={
+            "PATH": str(os.environ.get("PATH", "")),
+            "API_FOOTBALL_API_KEY": "dummy-test-key",
+        },
     )
 
     report = result.stdout
@@ -174,15 +179,16 @@ def test_pipeline_cli_rejects_llm_without_credentials() -> None:
         check=False,
         capture_output=True,
         text=True,
-        env={"PATH": str(__import__("os").environ.get("PATH", ""))},
+        env={"PATH": str(os.environ.get("PATH", "")), "API_FOOTBALL_API_KEY": "dummy-test-key"},
     )
 
     assert result.returncode != 0
     assert "Missing credentials for provider 'openai'" in result.stderr
 
 
-def test_build_dependency_bundle_includes_llm_enricher_callable() -> None:
+def test_build_dependency_bundle_includes_llm_enricher_callable(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
+    monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
 
     deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
 
@@ -252,18 +258,38 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
     assert captured["printed"] == "mock report"
 
 
-def test_build_dependency_bundle_wires_api_fixture_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_dependency_bundle_wires_api_providers_with_shared_config(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 
     captured: dict[str, object] = {}
 
-    class _FakeProvider:
+    fake_config = object()
+
+    class _FakeFixtureProvider:
         pass
 
-    monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", lambda: _FakeProvider())
+    class _FakeOddsProvider:
+        pass
 
-    def fake_collect_inputs(request, fixture_provider=None, **kwargs):
+    monkeypatch.setattr(
+        pipeline,
+        "ApiFootballProviderConfig",
+        type("_FakeConfigFactory", (), {"from_env": staticmethod(lambda: fake_config)}),
+    )
+    def fake_fixture_provider(*, config):
+        captured["fixture_config"] = config
+        return _FakeFixtureProvider()
+
+    def fake_odds_provider(*, config):
+        captured["odds_config"] = config
+        return _FakeOddsProvider()
+
+    monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", fake_fixture_provider)
+    monkeypatch.setattr(pipeline, "ApiFootballOddsSnapshotProvider", fake_odds_provider)
+
+    def fake_collect_inputs(request, fixture_provider=None, odds_provider=None, **kwargs):
         captured["fixture_provider"] = fixture_provider
+        captured["odds_provider"] = odds_provider
         return {"ok": True}
 
     monkeypatch.setattr(pipeline, "collect_inputs", fake_collect_inputs)
@@ -271,4 +297,16 @@ def test_build_dependency_bundle_wires_api_fixture_provider(monkeypatch: pytest.
     deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
     deps["collect_inputs"](object())
 
-    assert isinstance(captured["fixture_provider"], _FakeProvider)
+    assert captured["fixture_config"] is fake_config
+    assert captured["odds_config"] is fake_config
+    assert captured["fixture_provider"]
+    assert captured["odds_provider"]
+
+
+def test_build_dependency_bundle_requires_api_football_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    monkeypatch.delenv("API_FOOTBALL_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match=r"Missing credentials for provider 'api-football'\. Set API_FOOTBALL_API_KEY\."):
+        pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)

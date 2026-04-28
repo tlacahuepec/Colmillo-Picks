@@ -7,11 +7,12 @@ import argparse
 import re
 from datetime import datetime, timedelta, timezone
 
-from api_football_provider import ApiFootballFixtureProvider
+from api_football_provider import ApiFootballFixtureProvider, ApiFootballOddsSnapshotProvider
 from collect_match_inputs import MatchInputRequest, collect_inputs
 from llm.provider_adapter import build_enrich_with_llm
 from pipeline_service import run_pipeline
 from render_pick_report import render_report
+from provider_config import ApiFootballProviderConfig
 from score_player_props import score_props
 
 
@@ -134,6 +135,10 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def build_dependency_bundle(*, use_llm: bool, llm_provider: str | None, llm_model: str | None) -> dict[str, object]:
+    api_football_config = ApiFootballProviderConfig.from_env()
+    fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
+    odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
+
     return {
         "parse_match_query": parse_match_query,
         "build_match_input_request": lambda *, parsed, competition: MatchInputRequest(
@@ -144,7 +149,8 @@ def build_dependency_bundle(*, use_llm: bool, llm_provider: str | None, llm_mode
         ),
         "collect_inputs": lambda request: collect_inputs(
             request,
-            fixture_provider=ApiFootballFixtureProvider(),
+            fixture_provider=fixture_provider,
+            odds_provider=odds_provider,
         ),
         "score_props": score_props,
         "render_report": render_report,

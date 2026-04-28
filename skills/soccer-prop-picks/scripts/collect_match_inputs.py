@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from api_football_provider import ApiFootballFixtureProvider, ApiFootballOddsSnapshotProvider
 from normalizers import normalize_match_date, normalize_player, normalize_snapshots, normalize_team_name, normalize_weather
+from provider_config import ApiFootballProviderConfig
 from payload_builder import build_payload, build_teams_payload
 from provider_resolution import (
     ResolutionContext,
@@ -232,17 +233,17 @@ def _default_fixture_from_request(request: MatchInputRequest) -> dict[str, Any]:
 
 
 def _default_fixture_provider() -> FixtureLookupProvider:
-    api_provider = ApiFootballFixtureProvider()
-    if getattr(api_provider, "api_key", None):
-        return api_provider
-    return DeterministicFixtureProvider()
+    config = ApiFootballProviderConfig.from_env()
+    if not config.api_key:
+        return DeterministicFixtureProvider()
+    return ApiFootballFixtureProvider(config=config)
 
 
 def _default_odds_provider() -> OddsSnapshotProvider:
-    api_provider = ApiFootballOddsSnapshotProvider()
-    if getattr(api_provider, "api_key", None):
-        return api_provider
-    return DeterministicOddsProvider()
+    config = ApiFootballProviderConfig.from_env()
+    if not config.api_key:
+        return DeterministicOddsProvider()
+    return ApiFootballOddsSnapshotProvider(config=config)
 
 
 def collect_inputs(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -14,6 +15,7 @@ def test_one_command_cli_prints_required_report_sections() -> None:
         check=True,
         capture_output=True,
         text=True,
+        env={"PATH": str(os.environ.get("PATH", "")), "API_FOOTBALL_API_KEY": "dummy-test-key"},
     )
 
     report = result.stdout
