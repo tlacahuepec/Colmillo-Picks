@@ -79,3 +79,8 @@ Blocking warnings:
 - Missing fields: {{critical_missing_fields}}
 - Reject prediction: {{should_reject_prediction}}
 - LLM status: {{llm_status_line}}
+
+## Provider Call Status
+| Provider | Final State | Deterministic Fallback Used | Error Summary |
+|---|---|---|---|
+{{provider_call_status_rows}}

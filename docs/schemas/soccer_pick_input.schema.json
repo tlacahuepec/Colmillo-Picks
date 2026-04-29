@@ -231,7 +231,30 @@
           "items": { "type": "string" }
         },
         "should_reject_prediction": { "type": "boolean" },
-        "notes": { "type": "string" }
+        "notes": { "type": "string" },
+        "provider_status": { "$ref": "#/$defs/providerStatus" }
+      }
+    },
+    "providerStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture", "lineup", "odds", "weather"],
+      "properties": {
+        "fixture": { "$ref": "#/$defs/providerStatusItem" },
+        "lineup": { "$ref": "#/$defs/providerStatusItem" },
+        "odds": { "$ref": "#/$defs/providerStatusItem" },
+        "weather": { "$ref": "#/$defs/providerStatusItem" }
+      }
+    },
+    "providerStatusItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted", "success", "fallback_used", "error_summary"],
+      "properties": {
+        "attempted": { "type": "boolean" },
+        "success": { "type": "boolean" },
+        "fallback_used": { "type": "boolean" },
+        "error_summary": { "type": "string" }
       }
     }
   }
