@@ -55,3 +55,27 @@ def test_build_validation_keeps_prediction_when_non_rejecting_fields_missing() -
 
     assert validation["should_reject_prediction"] is False
     assert validation["notes"] == "All required providers returned data."
+
+
+def test_resolve_fixture_records_failure_status_and_fallback_on_exception() -> None:
+    resolution = load_script_module("provider_resolution.py")
+
+    class _BrokenFixtureProvider:
+        def lookup_fixture(self, request):
+            raise RuntimeError("fixture timeout")
+
+    context = resolution.ResolutionContext()
+    request = type("Req", (), {})()
+
+    fixture = resolution.resolve_fixture(
+        request=request,
+        fixture_provider=_BrokenFixtureProvider(),
+        fallback_fixture_fn=lambda req: {"match_id": "fallback"},
+        context=context,
+    )
+
+    assert fixture["match_id"] == "fallback"
+    assert context.provider_status["fixture"]["attempted"] is True
+    assert context.provider_status["fixture"]["success"] is False
+    assert context.provider_status["fixture"]["fallback_used"] is True
+    assert context.provider_status["fixture"]["error_summary"] == "fixture timeout"

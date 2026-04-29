@@ -151,7 +151,16 @@ def sample_match_inputs() -> dict[str, Any]:
                 "market_lines": {"passes": 64.5, "shots": 0.5},
             },
         ],
-        "validation": {"critical_missing_fields": [], "should_reject_prediction": False},
+        "validation": {
+            "critical_missing_fields": [],
+            "should_reject_prediction": False,
+            "provider_status": {
+                "fixture": {"attempted": True, "success": True, "fallback_used": False, "error_summary": ""},
+                "lineup": {"attempted": True, "success": True, "fallback_used": False, "error_summary": ""},
+                "odds": {"attempted": True, "success": True, "fallback_used": False, "error_summary": ""},
+                "weather": {"attempted": True, "success": True, "fallback_used": False, "error_summary": ""},
+            },
+        },
     }
 
 

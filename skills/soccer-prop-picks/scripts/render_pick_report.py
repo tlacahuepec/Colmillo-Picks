@@ -202,6 +202,26 @@ def _llm_status_line(trace: dict[str, Any] | None) -> str:
     )
 
 
+def _provider_call_status_rows(match_inputs: dict[str, Any]) -> str:
+    provider_status = match_inputs.get("validation", {}).get("provider_status", {})
+    provider_order = ("fixture", "lineup", "odds", "weather")
+    rows: list[str] = []
+    for provider in provider_order:
+        status = provider_status.get(provider, {})
+        attempted = bool(status.get("attempted"))
+        success = bool(status.get("success"))
+        fallback = "yes" if bool(status.get("fallback_used")) else "no"
+        error_summary = str(status.get("error_summary", "") or "no")
+        if not attempted:
+            final_state = "not_attempted"
+        elif success:
+            final_state = "success"
+        else:
+            final_state = "failed"
+        rows.append(f"| {provider} | {final_state} | {fallback} | {error_summary} |")
+    return "\n".join(rows)
+
+
 def _availability_rows(scored_props: list[dict[str, Any]], top_n: int, availability_data: dict[str, Any]) -> str:
     rows = []
     candidate_slice = scored_props[:top_n]
@@ -307,6 +327,7 @@ def render_report(
         "critical_missing_fields": ", ".join(match_inputs.get("validation", {}).get("critical_missing_fields", [])) or "none",
         "should_reject_prediction": str(match_inputs.get("validation", {}).get("should_reject_prediction", False)).lower(),
         "llm_status_line": _llm_status_line(trace),
+        "provider_call_status_rows": _provider_call_status_rows(match_inputs),
     }
 
     report = template

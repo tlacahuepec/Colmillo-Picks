@@ -115,6 +115,8 @@ def test_collect_inputs_fallbacks_are_transparent_and_flagged() -> None:
     assert "players" in payload["validation"]["critical_missing_fields"]
     assert payload["validation"]["should_reject_prediction"] is True
     assert "fallback" in payload["validation"]["notes"].lower()
+    assert payload["validation"]["provider_status"]["fixture"]["fallback_used"] is True
+    assert payload["validation"]["provider_status"]["weather"]["success"] is False
 
 
 def test_collect_inputs_prefers_parsed_fields_and_competition_hints() -> None:
@@ -251,3 +253,16 @@ def test_collect_inputs_uses_api_odds_provider_by_default_when_available(monkeyp
 
     assert called["fixture"] == payload["match"]["match_id"]
     assert [snap["source"] for snap in payload["market"]["sportsbook_snapshots"][:2]] == ["api-book-1", "api-book-2"]
+
+
+def test_collect_inputs_includes_provider_status_map() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Arsenal", away_team="Liverpool", match_date="2026-05-03")
+    )
+
+    provider_status = payload["validation"]["provider_status"]
+    assert set(provider_status) == {"fixture", "lineup", "odds", "weather"}
+    for provider in provider_status.values():
+        assert set(provider) == {"attempted", "success", "fallback_used", "error_summary"}

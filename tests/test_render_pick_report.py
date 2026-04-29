@@ -29,11 +29,31 @@ def test_render_report_includes_required_sections() -> None:
     assert "## 4) Availability Check" in report
     assert "## 5) Decision Playbook Checkpoints" in report
     assert "## 6) Response Contract" in report
+    assert "## Provider Call Status" in report
     assert "### Assumptions Disclosure" in report
     assert "### Confidence Explanation Rules" in report
     assert "### No-Bet Trigger Rules" in report
     assert "Arsenal" in report
     assert "Liverpool" in report
+
+
+def test_render_report_renders_provider_call_status_rows() -> None:
+    scorer = load_script_module("score_player_props.py")
+    renderer = load_script_module("render_pick_report.py")
+    match_inputs = sample_match_inputs()
+    match_inputs["validation"]["provider_status"] = {
+        "fixture": {"attempted": True, "success": True, "fallback_used": False, "error_summary": ""},
+        "lineup": {"attempted": True, "success": False, "fallback_used": True, "error_summary": "timeout"},
+        "odds": {"attempted": True, "success": True, "fallback_used": True, "error_summary": ""},
+        "weather": {"attempted": False, "success": False, "fallback_used": False, "error_summary": "skipped"},
+    }
+    scored = scorer.score_props(match_inputs)
+
+    report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=1)
+
+    assert "| fixture | success | no | no |" in report
+    assert "| lineup | failed | yes | timeout |" in report
+    assert "| weather | not_attempted | no | skipped |" in report
 
 
 def test_render_report_uses_trace_rationale_when_provided() -> None:
