@@ -21,6 +21,7 @@
   - Away: {{away_table_position}} ({{away_points}} pts, {{away_games_played}} GP, {{away_motivation_tag}})
 
 ## 2) Candidate Evidence Table
+{{rejected_prediction_banner}}
 | Player | Team | Prop Type | Line | Passes/Shots Trend | Minutes Reliability | Tactical Fit | Notes |
 |---|---|---|---:|---|---|---|---|
 {{candidate_evidence_rows}}

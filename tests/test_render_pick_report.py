@@ -184,3 +184,32 @@ def test_render_report_includes_llm_status_metadata_line() -> None:
     report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=1, trace=trace)
 
     assert "- LLM status: success | provider=openai | model=gpt-4.1-mini | latency_ms=432 | fallback_used=no" in report
+
+
+def test_render_report_shows_blocked_state_when_prediction_rejected() -> None:
+    renderer = load_script_module("render_pick_report.py")
+    match_inputs = sample_match_inputs()
+    match_inputs["validation"]["critical_missing_fields"] = ["teams[0].projected_lineup"]
+    match_inputs["validation"]["should_reject_prediction"] = True
+    scored = [
+        {
+            "player": "Arsenal CM",
+            "player_id": "ars-8",
+            "team_id": "ARS",
+            "market": "passes",
+            "line": 61.5,
+            "direction": "under",
+            "recommendation": "bet",
+            "confidence": "high",
+            "baseline_projection": 54.0,
+            "model_version": "test",
+            "explainability": {"risk_flags": [], "top_contributing_factors": []},
+            "guardrails": {"blocking_warnings": [], "required_timestamps": {}},
+        }
+    ]
+
+    report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=1)
+
+    assert "⚠️ Prediction rejected due to missing critical fields." in report
+    assert "No actionable picks: prediction rejected due to missing critical fields" in report
+    assert "| 1 | Arsenal CM | ARS | passes | Under | BET | High |" not in report
