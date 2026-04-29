@@ -13,6 +13,7 @@ from availability.contract import standardize_availability_payload
 TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "templates" / "pick_report.md"
 _MIN_TOP_N = 1
 _MAX_TOP_N = 5
+_REJECTED_PREDICTION_MESSAGE = "No actionable picks: prediction rejected due to missing critical fields"
 
 
 def _fmt_pct(value: Any) -> str:
@@ -249,6 +250,30 @@ def _validate_top_n(top_n: int) -> None:
         raise ValueError("top_n must be between 1 and 5 inclusive")
 
 
+def _is_prediction_rejected(match_inputs: dict[str, Any]) -> bool:
+    return bool(match_inputs.get("validation", {}).get("should_reject_prediction", False))
+
+
+def _rejected_prediction_banner(match_inputs: dict[str, Any]) -> str:
+    if not _is_prediction_rejected(match_inputs):
+        return ""
+    return "⚠️ Prediction rejected due to missing critical fields."
+
+
+def _blocked_candidate_evidence_rows() -> str:
+    return (
+        "| blocked | blocked | blocked | blocked | blocked | blocked | blocked | "
+        f"{_REJECTED_PREDICTION_MESSAGE} |"
+    )
+
+
+def _blocked_top_pick_rows() -> str:
+    return (
+        "| blocked | blocked | blocked | blocked | blocked | NO-BET | blocked | blocked | "
+        f"{_REJECTED_PREDICTION_MESSAGE} |"
+    )
+
+
 def render_report(
     scored_props: list[dict[str, Any]],
     match_inputs: dict[str, Any],
@@ -260,12 +285,22 @@ def render_report(
     _validate_top_n(top_n)
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     availability_data = availability_data or {}
+    prediction_rejected = _is_prediction_rejected(match_inputs)
 
     match_summary = _build_match_summary(match_inputs)
     replacements = {
         **match_summary,
-        "candidate_evidence_rows": _candidate_evidence_rows(scored_props, trace=trace),
-        "top_5_pick_rows": _top_pick_rows(scored_props, top_n=top_n, trace=trace),
+        "rejected_prediction_banner": _rejected_prediction_banner(match_inputs),
+        "candidate_evidence_rows": (
+            _blocked_candidate_evidence_rows()
+            if prediction_rejected
+            else _candidate_evidence_rows(scored_props, trace=trace)
+        ),
+        "top_5_pick_rows": (
+            _blocked_top_pick_rows()
+            if prediction_rejected
+            else _top_pick_rows(scored_props, top_n=top_n, trace=trace)
+        ),
         "availability_rows": _availability_rows(scored_props, top_n=top_n, availability_data=availability_data),
         "guardrail_blocking_warnings": _guardrail_warning_lines(scored_props),
         "audit_log_rows": _audit_log_lines(scored_props),
