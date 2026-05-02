@@ -59,6 +59,10 @@ def _fixture_request_label(request: Any) -> str:
     return f"{home} vs {away} on {match_date}"
 
 
+def _fixture_provider_label(fixture_provider: Any) -> str:
+    return str(getattr(fixture_provider, "provider_label", "API-Football"))
+
+
 def resolve_fixture(
     request: Any,
     fixture_provider: Any,
@@ -80,7 +84,9 @@ def resolve_fixture(
         return fixture
 
     if failure is None:
-        failure = ProviderResolutionError(f"No API-Football fixture matched {_fixture_request_label(request)}.")
+        failure = ProviderResolutionError(
+            f"No {_fixture_provider_label(fixture_provider)} fixture matched {_fixture_request_label(request)}."
+        )
         _record_failure(context, "fixture", failure)
     if not allow_fallback:
         status = context.provider_status["fixture"]

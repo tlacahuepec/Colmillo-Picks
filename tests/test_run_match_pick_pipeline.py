@@ -131,6 +131,29 @@ def test_parse_cli_args_supports_api_football_hints_and_fallback_flag() -> None:
     assert args.allow_deterministic_fallback is True
 
 
+def test_parse_cli_args_supports_llm_fixture_provider_flags() -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    args = pipeline.parse_cli_args(
+        [
+            "arsenal - liverpool 2026-05-03",
+            "--fixture-provider",
+            "llm",
+            "--fixture-llm-provider",
+            "openai-compatible",
+            "--fixture-llm-model",
+            "fixture-model",
+            "--fixture-llm-base-url",
+            "https://llm.example.test/v1",
+        ]
+    )
+
+    assert args.fixture_provider == "llm"
+    assert args.fixture_llm_provider == "openai-compatible"
+    assert args.fixture_llm_model == "fixture-model"
+    assert args.fixture_llm_base_url == "https://llm.example.test/v1"
+
+
 def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
     script = REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts" / "run_match_pick_pipeline.py"
 
@@ -216,6 +239,7 @@ def test_pipeline_cli_rejects_llm_without_credentials() -> None:
 def test_build_dependency_bundle_includes_llm_enricher_callable(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
     monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
 
@@ -243,6 +267,10 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
                 "league": "Serie A",
                 "league_id": "135",
                 "season": "2025",
+                "fixture_provider": "llm",
+                "fixture_llm_provider": "openai-compatible",
+                "fixture_llm_model": "fixture-model",
+                "fixture_llm_base_url": "https://llm.example.test/v1",
             },
         )()
 
@@ -257,6 +285,10 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
         league,
         league_id,
         season,
+        fixture_provider_name,
+        fixture_llm_provider,
+        fixture_llm_model,
+        fixture_llm_base_url,
     ):
         captured["build_called"] = True
         captured["bundle_args"] = {
@@ -267,6 +299,10 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
             "league": league,
             "league_id": league_id,
             "season": season,
+            "fixture_provider_name": fixture_provider_name,
+            "fixture_llm_provider": fixture_llm_provider,
+            "fixture_llm_model": fixture_llm_model,
+            "fixture_llm_base_url": fixture_llm_base_url,
         }
         return deps_bundle
 
@@ -294,6 +330,10 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
         "league": "Serie A",
         "league_id": "135",
         "season": "2025",
+        "fixture_provider_name": "llm",
+        "fixture_llm_provider": "openai-compatible",
+        "fixture_llm_model": "fixture-model",
+        "fixture_llm_base_url": "https://llm.example.test/v1",
     }
     assert captured["request"] == {
         "match_query": "juve - milan today",
@@ -309,6 +349,7 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
 
 def test_build_dependency_bundle_wires_api_providers_with_shared_config(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     captured: dict[str, object] = {}
 
@@ -358,6 +399,7 @@ def test_build_dependency_bundle_requires_api_football_credentials(monkeypatch: 
     pipeline = load_script_module("run_match_pick_pipeline.py")
 
     monkeypatch.delenv("API_FOOTBALL_API_KEY", raising=False)
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     with pytest.raises(ValueError, match=r"Missing credentials for provider 'api-football'\. Set API_FOOTBALL_API_KEY\."):
         pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
@@ -366,6 +408,7 @@ def test_build_dependency_bundle_requires_api_football_credentials(monkeypatch: 
 def test_build_dependency_bundle_wires_real_api_providers_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
     monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
     closure_cells = [cell.cell_contents for cell in deps["collect_inputs"].__closure__ or ()]
@@ -374,11 +417,46 @@ def test_build_dependency_bundle_wires_real_api_providers_by_default(monkeypatch
     assert any(isinstance(value, pipeline.ApiFootballOddsSnapshotProvider) for value in closure_cells)
 
 
+def test_build_dependency_bundle_wires_llm_fixture_provider_without_api_football(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    captured: dict[str, object] = {}
+
+    class _FakeLLMFixtureProvider:
+        provider_label = "LLM"
+
+        def __init__(self, *, config):
+            captured["config"] = config
+
+    monkeypatch.delenv("API_FOOTBALL_API_KEY", raising=False)
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
+    monkeypatch.setenv("SOCCER_FIXTURE_LLM_API_KEY", "fixture-key")
+    monkeypatch.setattr(pipeline, "LLMFixtureProvider", _FakeLLMFixtureProvider)
+
+    deps = pipeline.build_dependency_bundle(
+        use_llm=False,
+        llm_provider=None,
+        llm_model=None,
+        fixture_provider_name="llm",
+        fixture_llm_provider="openai-compatible",
+        fixture_llm_model="fixture-model",
+        fixture_llm_base_url="https://llm.example.test/v1",
+    )
+    closure_cells = [cell.cell_contents for cell in deps["collect_inputs"].__closure__ or ()]
+
+    assert captured["config"].api_key == "fixture-key"
+    assert captured["config"].base_url == "https://llm.example.test/v1"
+    assert captured["config"].model == "fixture-model"
+    assert any(isinstance(value, _FakeLLMFixtureProvider) for value in closure_cells)
+    assert not any(isinstance(value, pipeline.ApiFootballFixtureProvider) for value in closure_cells)
+
+
 def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payloads_are_none_or_malformed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
     monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     class _FixtureProvider:
         def __init__(self, *, config):
@@ -424,6 +502,7 @@ def test_build_dependency_bundle_collect_inputs_rejects_missing_fixture_by_defau
 ) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
     monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     class _FixtureProvider:
         def __init__(self, *, config):
