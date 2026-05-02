@@ -221,11 +221,18 @@ def test_end_to_end_user_path_is_single_command_cli() -> None:
     script = load_script_module("run_match_pick_pipeline.py").__file__
 
     result = subprocess.run(
-        [sys.executable, script, "arsenal - liverpool today", "--top-n", "2"],
+        [
+            sys.executable,
+            script,
+            "arsenal - liverpool today",
+            "--top-n",
+            "2",
+            "--allow-deterministic-fallback",
+        ],
         check=True,
         capture_output=True,
         text=True,
-        env={"PATH": str(os.environ.get("PATH", "")), "API_FOOTBALL_API_KEY": "dummy-test-key"},
+        env={"PATH": str(os.environ.get("PATH", ""))},
     )
 
     report = result.stdout

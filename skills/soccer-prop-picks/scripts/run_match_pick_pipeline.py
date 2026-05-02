@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from api_football_provider import ApiFootballFixtureProvider, ApiFootballOddsSnapshotProvider
 from collect_match_inputs import MatchInputRequest, collect_inputs
 from llm.provider_adapter import build_enrich_with_llm
-from pipeline_service import run_pipeline
+from pipeline_service import PipelineServiceError, run_pipeline
 from render_pick_report import render_report
 from provider_config import ApiFootballProviderConfig
 from score_player_props import score_props
@@ -101,6 +101,24 @@ def _cli_top_n(raw_value: str) -> int:
     return value
 
 
+def _optional_cli_value(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    value = raw_value.strip()
+    return value or None
+
+
+def _cli_season(raw_value: str) -> str:
+    value = raw_value.strip()
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("season must be a four-digit year") from exc
+    if parsed < 1900 or parsed > 2200:
+        raise argparse.ArgumentTypeError("season must be a four-digit year")
+    return str(parsed)
+
+
 def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run soccer prop pick pipeline for a match query.")
     parser.add_argument("match_query", help="Match query like 'juve - milan today'")
@@ -125,19 +143,58 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Model name for the selected LLM provider.",
     )
+    parser.add_argument(
+        "--league",
+        default=None,
+        help="Optional competition name hint/display value, e.g. 'Premier League'.",
+    )
+    parser.add_argument(
+        "--league-id",
+        default=None,
+        help="Optional API-Football league ID hint.",
+    )
+    parser.add_argument(
+        "--season",
+        type=_cli_season,
+        default=None,
+        help="Optional API-Football season hint, e.g. 2025.",
+    )
+    parser.add_argument(
+        "--allow-deterministic-fallback",
+        action="store_true",
+        help="Use deterministic fallback data when API-Football fixture lookup fails.",
+    )
 
     args = parser.parse_args(argv)
     if args.use_llm and not args.llm_provider:
         parser.error("--llm-provider is required when --use-llm is set.")
+    args.league = _optional_cli_value(args.league)
+    args.league_id = _optional_cli_value(args.league_id)
     return args
 
 
 
 
-def build_dependency_bundle(*, use_llm: bool, llm_provider: str | None, llm_model: str | None) -> dict[str, object]:
+def build_dependency_bundle(
+    *,
+    use_llm: bool,
+    llm_provider: str | None,
+    llm_model: str | None,
+    allow_deterministic_fallback: bool = False,
+    league: str | None = None,
+    league_id: str | None = None,
+    season: str | None = None,
+) -> dict[str, object]:
     api_football_config = ApiFootballProviderConfig.from_env()
-    fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
-    odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
+    fixture_provider = None
+    odds_provider = None
+    if api_football_config.api_key:
+        fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
+        odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
+    elif not allow_deterministic_fallback:
+        api_football_config.validate()
+
+    competition_hint = _optional_cli_value(league)
 
     return {
         "parse_match_query": parse_match_query,
@@ -145,12 +202,16 @@ def build_dependency_bundle(*, use_llm: bool, llm_provider: str | None, llm_mode
             home_team=parsed.home_team,
             away_team=parsed.away_team,
             match_date=parsed.match_date,
-            competition=competition,
+            competition=competition_hint or competition,
+            competition_hints=[competition_hint] if competition_hint else None,
+            league_id=league_id,
+            season=season,
         ),
         "collect_inputs": lambda request: collect_inputs(
             request,
             fixture_provider=fixture_provider,
             odds_provider=odds_provider,
+            allow_fixture_fallback=allow_deterministic_fallback,
         ),
         "score_props": score_props,
         "render_report": render_report,
@@ -169,19 +230,29 @@ def main(argv: list[str] | None = None) -> None:
             use_llm=args.use_llm,
             llm_provider=args.llm_provider,
             llm_model=args.llm_model,
+            allow_deterministic_fallback=args.allow_deterministic_fallback,
+            league=args.league,
+            league_id=args.league_id,
+            season=args.season,
         )
     except ValueError as exc:
         raise SystemExit(f"Error: {exc}") from exc
-    report = run_pipeline(
-        request={
-            "match_query": args.match_query,
-            "top_n": args.top_n,
-            "use_llm": args.use_llm,
-            "llm_provider": args.llm_provider,
-            "llm_model": args.llm_model,
-        },
-        deps=deps,
-    )
+    try:
+        report = run_pipeline(
+            request={
+                "match_query": args.match_query,
+                "top_n": args.top_n,
+                "use_llm": args.use_llm,
+                "llm_provider": args.llm_provider,
+                "llm_model": args.llm_model,
+                "competition": args.league or "League",
+            },
+            deps=deps,
+        )
+    except PipelineServiceError as exc:
+        cause = exc.__cause__
+        message = str(cause) if cause else str(exc)
+        raise SystemExit(f"Error: {message}") from exc
     print(report)
 
 

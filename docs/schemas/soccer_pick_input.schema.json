@@ -39,6 +39,15 @@
         "is_elimination": { "type": "boolean" },
         "overtime_possible": { "type": "boolean" },
         "kickoff_utc": { "type": "string", "format": "date-time" },
+        "status": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "long": { "type": "string" },
+            "short": { "type": "string" },
+            "elapsed": { "type": "integer" }
+          }
+        },
         "venue": {
           "type": "object",
           "additionalProperties": false,
