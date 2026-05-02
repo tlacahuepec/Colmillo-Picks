@@ -54,19 +54,23 @@ def build_payload(
     validation: dict[str, Any],
     default_kickoff_utc: str,
 ) -> dict[str, Any]:
+    match_payload = {
+        "match_id": fixture.get("match_id"),
+        "competition_type": fixture.get("competition_type", "league"),
+        "is_elimination": bool(fixture.get("is_elimination", False)),
+        "overtime_possible": bool(fixture.get("overtime_possible", False)),
+        "kickoff_utc": fixture.get("kickoff_utc", default_kickoff_utc),
+        "venue": fixture.get("venue", {"name": "Unknown Venue", "city": "Unknown", "country": "Unknown"}),
+        "weather": weather,
+    }
+    if fixture.get("status"):
+        match_payload["status"] = fixture["status"]
+
     return {
         "schema_version": "v1.1.0",
         "match_id": fixture.get("match_id"),
         "competition": fixture.get("competition", request.competition),
-        "match": {
-            "match_id": fixture.get("match_id"),
-            "competition_type": fixture.get("competition_type", "league"),
-            "is_elimination": bool(fixture.get("is_elimination", False)),
-            "overtime_possible": bool(fixture.get("overtime_possible", False)),
-            "kickoff_utc": fixture.get("kickoff_utc", default_kickoff_utc),
-            "venue": fixture.get("venue", {"name": "Unknown Venue", "city": "Unknown", "country": "Unknown"}),
-            "weather": weather,
-        },
+        "match": match_payload,
         "teams": teams_payload,
         "market": {
             "source_timestamp_utc": market_ts,

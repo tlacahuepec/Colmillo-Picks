@@ -62,6 +62,8 @@ class MatchInputRequest:
     parsed_away_team: str | None = None
     parsed_match_date: str | None = None
     competition_hints: list[str] | None = None
+    league_id: str | None = None
+    season: str | None = None
 
 
 def _utc_now_z() -> str:
@@ -252,6 +254,7 @@ def collect_inputs(
     lineup_provider: LineupAvailabilityProvider | None = None,
     odds_provider: OddsSnapshotProvider | None = None,
     weather_provider: WeatherProvider | None = None,
+    allow_fixture_fallback: bool = True,
 ) -> dict[str, Any]:
     """Return normalized schema-compatible match inputs with transparent fallbacks."""
     fixture_provider = fixture_provider or _default_fixture_provider()
@@ -264,7 +267,13 @@ def collect_inputs(
     fallback_weather_provider = DeterministicWeatherProvider()
 
     context = ResolutionContext()
-    fixture = resolve_fixture(request, fixture_provider, _default_fixture_from_request, context)
+    fixture = resolve_fixture(
+        request,
+        fixture_provider,
+        _default_fixture_from_request,
+        context,
+        allow_fallback=allow_fixture_fallback,
+    )
     lineup_payload = resolve_lineup(fixture, lineup_provider, fallback_lineup_provider, context)
     market_payload = resolve_market(fixture, odds_provider, fallback_odds_provider, context)
     weather_payload = resolve_weather(fixture, weather_provider, fallback_weather_provider, context)
@@ -326,6 +335,13 @@ def main() -> None:
     parser.add_argument("away_team", help="Away team name")
     parser.add_argument("match_date", help="Match date in YYYY-MM-DD")
     parser.add_argument("--competition", default="League", help="Competition code/name")
+    parser.add_argument("--league-id", default=None, help="API-Football league ID hint")
+    parser.add_argument("--season", default=None, help="API-Football season hint")
+    parser.add_argument(
+        "--strict-fixture",
+        action="store_true",
+        help="Reject instead of using deterministic fallback when fixture lookup fails",
+    )
     args = parser.parse_args()
 
     payload = collect_inputs(
@@ -334,7 +350,11 @@ def main() -> None:
             away_team=args.away_team,
             match_date=args.match_date,
             competition=args.competition,
-        )
+            competition_hints=[args.competition] if args.competition != "League" else None,
+            league_id=args.league_id,
+            season=args.season,
+        ),
+        allow_fixture_fallback=not args.strict_fixture,
     )
     print(json.dumps(payload))
 

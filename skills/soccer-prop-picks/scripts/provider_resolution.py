@@ -7,6 +7,10 @@ from typing import Any
 _PROVIDER_KEYS = ("fixture", "lineup", "odds", "weather")
 
 
+class ProviderResolutionError(RuntimeError):
+    """Provider data could not be resolved and fallback is disabled."""
+
+
 def _default_provider_status() -> dict[str, dict[str, Any]]:
     return {
         key: {
@@ -48,16 +52,40 @@ def _record_fallback(context: ResolutionContext, provider_key: str) -> None:
     context.provider_status[provider_key]["fallback_used"] = True
 
 
-def resolve_fixture(request: Any, fixture_provider: Any, fallback_fixture_fn: Any, context: ResolutionContext) -> dict[str, Any]:
+def _fixture_request_label(request: Any) -> str:
+    home = getattr(request, "parsed_home_team", None) or getattr(request, "home_team", "unknown")
+    away = getattr(request, "parsed_away_team", None) or getattr(request, "away_team", "unknown")
+    match_date = getattr(request, "parsed_match_date", None) or getattr(request, "match_date", "unknown")
+    return f"{home} vs {away} on {match_date}"
+
+
+def resolve_fixture(
+    request: Any,
+    fixture_provider: Any,
+    fallback_fixture_fn: Any,
+    context: ResolutionContext,
+    *,
+    allow_fallback: bool = True,
+) -> dict[str, Any]:
     _record_attempt(context, "fixture")
+    failure: Exception | None = None
     try:
         fixture = fixture_provider.lookup_fixture(request)
     except Exception as exc:
         _record_failure(context, "fixture", exc)
+        failure = exc
         fixture = None
     if fixture:
         _record_success(context, "fixture")
         return fixture
+
+    if failure is None:
+        failure = ProviderResolutionError(f"No API-Football fixture matched {_fixture_request_label(request)}.")
+        _record_failure(context, "fixture", failure)
+    if not allow_fallback:
+        status = context.provider_status["fixture"]
+        summary = str(status.get("error_summary") or failure)
+        raise ProviderResolutionError(f"Fixture lookup failed: {summary}") from failure
 
     context.critical_missing_fields.append("match")
     context.notes.append("Fixture provider unavailable; used deterministic fallback fixture metadata.")

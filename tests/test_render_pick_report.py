@@ -10,6 +10,7 @@ def test_render_report_includes_required_sections() -> None:
     renderer = load_script_module("render_pick_report.py")
 
     match_inputs = sample_match_inputs()
+    match_inputs["match"]["status"] = {"long": "Not Started", "short": "NS", "elapsed": 0}
     scored = scorer.score_props(match_inputs)
     availability = {
         "picks": {
@@ -35,6 +36,7 @@ def test_render_report_includes_required_sections() -> None:
     assert "### No-Bet Trigger Rules" in report
     assert "Arsenal" in report
     assert "Liverpool" in report
+    assert "- **Fixture Status:** NS | Not Started | 0'" in report
 
 
 def test_render_report_renders_provider_call_status_rows() -> None:

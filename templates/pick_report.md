@@ -8,6 +8,7 @@
 - **Fixture:** {{home_team}} vs {{away_team}}
 - **Competition Type:** {{competition_type}}
 - **Kickoff (UTC):** {{kickoff_utc}}
+- **Fixture Status:** {{fixture_status}}
 - **Venue:** {{venue_name}}, {{venue_city}}, {{venue_country}}
 - **Weather:** {{weather_summary}} | Temp {{temperature_c}}°C | Wind {{wind_kph}} kph | Precip {{precipitation_probability}}
 - **Lineups:**

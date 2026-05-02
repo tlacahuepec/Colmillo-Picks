@@ -38,14 +38,31 @@ pytest -q
 Use the single-command pipeline script as the primary path:
 
 ```bash
+export API_FOOTBALL_API_KEY="your-api-football-key"
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --top-n 5
 ```
 
-The script parses the match query, collects schema-compatible inputs, scores props, renders the markdown report, and prints it to stdout.
+The script parses the match query, retrieves fixture metadata from API-Football, collects schema-compatible inputs, scores props, renders the markdown report, and prints it to stdout.
 
 `--top-n` controls how many top picks to return in the report output.
 
 Match query format guidance: use `"home - away today"`, `"home - away tomorrow"`, or `"home - away YYYY-MM-DD"`.
+
+Fixture retrieval is strict by default: if API-Football cannot resolve the requested match, the CLI exits with a clear error instead of generating a synthetic report. For local demos or tests, opt into the deterministic fallback path explicitly:
+
+```bash
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --allow-deterministic-fallback
+```
+
+Use API-Football hints when team names or competitions are ambiguous:
+
+```bash
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "arsenal - liverpool 2026-05-03" \
+  --league "Premier League" \
+  --league-id 39 \
+  --season 2025
+```
 
 ### CLI arguments (`run_match_pick_pipeline.py`)
 

@@ -59,12 +59,21 @@ def _build_match_summary(match_inputs: dict[str, Any]) -> dict[str, str]:
 
     weather = match.get("weather", {})
     venue = match.get("venue", {})
+    status = match.get("status", {})
+    status_parts = []
+    if status.get("short"):
+        status_parts.append(str(status["short"]))
+    if status.get("long"):
+        status_parts.append(str(status["long"]))
+    if status.get("elapsed") is not None:
+        status_parts.append(f"{status['elapsed']}'")
 
     return {
         "home_team": str(home.get("team_name", "unknown")),
         "away_team": str(away.get("team_name", "unknown")),
         "competition_type": str(match.get("competition_type", "unknown")),
         "kickoff_utc": str(match.get("kickoff_utc", "unknown")),
+        "fixture_status": " | ".join(status_parts) if status_parts else "unknown",
         "venue_name": str(venue.get("name", "unknown")),
         "venue_city": str(venue.get("city", "unknown")),
         "venue_country": str(venue.get("country", "unknown")),

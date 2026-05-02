@@ -119,6 +119,35 @@ def test_collect_inputs_fallbacks_are_transparent_and_flagged() -> None:
     assert payload["validation"]["provider_status"]["weather"]["success"] is False
 
 
+def test_collect_inputs_rejects_missing_fixture_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Fixture lookup failed: No API-Football fixture matched Juve vs Milan on 2026-05-03\\."):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=_MissingFixtureProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
+def test_collect_inputs_preserves_fixture_status_in_match_payload() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    class _StatusFixtureProvider:
+        def lookup_fixture(self, request):
+            fixture = collector.DeterministicFixtureProvider().lookup_fixture(request)
+            fixture["status"] = {"long": "Not Started", "short": "NS", "elapsed": 0}
+            return fixture
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+        fixture_provider=_StatusFixtureProvider(),
+    )
+
+    assert _validate_payload(payload) == []
+    assert payload["match"]["status"] == {"long": "Not Started", "short": "NS", "elapsed": 0}
+
+
 def test_collect_inputs_prefers_parsed_fields_and_competition_hints() -> None:
     collector = load_script_module("collect_match_inputs.py")
 
