@@ -131,6 +131,7 @@ def test_parse_cli_args_supports_api_football_hints_and_fallback_flag() -> None:
     assert args.allow_deterministic_fallback is True
 
 
+<<<<<<< HEAD
 def test_parse_cli_args_supports_llm_fixture_provider_flags() -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 
@@ -154,6 +155,8 @@ def test_parse_cli_args_supports_llm_fixture_provider_flags() -> None:
     assert args.fixture_llm_base_url == "https://llm.example.test/v1"
 
 
+=======
+>>>>>>> main
 def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
     script = REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts" / "run_match_pick_pipeline.py"
 
@@ -267,10 +270,13 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
                 "league": "Serie A",
                 "league_id": "135",
                 "season": "2025",
+<<<<<<< HEAD
                 "fixture_provider": "llm",
                 "fixture_llm_provider": "openai-compatible",
                 "fixture_llm_model": "fixture-model",
                 "fixture_llm_base_url": "https://llm.example.test/v1",
+=======
+>>>>>>> main
             },
         )()
 
@@ -285,10 +291,13 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
         league,
         league_id,
         season,
+<<<<<<< HEAD
         fixture_provider_name,
         fixture_llm_provider,
         fixture_llm_model,
         fixture_llm_base_url,
+=======
+>>>>>>> main
     ):
         captured["build_called"] = True
         captured["bundle_args"] = {
@@ -299,10 +308,13 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
             "league": league,
             "league_id": league_id,
             "season": season,
+<<<<<<< HEAD
             "fixture_provider_name": fixture_provider_name,
             "fixture_llm_provider": fixture_llm_provider,
             "fixture_llm_model": fixture_llm_model,
             "fixture_llm_base_url": fixture_llm_base_url,
+=======
+>>>>>>> main
         }
         return deps_bundle
 
@@ -330,10 +342,13 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
         "league": "Serie A",
         "league_id": "135",
         "season": "2025",
+<<<<<<< HEAD
         "fixture_provider_name": "llm",
         "fixture_llm_provider": "openai-compatible",
         "fixture_llm_model": "fixture-model",
         "fixture_llm_base_url": "https://llm.example.test/v1",
+=======
+>>>>>>> main
     }
     assert captured["request"] == {
         "match_query": "juve - milan today",
@@ -502,7 +517,10 @@ def test_build_dependency_bundle_collect_inputs_rejects_missing_fixture_by_defau
 ) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
     monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
+<<<<<<< HEAD
     monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
+=======
+>>>>>>> main
 
     class _FixtureProvider:
         def __init__(self, *, config):

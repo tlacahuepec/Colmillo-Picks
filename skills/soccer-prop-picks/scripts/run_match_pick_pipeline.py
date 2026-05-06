@@ -111,6 +111,7 @@ def _optional_cli_value(raw_value: str | None) -> str | None:
     return value or None
 
 
+<<<<<<< HEAD
 def _fixture_provider_source(raw_value: str | None) -> str:
     source = (_optional_cli_value(raw_value) or _optional_cli_value(os.getenv("SOCCER_FIXTURE_PROVIDER")) or "api-football").lower()
     if source not in _SUPPORTED_FIXTURE_PROVIDERS:
@@ -119,6 +120,8 @@ def _fixture_provider_source(raw_value: str | None) -> str:
     return source
 
 
+=======
+>>>>>>> main
 def _cli_season(raw_value: str) -> str:
     value = raw_value.strip()
     try:
@@ -173,6 +176,7 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--allow-deterministic-fallback",
         action="store_true",
+<<<<<<< HEAD
         help="Use deterministic fallback data when fixture lookup fails.",
     )
     parser.add_argument(
@@ -198,6 +202,9 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--fixture-llm-base-url",
         default=None,
         help="OpenAI-compatible fixture LLM base URL. Can also be set with SOCCER_FIXTURE_LLM_BASE_URL.",
+=======
+        help="Use deterministic fallback data when API-Football fixture lookup fails.",
+>>>>>>> main
     )
 
     args = parser.parse_args(argv)
@@ -205,15 +212,19 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--llm-provider is required when --use-llm is set.")
     args.league = _optional_cli_value(args.league)
     args.league_id = _optional_cli_value(args.league_id)
+<<<<<<< HEAD
     args.fixture_provider = _optional_cli_value(args.fixture_provider)
     args.fixture_llm_provider = _optional_cli_value(args.fixture_llm_provider)
     args.fixture_llm_model = _optional_cli_value(args.fixture_llm_model)
     args.fixture_llm_base_url = _optional_cli_value(args.fixture_llm_base_url)
+=======
+>>>>>>> main
     return args
 
 
 
 
+<<<<<<< HEAD
 def _build_llm_fixture_provider(
     *,
     fixture_llm_provider: str | None,
@@ -228,6 +239,8 @@ def _build_llm_fixture_provider(
     return LLMFixtureProvider(config=config)
 
 
+=======
+>>>>>>> main
 def build_dependency_bundle(
     *,
     use_llm: bool,
@@ -237,6 +250,7 @@ def build_dependency_bundle(
     league: str | None = None,
     league_id: str | None = None,
     season: str | None = None,
+<<<<<<< HEAD
     fixture_provider_name: str | None = None,
     fixture_llm_provider: str | None = None,
     fixture_llm_model: str | None = None,
@@ -273,6 +287,18 @@ def build_dependency_bundle(
     if api_football_config.api_key:
         odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
 
+=======
+) -> dict[str, object]:
+    api_football_config = ApiFootballProviderConfig.from_env()
+    fixture_provider = None
+    odds_provider = None
+    if api_football_config.api_key:
+        fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
+        odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
+    elif not allow_deterministic_fallback:
+        api_football_config.validate()
+
+>>>>>>> main
     competition_hint = _optional_cli_value(league)
 
     return {
@@ -313,10 +339,13 @@ def main(argv: list[str] | None = None) -> None:
             league=args.league,
             league_id=args.league_id,
             season=args.season,
+<<<<<<< HEAD
             fixture_provider_name=getattr(args, "fixture_provider", None),
             fixture_llm_provider=getattr(args, "fixture_llm_provider", None),
             fixture_llm_model=getattr(args, "fixture_llm_model", None),
             fixture_llm_base_url=getattr(args, "fixture_llm_base_url", None),
+=======
+>>>>>>> main
         )
     except ValueError as exc:
         raise SystemExit(f"Error: {exc}") from exc
