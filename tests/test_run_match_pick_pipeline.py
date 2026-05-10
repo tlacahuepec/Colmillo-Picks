@@ -349,6 +349,7 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
 
 def test_build_dependency_bundle_wires_api_providers_with_shared_config(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
+    import dependency_bundle
     monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     captured: dict[str, object] = {}
@@ -361,11 +362,12 @@ def test_build_dependency_bundle_wires_api_providers_with_shared_config(monkeypa
     class _FakeOddsProvider:
         pass
 
-    monkeypatch.setattr(
-        pipeline,
-        "ApiFootballProviderConfig",
-        type("_FakeConfigFactory", (), {"from_env": staticmethod(lambda: fake_config)}),
+    fake_config_factory = type(
+        "_FakeConfigFactory", (), {"from_env": staticmethod(lambda: fake_config)}
     )
+    monkeypatch.setattr(pipeline, "ApiFootballProviderConfig", fake_config_factory)
+    monkeypatch.setattr(dependency_bundle, "ApiFootballProviderConfig", fake_config_factory)
+
     def fake_fixture_provider(*, config):
         captured["fixture_config"] = config
         return _FakeFixtureProvider()
@@ -376,6 +378,8 @@ def test_build_dependency_bundle_wires_api_providers_with_shared_config(monkeypa
 
     monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", fake_fixture_provider)
     monkeypatch.setattr(pipeline, "ApiFootballOddsSnapshotProvider", fake_odds_provider)
+    monkeypatch.setattr(dependency_bundle, "ApiFootballFixtureProvider", fake_fixture_provider)
+    monkeypatch.setattr(dependency_bundle, "ApiFootballOddsSnapshotProvider", fake_odds_provider)
 
     def fake_collect_inputs(request, fixture_provider=None, odds_provider=None, allow_fixture_fallback=True, **kwargs):
         captured["fixture_provider"] = fixture_provider
@@ -384,6 +388,7 @@ def test_build_dependency_bundle_wires_api_providers_with_shared_config(monkeypa
         return {"ok": True}
 
     monkeypatch.setattr(pipeline, "collect_inputs", fake_collect_inputs)
+    monkeypatch.setattr(dependency_bundle, "collect_inputs", fake_collect_inputs)
 
     deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
     deps["collect_inputs"](object())
@@ -428,10 +433,12 @@ def test_build_dependency_bundle_wires_llm_fixture_provider_without_api_football
         def __init__(self, *, config):
             captured["config"] = config
 
+    import dependency_bundle
     monkeypatch.delenv("API_FOOTBALL_API_KEY", raising=False)
     monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
     monkeypatch.setenv("SOCCER_FIXTURE_LLM_API_KEY", "fixture-key")
     monkeypatch.setattr(pipeline, "LLMFixtureProvider", _FakeLLMFixtureProvider)
+    monkeypatch.setattr(dependency_bundle, "LLMFixtureProvider", _FakeLLMFixtureProvider)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
@@ -472,8 +479,11 @@ def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payload
         def get_odds_snapshots(self, fixture):
             return {"source_timestamp_utc": "2026-05-03T10:00:00Z", "sportsbook_snapshots": [{"source": "bad-book"}]}
 
+    import dependency_bundle
     monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", _FixtureProvider)
     monkeypatch.setattr(pipeline, "ApiFootballOddsSnapshotProvider", _OddsProvider)
+    monkeypatch.setattr(dependency_bundle, "ApiFootballFixtureProvider", _FixtureProvider)
+    monkeypatch.setattr(dependency_bundle, "ApiFootballOddsSnapshotProvider", _OddsProvider)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
@@ -515,8 +525,11 @@ def test_build_dependency_bundle_collect_inputs_rejects_missing_fixture_by_defau
         def __init__(self, *, config):
             self.config = config
 
+    import dependency_bundle
     monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", _FixtureProvider)
     monkeypatch.setattr(pipeline, "ApiFootballOddsSnapshotProvider", _OddsProvider)
+    monkeypatch.setattr(dependency_bundle, "ApiFootballFixtureProvider", _FixtureProvider)
+    monkeypatch.setattr(dependency_bundle, "ApiFootballOddsSnapshotProvider", _OddsProvider)
 
     deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
 

@@ -47,6 +47,20 @@ def _set_llm_trace_fields(
 
 def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -> str:
     """Run parse → collect → score → [optional llm] → render and return a markdown report."""
+    return run_pipeline_with_payload(request, deps)["report_markdown"]
+
+
+def run_pipeline_with_payload(
+    request: dict[str, Any], deps: dict[str, Callable[..., Any]]
+) -> dict[str, Any]:
+    """Same orchestration as ``run_pipeline`` but returns the structured payload.
+
+    Returned dict contains:
+      - ``report_markdown``: the rendered markdown report.
+      - ``scores``: scored picks list as produced by ``score_props``.
+      - ``trace``: scoring/LLM trace including ``llm_status`` and latency.
+      - ``match_inputs``: the collected match-input payload.
+    """
     top_n = int(request.get("top_n", 5))
     use_llm = bool(request.get("use_llm", False))
     llm_provider = str(request.get("llm_provider") or "none")
@@ -115,10 +129,17 @@ def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -
             fallback_used=False,
         )
 
-    return deps["render_report"](
+    report_markdown = deps["render_report"](
         scored_props=scored_payload["scores"],
         match_inputs=match_inputs,
         availability_data=request.get("availability_data", {}),
         top_n=top_n,
         trace=scored_payload.get("trace"),
     )
+
+    return {
+        "report_markdown": report_markdown,
+        "scores": scored_payload["scores"],
+        "trace": scored_payload.get("trace"),
+        "match_inputs": match_inputs,
+    }
