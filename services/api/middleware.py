@@ -12,6 +12,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from services.api.rate_limit import RateLimiter
+
 
 _API_KEY_HEADER = "X-API-Key"
 # Routes that bypass the API-key requirement. Healthcheck must stay open so
@@ -24,13 +26,22 @@ def _expected_api_key() -> str | None:
     return value or None
 
 
+def _admin_api_key() -> str | None:
+    value = os.getenv("COLMILLO_ADMIN_API_KEY", "").strip()
+    return value or None
+
+
 class APIKeyAuthMiddleware(BaseHTTPMiddleware):
     """Reject requests whose ``X-API-Key`` does not match ``COLMILLO_API_KEY``.
 
-    If ``COLMILLO_API_KEY`` is unset the service fails closed with 503 to
-    avoid accidentally exposing an open instance — except for routes in
-    ``_AUTH_EXEMPT_PATHS`` (healthcheck and OpenAPI docs).
+    Also enforces a per-key rate limit (configured via
+    ``COLMILLO_RATE_LIMIT_PER_HOUR``; default 30; 0 disables). Admin routes
+    additionally require ``COLMILLO_ADMIN_API_KEY`` to match.
     """
+
+    def __init__(self, app, *, rate_limiter: RateLimiter | None = None) -> None:
+        super().__init__(app)
+        self._rate_limiter = rate_limiter or RateLimiter.from_env()
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -51,6 +62,30 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
                 content={"detail": "Invalid or missing X-API-Key header."},
             )
+
+        # Admin routes require an additional admin key.
+        if request.url.path.startswith("/admin"):
+            admin_key = _admin_api_key()
+            if admin_key is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Admin not configured: COLMILLO_ADMIN_API_KEY is unset."},
+                )
+            provided_admin = request.headers.get("X-Admin-API-Key", "").strip()
+            if provided_admin != admin_key:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Invalid or missing X-Admin-API-Key header."},
+                )
+
+        allowed, retry_after = self._rate_limiter.check(provided)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded.", "retry_after_seconds": retry_after},
+                headers={"Retry-After": str(retry_after)},
+            )
+
         return await call_next(request)
 
 

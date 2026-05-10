@@ -111,18 +111,49 @@ def render_generate_page(client: PicksAPIClient) -> None:
         if llm_model.strip():
             payload["llm_model"] = llm_model.strip()
 
-    with st.spinner("Running pick pipeline…"):
+    with st.spinner("Submitting pick request…"):
         try:
-            result = client.create_pick(payload)
+            accepted = client.create_pick(payload)
         except APIError as exc:
             _render_pipeline_error(exc)
             return
         except Exception as exc:  # network / connection errors
-            st.error(f"Failed to reach API: {exc}", icon="🛑")
+            st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
             return
 
-    st.success(f"Pick saved as id `{result.get('id', '?')}`.", icon="✅")
-    _render_pick_payload(result)
+    pick_id = accepted.get("id", "")
+    st.info(f"Pick `{pick_id}` accepted. Waiting for pipeline to finish…", icon="\u23f3")
+    progress_box = st.empty()
+    try:
+        with st.spinner("Running pick pipeline…"):
+            final = client.wait_for_pick(
+                pick_id, timeout_seconds=180.0, poll_interval_seconds=1.5
+            )
+    except APIError as exc:
+        _render_pipeline_error(exc)
+        return
+    except Exception as exc:
+        st.error(f"Pipeline status polling failed: {exc}", icon="\U0001f6d1")
+        return
+    finally:
+        progress_box.empty()
+
+    if final.get("status") == "failed":
+        st.error(
+            f"Pipeline failed at stage **{final.get('error_stage')}**: "
+            f"{final.get('error_message', 'unknown error')}",
+            icon="\U0001f6d1",
+        )
+        return
+
+    try:
+        detail = client.get_pick(pick_id)
+    except APIError as exc:
+        _render_pipeline_error(exc)
+        return
+
+    st.success(f"Pick saved as id `{pick_id}`.", icon="\u2705")
+    _render_pick_payload(detail)
 
 
 def _format_history_row(item: dict[str, Any]) -> str:
@@ -184,15 +215,108 @@ def render_history_page(client: PicksAPIClient) -> None:
 
     st.subheader(detail.get("match_query", ""))
     st.caption(
-        f"id `{detail['id']}` · created {detail.get('created_at')} · "
-        f"latency {detail.get('latency_ms')} ms"
+        f"id `{detail['id']}` \u00b7 status `{detail.get('status', '?')}` \u00b7 "
+        f"created {detail.get('created_at')} \u00b7 latency {detail.get('latency_ms')} ms"
     )
+    if detail.get("status") == "failed":
+        st.error(
+            f"Pipeline failed at stage **{detail.get('error_stage')}**: "
+            f"{detail.get('error_message', 'unknown error')}",
+            icon="\U0001f6d1",
+        )
     with st.expander("Original request"):
         st.code(json.dumps(detail.get("request", {}), indent=2), language="json")
-    st.markdown(detail.get("report_markdown", ""))
+    if detail.get("report_markdown"):
+        st.markdown(detail["report_markdown"])
     if detail.get("trace"):
         with st.expander("Trace"):
             st.json(detail["trace"])
+
+    if detail.get("status") == "success":
+        _render_outcomes_section(client, detail)
+
+    _render_hit_rate_panel(client)
+
+
+def _render_outcomes_section(client: PicksAPIClient, detail: dict[str, Any]) -> None:
+    """Outcome capture form + a list of previously recorded outcomes."""
+    st.markdown("---")
+    st.subheader("Outcomes")
+
+    pick_id = detail["id"]
+    scores = detail.get("scores") or []
+
+    try:
+        existing = client.get_outcomes(pick_id).get("items", [])
+    except APIError as exc:
+        _render_pipeline_error(exc)
+        existing = []
+
+    if existing:
+        st.caption(f"{len(existing)} outcome(s) already recorded.")
+        st.table(
+            [
+                {
+                    "rank": item["rank"],
+                    "player": item["player"],
+                    "market": item["market"],
+                    "result": item["result"],
+                    "recorded_at": item["recorded_at"],
+                }
+                for item in existing
+            ]
+        )
+
+    if not scores:
+        st.info("No scored picks to grade yet.")
+        return
+
+    with st.form(f"outcomes-{pick_id}"):
+        st.caption("Grade each pick after the match settles.")
+        rows: list[dict[str, Any]] = []
+        for entry in scores:
+            rank = int(entry.get("rank", len(rows) + 1))
+            player = str(entry.get("player", entry.get("name", "unknown")))
+            market = str(entry.get("market", entry.get("prop", "unknown")))
+            result = st.selectbox(
+                f"#{rank} \u00b7 {player} \u00b7 {market}",
+                options=("win", "loss", "push", "void"),
+                index=0,
+                key=f"outcome-{pick_id}-{rank}",
+            )
+            rows.append({"rank": rank, "player": player, "market": market, "result": result})
+        submitted = st.form_submit_button("Save outcomes", type="primary")
+
+    if submitted:
+        try:
+            client.record_outcomes(pick_id, rows)
+        except APIError as exc:
+            _render_pipeline_error(exc)
+            return
+        st.success("Outcomes saved.", icon="\u2705")
+        st.rerun()
+
+
+def _render_hit_rate_panel(client: PicksAPIClient) -> None:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Hit rate")
+    try:
+        summary = client.get_hit_rate()
+    except APIError as exc:
+        st.sidebar.error(f"Hit-rate fetch failed: {exc.detail}")
+        return
+    totals = summary.get("totals", {})
+    decided = summary.get("decided", 0)
+    rate = summary.get("hit_rate")
+    st.sidebar.metric(
+        "Win rate",
+        f"{rate * 100:.1f}%" if rate is not None else "\u2014",
+        f"{totals.get('win', 0)}W / {totals.get('loss', 0)}L of {decided}",
+    )
+    if totals.get("push") or totals.get("void"):
+        st.sidebar.caption(
+            f"push: {totals.get('push', 0)} \u00b7 void: {totals.get('void', 0)}"
+        )
 
 
 def main() -> None:

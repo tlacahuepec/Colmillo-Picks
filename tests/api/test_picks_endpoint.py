@@ -111,12 +111,18 @@ def test_picks_returns_payload_and_report(monkeypatch: pytest.MonkeyPatch, clien
         },
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["report_markdown"] == "# Mock report"
-    assert body["scores"] == [{"player": "A"}]
-    assert body["trace"] == {"llm_status": "not_requested"}
-    assert body["match_inputs"] == {"match": {"id": "x"}}
+    # POST is async: returns 202 with a pending id; the background task runs
+    # synchronously inside TestClient before the response is returned.
+    assert response.status_code == 202
+    accepted = response.json()
+    assert accepted["status"] == "pending"
+    pick_id = accepted["id"]
+
+    detail = client.get(f"/picks/{pick_id}").json()
+    assert detail["status"] == "success"
+    assert detail["report_markdown"] == "# Mock report"
+    assert detail["scores"] == [{"player": "A"}]
+    assert detail["trace"] == {"llm_status": "not_requested"}
 
     assert captured["bundle_kwargs"]["use_llm"] is False
     assert captured["bundle_kwargs"]["league"] == "Serie A"
@@ -159,30 +165,40 @@ def test_picks_returns_400_when_dependency_bundle_rejects_inputs(
     assert "Missing credentials" in response.json()["detail"]
 
 
-def test_picks_maps_collect_stage_to_400(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+def test_picks_records_collect_failure_via_status(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     err = api_main.PipelineServiceError(stage="collect")
     err.__cause__ = ValueError("Fixture lookup failed: no match found.")
     _patch_pipeline(monkeypatch, pipeline_error=err)
 
     response = client.post("/picks", json={"match_query": "juve - milan today"})
 
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert detail["stage"] == "collect"
-    assert "Fixture lookup failed" in detail["message"]
+    assert response.status_code == 202
+    pick_id = response.json()["id"]
+
+    status = client.get(f"/picks/{pick_id}/status").json()
+    assert status["status"] == "failed"
+    assert status["error_stage"] == "collect"
+    assert "Fixture lookup failed" in status["error_message"]
 
 
-def test_picks_maps_score_stage_to_502(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+def test_picks_records_score_failure_via_status(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     err = api_main.PipelineServiceError(stage="score")
     err.__cause__ = RuntimeError("scoring blew up")
     _patch_pipeline(monkeypatch, pipeline_error=err)
 
     response = client.post("/picks", json={"match_query": "juve - milan today"})
 
-    assert response.status_code == 502
-    detail = response.json()["detail"]
-    assert detail["stage"] == "score"
-    assert "scoring blew up" in detail["message"]
+    assert response.status_code == 202
+    pick_id = response.json()["id"]
+
+    status = client.get(f"/picks/{pick_id}/status").json()
+    assert status["status"] == "failed"
+    assert status["error_stage"] == "score"
+    assert "scoring blew up" in status["error_message"]
 
 
 # --------------------------------------------------------------------------- #
@@ -283,7 +299,7 @@ def test_request_logging_emits_json_line(
             headers={"X-Request-Id": "fixed-req-id"},
         )
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     assert response.headers["X-Request-Id"] == "fixed-req-id"
 
     request_records = [r for r in caplog.records if r.message == "request"]
@@ -292,7 +308,7 @@ def test_request_logging_emits_json_line(
     assert record.request_id == "fixed-req-id"
     assert record.method == "POST"
     assert record.path == "/picks"
-    assert record.status_code == 200
+    assert record.status_code == 202
     assert isinstance(record.latency_ms, int) and record.latency_ms >= 0
 
 
@@ -348,16 +364,17 @@ def test_picks_post_persists_row_and_returns_id(
         json={"match_query": "juve - milan today", "league": "Serie A", "top_n": 4},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     body = response.json()
     assert body["id"]
     assert body["created_at"]
-    assert body["report_markdown"] == "# Stored report"
+    assert body["status"] == "pending"
 
     rows = db_module.list_pick_runs(limit=10, offset=0)
     assert len(rows) == 1
     stored = rows[0]
     assert stored.id == body["id"]
+    assert stored.status == "success"
     assert stored.match_query == "juve - milan today"
     assert stored.competition == "Serie A"
     assert stored.top_n == 4
@@ -369,7 +386,7 @@ def test_picks_post_persists_row_and_returns_id(
     assert stored.latency_ms is not None and stored.latency_ms >= 0
 
 
-def test_picks_post_does_not_persist_on_pipeline_error(
+def test_picks_post_persists_failed_row_with_error_metadata(
     monkeypatch: pytest.MonkeyPatch, client: TestClient
 ) -> None:
     err = api_main.PipelineServiceError(stage="collect")
@@ -378,8 +395,13 @@ def test_picks_post_does_not_persist_on_pipeline_error(
 
     response = client.post("/picks", json={"match_query": "juve - milan today"})
 
-    assert response.status_code == 400
-    assert db_module.list_pick_runs(limit=10, offset=0) == []
+    assert response.status_code == 202
+    rows = db_module.list_pick_runs(limit=10, offset=0)
+    assert len(rows) == 1
+    stored = rows[0]
+    assert stored.status == "failed"
+    assert stored.error_stage == "collect"
+    assert "missing fixture" in (stored.error_message or "")
 
 
 def test_list_picks_paginates_in_reverse_chronological_order(
@@ -393,7 +415,7 @@ def test_list_picks_paginates_in_reverse_chronological_order(
             "/picks",
             json={"match_query": f"juve - milan today {label}", "league": label},
         )
-        assert response.status_code == 200
+        assert response.status_code == 202
         ids.append(response.json()["id"])
 
     response = client.get("/picks", params={"limit": 2, "offset": 0})
@@ -442,8 +464,8 @@ def test_get_pick_returns_404_for_unknown_id(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_record_pick_run_strips_sensitive_request_keys() -> None:
-    row = db_module.record_pick_run(
+def test_create_pending_pick_strips_sensitive_request_keys() -> None:
+    row = db_module.create_pending_pick_run(
         request_payload={
             "match_query": "x - y today",
             "top_n": 5,
@@ -451,13 +473,6 @@ def test_record_pick_run_strips_sensitive_request_keys() -> None:
             "X_API_KEY": "should-not-persist",
             "authorization": "Bearer secret",
         },
-        result={
-            "report_markdown": "r",
-            "scores": [],
-            "trace": {"llm_status": "not_requested"},
-            "match_inputs": {"match": {}},
-        },
-        latency_ms=10,
     )
 
     persisted = json.loads(row.request_json)
@@ -465,3 +480,4 @@ def test_record_pick_run_strips_sensitive_request_keys() -> None:
     assert "x_api_key" not in keys_lower
     assert "authorization" not in keys_lower
     assert persisted["match_query"] == "x - y today"
+    assert row.status == "pending"

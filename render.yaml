@@ -35,6 +35,17 @@ services:
         sync: false
       - key: SOCCER_FIXTURE_LLM_BASE_URL
         sync: false
+      # Operational hardening (Story 10).
+      - key: COLMILLO_RATE_LIMIT_PER_HOUR
+        value: "30"
+      - key: COLMILLO_ADMIN_API_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0.0"
 
   - type: web
     name: colmillo-ui
