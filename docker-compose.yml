@@ -1,0 +1,46 @@
+# Local development orchestration for the Colmillo-Picks API + UI.
+# Run with: docker compose up --build
+# Reads variables from a sibling .env file (copy from .env.example first).
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: colmillo-api
+    env_file:
+      - .env
+    environment:
+      # Override .env values that should differ in compose.
+      COLMILLO_DB_PATH: /var/data/colmillo.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - colmillo-data:/var/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: colmillo-ui
+    env_file:
+      - .env
+    environment:
+      # In compose the UI talks to the API over the bridge network.
+      COLMILLO_API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  colmillo-data:
+    name: colmillo-data

@@ -1,0 +1,56 @@
+# Render Blueprint for Colmillo-Picks: two web services (api + ui) + a
+# persistent disk for the SQLite database.
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: colmillo-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile.api
+    healthCheckPath: /healthz
+    autoDeploy: true
+    disk:
+      name: colmillo-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: COLMILLO_DB_PATH
+        value: /var/data/colmillo.db
+      - key: COLMILLO_API_KEY
+        sync: false  # set in the Render dashboard
+      - key: COLMILLO_UI_ORIGIN
+        sync: false
+      - key: API_FOOTBALL_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      - key: SOCCER_FIXTURE_PROVIDER
+        value: auto
+      - key: SOCCER_FIXTURE_LLM_API_KEY
+        sync: false
+      - key: SOCCER_FIXTURE_LLM_MODEL
+        sync: false
+      - key: SOCCER_FIXTURE_LLM_BASE_URL
+        sync: false
+
+  - type: web
+    name: colmillo-ui
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile.ui
+    autoDeploy: true
+    envVars:
+      # Resolve the API service URL from Render's service registry so the UI
+      # always points at the latest deployment.
+      - key: COLMILLO_API_URL
+        fromService:
+          type: web
+          name: colmillo-api
+          property: hostport
+      - key: COLMILLO_API_KEY
+        sync: false  # must match colmillo-api's value
+      - key: COLMILLO_API_TIMEOUT
+        value: "120"

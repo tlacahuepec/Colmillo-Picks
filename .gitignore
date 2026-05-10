@@ -157,6 +157,13 @@ ENV/
 env.bak/
 venv.bak/
 
+# Local SQLite database files (Colmillo-Picks API persistence)
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
 # Spyder project settings
 .spyderproject
 .spyproject
