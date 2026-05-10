@@ -48,6 +48,67 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "arsenal - li
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "real madrid - barcelona 2026-05-03" --top-n 5
 ```
 
+#### Fixture lookup provider
+
+The command resolves a real fixture before scoring. Use `--fixture-provider` or
+`SOCCER_FIXTURE_PROVIDER` to choose the source:
+
+- `api-football`: legacy API-Football lookup.
+- `llm`: OpenAI, Grok/xAI, or another OpenAI-compatible LLM endpoint.
+- `auto`: use fixture LLM config when complete, otherwise API-Football.
+
+LLM fixture lookup uses the same provider contract as API-Football and returns
+the normalized fixture metadata needed by the scoring pipeline.
+
+OpenAI example:
+
+```bash
+export SOCCER_FIXTURE_PROVIDER="llm"
+export SOCCER_FIXTURE_LLM_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-api-key"
+export SOCCER_FIXTURE_LLM_MODEL="gpt-4.1-mini"
+
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "arsenal - liverpool 2026-05-03" \
+  --league "Premier League" \
+  --season 2025
+```
+
+Grok/xAI example:
+
+```bash
+export SOCCER_FIXTURE_PROVIDER="llm"
+export SOCCER_FIXTURE_LLM_PROVIDER="xai"
+export XAI_API_KEY="your-xai-api-key"
+export SOCCER_FIXTURE_LLM_MODEL="your-grok-model"
+
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "arsenal - liverpool 2026-05-03" \
+  --league "Premier League"
+```
+
+For another OpenAI-compatible endpoint:
+
+```bash
+export SOCCER_FIXTURE_PROVIDER="llm"
+export SOCCER_FIXTURE_LLM_PROVIDER="openai-compatible"
+export SOCCER_FIXTURE_LLM_API_KEY="your-provider-key"
+export SOCCER_FIXTURE_LLM_BASE_URL="https://provider.example/v1"
+export SOCCER_FIXTURE_LLM_MODEL="provider-model"
+```
+
+CLI overrides are also available:
+
+```bash
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "arsenal - liverpool 2026-05-03" \
+  --league "Premier League" \
+  --fixture-provider llm \
+  --fixture-llm-provider openai-compatible \
+  --fixture-llm-base-url "https://provider.example/v1" \
+  --fixture-llm-model "provider-model"
+```
+
 #### API-Football fixture lookup
 
 Fixture lookup is strict by default. The command must resolve a real API-Football fixture before scoring; otherwise it exits with a clear error and does not render deterministic match metadata.

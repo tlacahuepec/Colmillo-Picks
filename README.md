@@ -35,20 +35,54 @@ pytest -q
 
 ## Run the program from the CLI
 
-Use the single-command pipeline script as the primary path:
+Use the single-command pipeline script as the primary path. For current-season
+matches, the fixture lookup can use an LLM provider instead of API-Football:
+
+```bash
+export SOCCER_FIXTURE_PROVIDER="llm"
+export SOCCER_FIXTURE_LLM_PROVIDER="openai"
+export OPENAI_API_KEY="your-openai-api-key"
+export SOCCER_FIXTURE_LLM_MODEL="gpt-4.1-mini"
+
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "arsenal - liverpool 2026-05-03" \
+  --league "Premier League" \
+  --season 2025
+```
+
+Grok/xAI or another OpenAI-compatible endpoint can use the same fixture provider
+contract:
+
+```bash
+export SOCCER_FIXTURE_PROVIDER="llm"
+export SOCCER_FIXTURE_LLM_PROVIDER="xai"
+export XAI_API_KEY="your-xai-api-key" # GROK_API_KEY also works
+export SOCCER_FIXTURE_LLM_MODEL="your-grok-model"
+
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "arsenal - liverpool 2026-05-03" \
+  --league "Premier League"
+```
+
+For legacy API-Football lookup, keep using:
 
 ```bash
 export API_FOOTBALL_API_KEY="your-api-football-key"
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --top-n 5
 ```
 
-The script parses the match query, retrieves fixture metadata from API-Football, collects schema-compatible inputs, scores props, renders the markdown report, and prints it to stdout.
+The script parses the match query, retrieves fixture metadata from the selected
+fixture provider, collects schema-compatible inputs, scores props, renders the
+markdown report, and prints it to stdout.
 
 `--top-n` controls how many top picks to return in the report output.
 
 Match query format guidance: use `"home - away today"`, `"home - away tomorrow"`, or `"home - away YYYY-MM-DD"`.
 
-Fixture retrieval is strict by default: if API-Football cannot resolve the requested match, the CLI exits with a clear error instead of generating a synthetic report. For local demos or tests, opt into the deterministic fallback path explicitly:
+Fixture retrieval is strict by default: if the selected fixture provider cannot
+resolve the requested match, the CLI exits with a clear error instead of
+generating a synthetic report. For local demos or tests, opt into the
+deterministic fallback path explicitly:
 
 ```bash
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --allow-deterministic-fallback
