@@ -93,13 +93,29 @@ def test_health_returns_status(client: PicksAPIClient) -> None:
 
 
 def test_create_pick_round_trips_through_api(client: PicksAPIClient) -> None:
-    result = client.create_pick(
+    accepted = client.create_pick(
         {"match_query": "juve - milan today", "league": "Serie A", "top_n": 3}
     )
 
-    assert result["id"]
-    assert result["report_markdown"].startswith("# Report for juve - milan today")
-    assert result["scores"] == [{"player": "A"}]
+    # POST is async: 202 returns id+status; full payload is fetched separately.
+    assert accepted["id"]
+    assert accepted["status"] == "pending"
+
+    detail = client.get_pick(accepted["id"])
+    assert detail["status"] == "success"
+    assert detail["report_markdown"].startswith("# Report for juve - milan today")
+    assert detail["scores"] == [{"player": "A"}]
+
+
+def test_wait_for_pick_returns_terminal_status(client: PicksAPIClient) -> None:
+    accepted = client.create_pick({"match_query": "juve - milan today"})
+
+    final = client.wait_for_pick(
+        accepted["id"], timeout_seconds=5.0, poll_interval_seconds=0.0
+    )
+
+    assert final["status"] == "success"
+    assert final["error_stage"] is None
 
 
 def test_list_picks_paginates(client: PicksAPIClient) -> None:
