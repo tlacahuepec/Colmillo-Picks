@@ -140,3 +140,148 @@ python skills/soccer-prop-picks/scripts/render_pick_report.py \
 ```bash
 cat /tmp/pick-report.md
 ```
+
+## Run the program as an HTTP service (FastAPI + Streamlit)
+
+The same pipeline is exposed as a small REST API plus a Streamlit UI so you
+can share Colmillo-Picks with friends without giving them shell access. See
+[CHANGELOG.md](CHANGELOG.md) for the full v0.2.0 surface.
+
+### Configure
+
+Copy `.env.example` to `.env` and fill in at minimum:
+
+- `COLMILLO_API_KEY` — required; clients send it as the `X-API-Key` header.
+- `API_FOOTBALL_API_KEY` and/or one of `OPENAI_API_KEY` / `XAI_API_KEY` —
+  whatever the fixture and LLM providers you intend to use require.
+- `COLMILLO_DB_PATH` — where to persist SQLite. In Docker this defaults to
+  `/var/data/colmillo.db` (the persistent disk mount).
+
+Optional but recommended:
+
+- `COLMILLO_UI_ORIGIN` — comma-separated CORS allowlist (e.g. the UI host).
+- `COLMILLO_RATE_LIMIT_PER_HOUR` — per-key request quota; default `30`.
+  Set to `0` to disable.
+- `COLMILLO_ADMIN_API_KEY` — required to call `GET /admin/stats` (sent as
+  the `X-Admin-API-Key` header, in addition to `X-API-Key`).
+- `SENTRY_DSN` — enables Sentry error reporting. The SDK is already in
+  `requirements.txt`; just set the DSN.
+
+### Run locally
+
+API:
+
+```bash
+uvicorn services.api.main:app --reload --port 8000
+```
+
+UI (in a second terminal):
+
+```bash
+streamlit run services/ui/app.py
+```
+
+The UI defaults to talking to `http://localhost:8000`. Override with
+`COLMILLO_API_URL` if needed.
+
+### REST API surface
+
+All routes (except `/healthz`) require the `X-API-Key` header. `POST /picks`
+is **asynchronous** — it returns `202` immediately and the client polls for
+completion.
+
+| Method | Path                            | Purpose                                           |
+| ------ | ------------------------------- | ------------------------------------------------- |
+| GET    | `/healthz`                      | Open. Reports configured providers (no secrets). |
+| POST   | `/picks`                        | Enqueue a pick run. Returns `202 {id, status, created_at}`. |
+| GET    | `/picks`                        | Paginated history (`limit`, `offset`).            |
+| GET    | `/picks/{id}`                   | Full payload + `status`, `error_*` if failed.     |
+| GET    | `/picks/{id}/status`            | Lightweight `{status, error_stage, error_message, latency_ms}` for polling. |
+| POST   | `/picks/{id}/outcomes`          | Record per-pick outcomes (`win|loss|push|void`). 201. |
+| GET    | `/picks/{id}/outcomes`          | List recorded outcomes.                           |
+| GET    | `/stats/hit-rate?since=...`     | Aggregate counts and `hit_rate` (`win / (win + loss)`). |
+| GET    | `/admin/stats`                  | Operational stats. Requires `X-Admin-API-Key`.    |
+
+Async flow with `curl`:
+
+```bash
+# Submit a pick
+ID=$(curl -s -H "X-API-Key: $COLMILLO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"match_query":"juve - milan today","top_n":3}' \
+  http://localhost:8000/picks | jq -r .id)
+
+# Poll until terminal
+while true; do
+  STATUS=$(curl -s -H "X-API-Key: $COLMILLO_API_KEY" \
+    http://localhost:8000/picks/$ID/status | jq -r .status)
+  [ "$STATUS" = "success" ] || [ "$STATUS" = "failed" ] && break
+  sleep 1
+done
+
+# Fetch the full payload
+curl -s -H "X-API-Key: $COLMILLO_API_KEY" http://localhost:8000/picks/$ID | jq
+```
+
+The UI (`services/ui/app.py`) wraps this loop in
+`PicksAPIClient.wait_for_pick(...)` and shows a spinner while polling.
+
+Errors surface in two places:
+
+- **Synchronous 4xx** on `POST /picks` — request validation (`422`),
+  unsupported LLM combination (`400`), missing provider credentials (`400`).
+- **Asynchronous `failed` status** — anything that goes wrong inside the
+  pipeline (parse, collect, score, llm). Inspect `error_stage` and
+  `error_message` via `GET /picks/{id}/status`.
+
+Rate-limited clients receive `429` with a `Retry-After` header.
+
+## Run with Docker
+
+`docker-compose.yml` builds both images and wires them with a named volume
+for the SQLite database:
+
+```bash
+cp .env.example .env  # then fill in COLMILLO_API_KEY etc.
+docker compose up --build
+```
+
+The API is then on `http://localhost:8000` and the UI on
+`http://localhost:8501`.
+
+## Deploy to Render
+
+`render.yaml` is a Render Blueprint defining two `runtime: docker` web
+services (`colmillo-api`, `colmillo-ui`) on the `starter` plan plus a
+1 GiB persistent disk for SQLite.
+
+1. Push the repo to GitHub.
+2. In Render: **New → Blueprint → connect repo**.
+3. Set the secret env vars in the dashboard (`COLMILLO_API_KEY`,
+   `API_FOOTBALL_API_KEY`, `OPENAI_API_KEY` / `XAI_API_KEY`,
+   `COLMILLO_ADMIN_API_KEY`, optionally `SENTRY_DSN`).
+4. Render auto-deploys on every push to `main`.
+
+The UI service receives the API URL via Render's `fromService` lookup, so
+you don't need to hard-code anything.
+
+## Project layout (HTTP service)
+
+```
+services/
+  api/
+    main.py             FastAPI app + routes
+    db.py               SQLAlchemy models + helpers (PickRun, PickOutcome)
+    middleware.py       Auth, admin gate, rate limit, request logging
+    rate_limit.py       In-memory token bucket
+    sentry.py           Optional Sentry init
+    logging_config.py   JSON log formatter
+  ui/
+    app.py              Streamlit Generate + History pages
+    api_client.py       httpx client used by the UI and tests
+tests/
+  api/                  FastAPI route + persistence tests
+  ui/                   API client tests (httpx.MockTransport → TestClient)
+```
+
+
