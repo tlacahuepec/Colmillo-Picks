@@ -15,9 +15,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.api import main as api_main
+from services.api import db as db_module
 
 
 _TEST_API_KEY = "test-api-key"
+
+
+@pytest.fixture(autouse=True)
+def isolated_db(tmp_path) -> None:
+    """Use a per-test SQLite file so persistence tests don't share state."""
+    db_module.configure_engine(f"sqlite:///{tmp_path / 'colmillo-test.db'}")
 
 
 @pytest.fixture
@@ -316,3 +323,145 @@ def test_json_formatter_serializes_request_fields() -> None:
     assert payload["method"] == "GET"
     assert payload["status_code"] == 200
     assert payload["latency_ms"] == 4
+
+
+# --------------------------------------------------------------------------- #
+# Persistence: POST /picks writes a row, GET /picks lists, GET /picks/{id}    #
+# --------------------------------------------------------------------------- #
+
+
+def test_picks_post_persists_row_and_returns_id(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    _patch_pipeline(
+        monkeypatch,
+        pipeline_result={
+            "report_markdown": "# Stored report",
+            "scores": [{"player": "A", "rank": 1}],
+            "trace": {"llm_status": "not_requested", "notes": ["ok"]},
+            "match_inputs": {"match": {"id": "EPL-1", "fixture_status": "scheduled"}},
+        },
+    )
+
+    response = client.post(
+        "/picks",
+        json={"match_query": "juve - milan today", "league": "Serie A", "top_n": 4},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"]
+    assert body["created_at"]
+    assert body["report_markdown"] == "# Stored report"
+
+    rows = db_module.list_pick_runs(limit=10, offset=0)
+    assert len(rows) == 1
+    stored = rows[0]
+    assert stored.id == body["id"]
+    assert stored.match_query == "juve - milan today"
+    assert stored.competition == "Serie A"
+    assert stored.top_n == 4
+    assert stored.report_markdown == "# Stored report"
+    assert json.loads(stored.scores_json) == [{"player": "A", "rank": 1}]
+    assert json.loads(stored.trace_json)["llm_status"] == "not_requested"
+    assert stored.fixture_status == "scheduled"
+    assert stored.llm_status == "not_requested"
+    assert stored.latency_ms is not None and stored.latency_ms >= 0
+
+
+def test_picks_post_does_not_persist_on_pipeline_error(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    err = api_main.PipelineServiceError(stage="collect")
+    err.__cause__ = ValueError("missing fixture")
+    _patch_pipeline(monkeypatch, pipeline_error=err)
+
+    response = client.post("/picks", json={"match_query": "juve - milan today"})
+
+    assert response.status_code == 400
+    assert db_module.list_pick_runs(limit=10, offset=0) == []
+
+
+def test_list_picks_paginates_in_reverse_chronological_order(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    _patch_pipeline(monkeypatch)
+
+    ids: list[str] = []
+    for label in ("first", "second", "third"):
+        response = client.post(
+            "/picks",
+            json={"match_query": f"juve - milan today {label}", "league": label},
+        )
+        assert response.status_code == 200
+        ids.append(response.json()["id"])
+
+    response = client.get("/picks", params={"limit": 2, "offset": 0})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["limit"] == 2
+    assert body["offset"] == 0
+    assert [item["id"] for item in body["items"]] == [ids[2], ids[1]]
+    assert body["items"][0]["competition"] == "third"
+
+    response = client.get("/picks", params={"limit": 2, "offset": 2})
+    assert response.status_code == 200
+    page = response.json()
+    assert [item["id"] for item in page["items"]] == [ids[0]]
+
+
+def test_list_picks_rejects_out_of_range_limit(client: TestClient) -> None:
+    response = client.get("/picks", params={"limit": 0})
+
+    assert response.status_code == 422
+
+
+def test_get_pick_by_id_returns_full_payload(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    _patch_pipeline(monkeypatch)
+
+    created = client.post("/picks", json={"match_query": "juve - milan today"})
+    pick_id = created.json()["id"]
+
+    response = client.get(f"/picks/{pick_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == pick_id
+    assert body["report_markdown"] == "# Mock report"
+    assert body["scores"] == [{"player": "A"}]
+    assert body["trace"] == {"llm_status": "not_requested"}
+    # Persisted request must not include any auth-related secret keys.
+    assert "x_api_key" not in {k.lower() for k in body["request"].keys()}
+
+
+def test_get_pick_returns_404_for_unknown_id(client: TestClient) -> None:
+    response = client.get("/picks/does-not-exist")
+
+    assert response.status_code == 404
+
+
+def test_record_pick_run_strips_sensitive_request_keys() -> None:
+    row = db_module.record_pick_run(
+        request_payload={
+            "match_query": "x - y today",
+            "top_n": 5,
+            "league": "L",
+            "X_API_KEY": "should-not-persist",
+            "authorization": "Bearer secret",
+        },
+        result={
+            "report_markdown": "r",
+            "scores": [],
+            "trace": {"llm_status": "not_requested"},
+            "match_inputs": {"match": {}},
+        },
+        latency_ms=10,
+    )
+
+    persisted = json.loads(row.request_json)
+    keys_lower = {k.lower() for k in persisted.keys()}
+    assert "x_api_key" not in keys_lower
+    assert "authorization" not in keys_lower
+    assert persisted["match_query"] == "x - y today"
