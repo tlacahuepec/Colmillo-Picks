@@ -8,12 +8,15 @@ markdown report alongside the structured scoring/trace payload.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -28,6 +31,7 @@ from pipeline_service import (  # noqa: E402
     PipelineServiceError,
     run_pipeline_with_payload,
 )
+from services.api import db as db_module  # noqa: E402
 from services.api.logging_config import configure_json_logging  # noqa: E402
 from services.api.middleware import (  # noqa: E402
     APIKeyAuthMiddleware,
@@ -61,10 +65,46 @@ class PicksRequest(BaseModel):
 
 
 class PicksResponse(BaseModel):
+    id: str
+    created_at: datetime
     report_markdown: str
     scores: list[dict[str, Any]]
     trace: dict[str, Any] | None = None
     match_inputs: dict[str, Any]
+
+
+class PickSummary(BaseModel):
+    """Lightweight row used by ``GET /picks`` listings."""
+
+    id: str
+    created_at: datetime
+    match_query: str
+    competition: str | None = None
+    top_n: int
+    fixture_status: str | None = None
+    llm_status: str | None = None
+    latency_ms: int | None = None
+
+
+class PicksListResponse(BaseModel):
+    items: list[PickSummary]
+    limit: int
+    offset: int
+
+
+class PickDetailResponse(BaseModel):
+    id: str
+    created_at: datetime
+    match_query: str
+    competition: str | None = None
+    top_n: int
+    fixture_status: str | None = None
+    llm_status: str | None = None
+    latency_ms: int | None = None
+    request: dict[str, Any]
+    report_markdown: str
+    scores: list[dict[str, Any]]
+    trace: dict[str, Any] | None = None
 
 
 class HealthResponse(BaseModel):
@@ -117,6 +157,8 @@ def create_app() -> FastAPI:
             allow_credentials=False,
         )
 
+    db_module.init_db()
+
     @app.get("/healthz", response_model=HealthResponse)
     def healthz() -> HealthResponse:
         return HealthResponse(status="ok", providers=_provider_status())
@@ -156,7 +198,9 @@ def create_app() -> FastAPI:
         }
 
         try:
+            started = time.perf_counter()
             result = run_pipeline_with_payload(request=request_dict, deps=deps)
+            latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         except PipelineServiceError as exc:
             cause = exc.__cause__
             message = str(cause) if cause else str(exc)
@@ -166,7 +210,58 @@ def create_app() -> FastAPI:
                 detail={"stage": exc.stage, "message": message},
             ) from exc
 
-        return PicksResponse(**result)
+        row = db_module.record_pick_run(
+            request_payload=request_dict,
+            result=result,
+            latency_ms=latency_ms,
+        )
+
+        return PicksResponse(
+            id=row.id,
+            created_at=row.created_at,
+            **result,
+        )
+
+    @app.get("/picks", response_model=PicksListResponse)
+    def list_picks(
+        limit: int = Query(20, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+    ) -> PicksListResponse:
+        rows = db_module.list_pick_runs(limit=limit, offset=offset)
+        items = [
+            PickSummary(
+                id=row.id,
+                created_at=row.created_at,
+                match_query=row.match_query,
+                competition=row.competition,
+                top_n=row.top_n,
+                fixture_status=row.fixture_status,
+                llm_status=row.llm_status,
+                latency_ms=row.latency_ms,
+            )
+            for row in rows
+        ]
+        return PicksListResponse(items=items, limit=limit, offset=offset)
+
+    @app.get("/picks/{pick_id}", response_model=PickDetailResponse)
+    def get_pick(pick_id: str) -> PickDetailResponse:
+        row = db_module.get_pick_run(pick_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Pick not found.")
+        return PickDetailResponse(
+            id=row.id,
+            created_at=row.created_at,
+            match_query=row.match_query,
+            competition=row.competition,
+            top_n=row.top_n,
+            fixture_status=row.fixture_status,
+            llm_status=row.llm_status,
+            latency_ms=row.latency_ms,
+            request=json.loads(row.request_json),
+            report_markdown=row.report_markdown,
+            scores=json.loads(row.scores_json),
+            trace=json.loads(row.trace_json) if row.trace_json else None,
+        )
 
     return app
 
