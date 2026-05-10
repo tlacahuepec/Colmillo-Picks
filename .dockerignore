@@ -1,0 +1,26 @@
+# Ignore everything not needed for image builds.
+.git
+.github
+.idea
+.venv
+venv
+env
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+data/
+*.db
+*.db-journal
+*.sqlite*
+.env
+.envrc
+*.md
+docs/
+README.md
+tests/

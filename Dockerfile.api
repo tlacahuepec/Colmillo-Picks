@@ -1,0 +1,31 @@
+# FastAPI service for the Colmillo-Picks pipeline.
+# Multi-stage build keeps the runtime image small.
+
+FROM python:3.11-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Install runtime dependencies first so they cache independently of source code.
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy only the directories the API needs at runtime.
+COPY services ./services
+COPY skills ./skills
+COPY templates ./templates
+COPY docs ./docs
+
+# Default DB path lives on a Render persistent disk in production. We create
+# the directory here so first-boot writes don't fail when no disk is mounted.
+RUN mkdir -p /var/data
+ENV COLMILLO_DB_PATH=/var/data/colmillo.db \
+    PORT=8000
+
+# Render injects PORT; keep the Dockerfile usable both in compose and Render.
+EXPOSE 8000
+CMD ["sh", "-c", "uvicorn services.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
