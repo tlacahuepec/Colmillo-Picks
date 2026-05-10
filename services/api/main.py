@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # Make the soccer-prop-picks scripts importable without packaging.
@@ -26,6 +27,11 @@ from dependency_bundle import build_dependency_bundle  # noqa: E402
 from pipeline_service import (  # noqa: E402
     PipelineServiceError,
     run_pipeline_with_payload,
+)
+from services.api.logging_config import configure_json_logging  # noqa: E402
+from services.api.middleware import (  # noqa: E402
+    APIKeyAuthMiddleware,
+    RequestLoggingMiddleware,
 )
 
 
@@ -76,12 +82,40 @@ def _provider_status() -> dict[str, bool]:
     }
 
 
+def _cors_origins() -> list[str]:
+    """Parse ``COLMILLO_UI_ORIGIN`` into a list of allowed origins.
+
+    Supports a single origin or a comma-separated list. Returns an empty list
+    when unset, which disables cross-origin access (same-origin only).
+    """
+    raw = os.getenv("COLMILLO_UI_ORIGIN", "").strip()
+    if not raw:
+        return []
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Colmillo-Picks API",
         version="0.1.0",
         description="HTTP wrapper around the soccer prop pick pipeline.",
     )
+
+    # Outermost middleware runs last on the way in / first on the way out, so
+    # add request logging first to ensure it sees the final status code.
+    logger = configure_json_logging()
+    app.add_middleware(APIKeyAuthMiddleware)
+    app.add_middleware(RequestLoggingMiddleware, logger=logger)
+
+    cors_origins = _cors_origins()
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "X-API-Key", "X-Request-Id"],
+            allow_credentials=False,
+        )
 
     @app.get("/healthz", response_model=HealthResponse)
     def healthz() -> HealthResponse:
