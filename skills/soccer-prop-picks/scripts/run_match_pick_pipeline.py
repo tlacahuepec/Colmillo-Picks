@@ -10,12 +10,37 @@ from datetime import datetime, timedelta, timezone
 
 from api_football_provider import ApiFootballFixtureProvider, ApiFootballOddsSnapshotProvider
 from collect_match_inputs import MatchInputRequest, collect_inputs
+from dependency_bundle import (
+    _SUPPORTED_FIXTURE_PROVIDERS,
+    build_dependency_bundle,
+)
 from llm_fixture_provider import LLMFixtureProvider
 from llm.provider_adapter import build_enrich_with_llm
 from pipeline_service import PipelineServiceError, run_pipeline
 from render_pick_report import render_report
 from provider_config import ApiFootballProviderConfig, LLMFixtureProviderConfig
 from score_player_props import score_props
+
+# Re-exported for backwards compatibility with tests/callers that imported these
+# names from the CLI module before the dependency_bundle extraction.
+__all__ = [
+    "ApiFootballFixtureProvider",
+    "ApiFootballOddsSnapshotProvider",
+    "ApiFootballProviderConfig",
+    "LLMFixtureProvider",
+    "LLMFixtureProviderConfig",
+    "MatchInputRequest",
+    "PipelineServiceError",
+    "build_dependency_bundle",
+    "build_enrich_with_llm",
+    "collect_inputs",
+    "main",
+    "parse_cli_args",
+    "parse_match_query",
+    "render_report",
+    "run_pipeline",
+    "score_props",
+]
 
 
 class ParsedMatchQuery(tuple):
@@ -36,7 +61,6 @@ class ParsedMatchQuery(tuple):
 
 _MIN_TOP_N = 1
 _MAX_TOP_N = 5
-_SUPPORTED_FIXTURE_PROVIDERS = {"api-football", "llm", "auto"}
 
 
 def _normalize_team_name(raw_team: str) -> str:
@@ -109,14 +133,6 @@ def _optional_cli_value(raw_value: str | None) -> str | None:
         return None
     value = raw_value.strip()
     return value or None
-
-
-def _fixture_provider_source(raw_value: str | None) -> str:
-    source = (_optional_cli_value(raw_value) or _optional_cli_value(os.getenv("SOCCER_FIXTURE_PROVIDER")) or "api-football").lower()
-    if source not in _SUPPORTED_FIXTURE_PROVIDERS:
-        supported = ", ".join(sorted(_SUPPORTED_FIXTURE_PROVIDERS))
-        raise ValueError(f"Unsupported fixture provider '{source}'. Supported values: {supported}.")
-    return source
 
 
 def _cli_season(raw_value: str) -> str:
@@ -210,96 +226,6 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.fixture_llm_model = _optional_cli_value(args.fixture_llm_model)
     args.fixture_llm_base_url = _optional_cli_value(args.fixture_llm_base_url)
     return args
-
-
-
-
-def _build_llm_fixture_provider(
-    *,
-    fixture_llm_provider: str | None,
-    fixture_llm_model: str | None,
-    fixture_llm_base_url: str | None,
-) -> LLMFixtureProvider:
-    config = LLMFixtureProviderConfig.from_env(
-        provider=fixture_llm_provider,
-        model=fixture_llm_model,
-        base_url=fixture_llm_base_url,
-    )
-    return LLMFixtureProvider(config=config)
-
-
-def build_dependency_bundle(
-    *,
-    use_llm: bool,
-    llm_provider: str | None,
-    llm_model: str | None,
-    allow_deterministic_fallback: bool = False,
-    league: str | None = None,
-    league_id: str | None = None,
-    season: str | None = None,
-    fixture_provider_name: str | None = None,
-    fixture_llm_provider: str | None = None,
-    fixture_llm_model: str | None = None,
-    fixture_llm_base_url: str | None = None,
-) -> dict[str, object]:
-    source = _fixture_provider_source(fixture_provider_name)
-    api_football_config = ApiFootballProviderConfig.from_env()
-    fixture_provider = None
-    odds_provider = None
-
-    if source == "llm":
-        fixture_provider = _build_llm_fixture_provider(
-            fixture_llm_provider=fixture_llm_provider,
-            fixture_llm_model=fixture_llm_model,
-            fixture_llm_base_url=fixture_llm_base_url,
-        )
-    elif source == "auto":
-        llm_config = LLMFixtureProviderConfig.from_env(
-            provider=fixture_llm_provider,
-            model=fixture_llm_model,
-            base_url=fixture_llm_base_url,
-        )
-        if llm_config.is_configured():
-            fixture_provider = LLMFixtureProvider(config=llm_config)
-        elif api_football_config.api_key:
-            fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
-        elif not allow_deterministic_fallback:
-            api_football_config.validate()
-    elif api_football_config.api_key:
-        fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
-    elif not allow_deterministic_fallback:
-        api_football_config.validate()
-
-    if api_football_config.api_key:
-        odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
-
-    competition_hint = _optional_cli_value(league)
-
-    return {
-        "parse_match_query": parse_match_query,
-        "build_match_input_request": lambda *, parsed, competition: MatchInputRequest(
-            home_team=parsed.home_team,
-            away_team=parsed.away_team,
-            match_date=parsed.match_date,
-            competition=competition_hint or competition,
-            competition_hints=[competition_hint] if competition_hint else None,
-            league_id=league_id,
-            season=season,
-        ),
-        "collect_inputs": lambda request: collect_inputs(
-            request,
-            fixture_provider=fixture_provider,
-            odds_provider=odds_provider,
-            allow_fixture_fallback=allow_deterministic_fallback,
-        ),
-        "score_props": score_props,
-        "render_report": render_report,
-        "enrich_with_llm": build_enrich_with_llm(
-            use_llm=use_llm,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-        ),
-    }
 
 
 def main(argv: list[str] | None = None) -> None:
