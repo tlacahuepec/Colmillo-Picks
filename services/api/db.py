@@ -232,17 +232,37 @@ def enqueue_pick_job(*, pick_id: str, request_dict: dict[str, Any], bundle_kwarg
 
 def dequeue_pick_job() -> PickJob | None:
     with session_scope() as session:
-        job = (
-            session.query(PickJob)
-            .filter(PickJob.state == PICK_STATUS_QUEUED)
-            .order_by(PickJob.created_at.asc())
-            .first()
-        )
+        now = datetime.now(timezone.utc)
+        claimed = session.execute(
+            text(
+                """
+                UPDATE pick_jobs
+                SET state = :running_state,
+                    attempts = attempts + 1,
+                    updated_at = :updated_at
+                WHERE id = (
+                    SELECT id
+                    FROM pick_jobs
+                    WHERE state = :queued_state
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "running_state": PICK_STATUS_RUNNING,
+                "queued_state": PICK_STATUS_QUEUED,
+                "updated_at": now,
+            },
+        ).first()
+        if claimed is None:
+            return None
+
+        job = session.get(PickJob, str(claimed.id))
         if job is None:
             return None
-        job.state = PICK_STATUS_RUNNING
-        job.attempts = int(job.attempts or 0) + 1
-        job.updated_at = datetime.now(timezone.utc)
+
         row = session.get(PickRun, job.pick_id)
         if row is not None:
             row.status = PICK_STATUS_RUNNING

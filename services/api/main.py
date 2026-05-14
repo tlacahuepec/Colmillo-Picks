@@ -233,7 +233,7 @@ def _execute_pipeline_job(
     pick_id: str,
     request_dict: dict[str, Any],
     bundle_kwargs: dict[str, Any],
-) -> None:
+) -> bool:
     """Background task body: run the pipeline and update the pending row."""
     started = time.perf_counter()
     try:
@@ -246,15 +246,16 @@ def _execute_pipeline_job(
         db_module.mark_pick_failed(
             pick_id=pick_id, stage=exc.stage, message=message, latency_ms=latency_ms
         )
-        return
+        return False
     except Exception as exc:  # configuration / unexpected errors
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         db_module.mark_pick_failed(
             pick_id=pick_id, stage="unknown", message=str(exc), latency_ms=latency_ms
         )
-        return
+        return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
+    return True
 
 
 # --------------------------------------------------------------------------- #

@@ -14,12 +14,15 @@ def run_worker_loop(poll_seconds: float = 0.5) -> None:
             continue
         pick_id, request_dict, bundle_kwargs, job_id = item
         try:
-            _execute_pipeline_job(
+            success = _execute_pipeline_job(
                 pick_id=pick_id,
                 request_dict=request_dict,
                 bundle_kwargs=bundle_kwargs,
             )
-            jobs.mark_job_done(job_id)
+            if success:
+                jobs.mark_job_done(job_id)
+            else:
+                jobs.mark_job_failed(job_id, "pipeline execution failed")
         except Exception as exc:  # defensive guard
             jobs.mark_job_failed(job_id, str(exc))
 
