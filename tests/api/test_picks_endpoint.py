@@ -54,6 +54,18 @@ def unauthenticated_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(api_main.create_app())
 
 
+
+def _run_next_job() -> None:
+    item = api_main.jobs_module.dequeue_pick_run()
+    assert item is not None
+    pick_id, request_dict, bundle_kwargs, _job_id = item
+    api_main._execute_pipeline_job(
+        pick_id=pick_id,
+        request_dict=request_dict,
+        bundle_kwargs=bundle_kwargs,
+    )
+
+
 def _patch_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -111,12 +123,12 @@ def test_picks_returns_payload_and_report(monkeypatch: pytest.MonkeyPatch, clien
         },
     )
 
-    # POST is async: returns 202 with a pending id; the background task runs
-    # synchronously inside TestClient before the response is returned.
+    # POST is queue-backed: returns 202 and worker processes later.
     assert response.status_code == 202
     accepted = response.json()
-    assert accepted["status"] == "pending"
+    assert accepted["status"] == "queued"
     pick_id = accepted["id"]
+    _run_next_job()
 
     detail = client.get(f"/picks/{pick_id}").json()
     assert detail["status"] == "success"
@@ -177,6 +189,7 @@ def test_picks_records_collect_failure_via_status(
     assert response.status_code == 202
     pick_id = response.json()["id"]
 
+    _run_next_job()
     status = client.get(f"/picks/{pick_id}/status").json()
     assert status["status"] == "failed"
     assert status["error_stage"] == "collect"
@@ -195,6 +208,7 @@ def test_picks_records_score_failure_via_status(
     assert response.status_code == 202
     pick_id = response.json()["id"]
 
+    _run_next_job()
     status = client.get(f"/picks/{pick_id}/status").json()
     assert status["status"] == "failed"
     assert status["error_stage"] == "score"
@@ -368,8 +382,9 @@ def test_picks_post_persists_row_and_returns_id(
     body = response.json()
     assert body["id"]
     assert body["created_at"]
-    assert body["status"] == "pending"
+    assert body["status"] == "queued"
 
+    _run_next_job()
     rows = db_module.list_pick_runs(limit=10, offset=0)
     assert len(rows) == 1
     stored = rows[0]
@@ -396,6 +411,7 @@ def test_picks_post_persists_failed_row_with_error_metadata(
     response = client.post("/picks", json={"match_query": "juve - milan today"})
 
     assert response.status_code == 202
+    _run_next_job()
     rows = db_module.list_pick_runs(limit=10, offset=0)
     assert len(rows) == 1
     stored = rows[0]
@@ -446,6 +462,7 @@ def test_get_pick_by_id_returns_full_payload(
     created = client.post("/picks", json={"match_query": "juve - milan today"})
     pick_id = created.json()["id"]
 
+    _run_next_job()
     response = client.get(f"/picks/{pick_id}")
 
     assert response.status_code == 200

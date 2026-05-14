@@ -47,6 +47,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return test_client
 
 
+def _run_next_job() -> None:
+    item = api_main.jobs_module.dequeue_pick_run()
+    assert item is not None
+    pick_id, request_dict, bundle_kwargs, _ = item
+    api_main._execute_pipeline_job(pick_id=pick_id, request_dict=request_dict, bundle_kwargs=bundle_kwargs)
+
 def _patch_default_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_build_bundle(**_: Any) -> dict[str, Any]:
         return {"deps": "bundle"}
@@ -74,6 +80,7 @@ def test_pick_status_endpoint_reports_success(
     _patch_default_pipeline(monkeypatch)
 
     accepted = client.post("/picks", json={"match_query": "x - y today"}).json()
+    _run_next_job()
     response = client.get(f"/picks/{accepted['id']}/status")
 
     assert response.status_code == 200
@@ -101,6 +108,7 @@ def test_pick_status_endpoint_reports_failure(
     monkeypatch.setattr(api_main, "run_pipeline_with_payload", fake_run_pipeline)
 
     accepted = client.post("/picks", json={"match_query": "x - y today"}).json()
+    _run_next_job()
     body = client.get(f"/picks/{accepted['id']}/status").json()
 
     assert body["status"] == "failed"
@@ -237,6 +245,7 @@ def test_admin_stats_returns_aggregates_when_authorized(
 ) -> None:
     _patch_default_pipeline(monkeypatch)
     pick_id = client.post("/picks", json={"match_query": "x - y today"}).json()["id"]
+    _run_next_job()
     client.post(
         f"/picks/{pick_id}/outcomes",
         json={"outcomes": [{"rank": 1, "player": "A", "market": "shots", "result": "win"}]},

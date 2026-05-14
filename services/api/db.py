@@ -26,6 +26,8 @@ class Base(DeclarativeBase):
 
 # Job status constants used by the async pick pipeline.
 PICK_STATUS_PENDING = "pending"
+PICK_STATUS_QUEUED = "queued"
+PICK_STATUS_RUNNING = "running"
 PICK_STATUS_SUCCESS = "success"
 PICK_STATUS_FAILED = "failed"
 
@@ -73,6 +75,22 @@ class PickOutcome(Base):
     market = Column(String(64), nullable=False)
     result = Column(String(8), nullable=False)  # win | loss | push | void
     recorded_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class PickJob(Base):
+    """Queue row associated with one pick run."""
+
+    __tablename__ = "pick_jobs"
+
+    id = Column(String(36), primary_key=True)
+    pick_id = Column(String(36), nullable=False, index=True)
+    request_json = Column(Text, nullable=False)
+    bundle_kwargs_json = Column(Text, nullable=False)
+    state = Column(String(16), nullable=False, default=PICK_STATUS_QUEUED)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
 
 
 # Module-level engine/session factory; rebuilt by ``configure_engine`` so tests
@@ -188,6 +206,62 @@ def create_pending_pick_run(*, request_payload: dict[str, Any]) -> PickRun:
     with session_scope() as session:
         session.add(row)
     return row
+
+
+def enqueue_pick_job(*, pick_id: str, request_dict: dict[str, Any], bundle_kwargs: dict[str, Any]) -> PickJob:
+    now = datetime.now(timezone.utc)
+    job = PickJob(
+        id=str(uuid.uuid4()),
+        pick_id=pick_id,
+        request_json=json.dumps(request_dict, default=str),
+        bundle_kwargs_json=json.dumps(bundle_kwargs, default=str),
+        state=PICK_STATUS_QUEUED,
+        attempts=0,
+        last_error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    with session_scope() as session:
+        row = session.get(PickRun, pick_id)
+        if row is not None:
+            row.status = PICK_STATUS_QUEUED
+            session.add(row)
+        session.add(job)
+    return job
+
+
+def dequeue_pick_job() -> PickJob | None:
+    with session_scope() as session:
+        job = (
+            session.query(PickJob)
+            .filter(PickJob.state == PICK_STATUS_QUEUED)
+            .order_by(PickJob.created_at.asc())
+            .first()
+        )
+        if job is None:
+            return None
+        job.state = PICK_STATUS_RUNNING
+        job.attempts = int(job.attempts or 0) + 1
+        job.updated_at = datetime.now(timezone.utc)
+        row = session.get(PickRun, job.pick_id)
+        if row is not None:
+            row.status = PICK_STATUS_RUNNING
+            session.add(row)
+        session.add(job)
+        session.flush()
+        session.refresh(job)
+        return job
+
+
+def mark_job_finished(*, job_id: str, success: bool, error_message: str | None = None) -> None:
+    with session_scope() as session:
+        job = session.get(PickJob, job_id)
+        if job is None:
+            return
+        job.state = PICK_STATUS_SUCCESS if success else PICK_STATUS_FAILED
+        job.last_error = error_message
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
 
 
 def mark_pick_success(

@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,7 @@ from pipeline_service import (  # noqa: E402
     run_pipeline_with_payload,
 )
 from services.api import db as db_module  # noqa: E402
+from services.api import jobs as jobs_module  # noqa: E402
 from services.api.logging_config import configure_json_logging  # noqa: E402
 from services.api.middleware import (  # noqa: E402
     APIKeyAuthMiddleware,
@@ -293,7 +294,7 @@ def create_app() -> FastAPI:
 
     # ---- Picks (async) ---------------------------------------------------- #
     @app.post("/picks", response_model=PickAcceptedResponse, status_code=202)
-    def picks(payload: PicksRequest, background_tasks: BackgroundTasks) -> PickAcceptedResponse:
+    def picks(payload: PicksRequest) -> PickAcceptedResponse:
         if payload.use_llm and not payload.llm_provider:
             raise HTTPException(
                 status_code=400,
@@ -322,13 +323,16 @@ def create_app() -> FastAPI:
 
         request_dict = _build_request_dict(payload)
         row = db_module.create_pending_pick_run(request_payload=request_dict)
-        background_tasks.add_task(
-            _execute_pipeline_job,
+        jobs_module.enqueue_pick_run(
             pick_id=row.id,
             request_dict=request_dict,
             bundle_kwargs=bundle_kwargs,
         )
-        return PickAcceptedResponse(id=row.id, status=row.status, created_at=row.created_at)
+        return PickAcceptedResponse(
+            id=row.id,
+            status=db_module.PICK_STATUS_QUEUED,
+            created_at=row.created_at,
+        )
 
     @app.get("/picks", response_model=PicksListResponse)
     def list_picks(
