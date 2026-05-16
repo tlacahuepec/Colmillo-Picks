@@ -54,6 +54,7 @@ def isolated_db(tmp_path) -> None:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> PicksAPIClient:
     monkeypatch.setenv("COLMILLO_API_KEY", _TEST_API_KEY)
+    monkeypatch.setenv("COLMILLO_RATE_LIMIT_PER_HOUR", "0")
     monkeypatch.delenv("COLMILLO_UI_ORIGIN", raising=False)
 
     def fake_build_bundle(**_: Any) -> dict[str, Any]:

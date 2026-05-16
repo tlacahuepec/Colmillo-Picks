@@ -32,6 +32,7 @@ from pipeline_service import (  # noqa: E402
     run_pipeline_with_payload,
 )
 from services.api import db as db_module  # noqa: E402
+from services.api import jobs as jobs_module  # noqa: E402
 from services.api.logging_config import configure_json_logging  # noqa: E402
 from services.api.middleware import (  # noqa: E402
     APIKeyAuthMiddleware,
@@ -232,7 +233,7 @@ def _execute_pipeline_job(
     pick_id: str,
     request_dict: dict[str, Any],
     bundle_kwargs: dict[str, Any],
-) -> None:
+) -> bool:
     """Background task body: run the pipeline and update the pending row."""
     started = time.perf_counter()
     try:
@@ -245,15 +246,37 @@ def _execute_pipeline_job(
         db_module.mark_pick_failed(
             pick_id=pick_id, stage=exc.stage, message=message, latency_ms=latency_ms
         )
-        return
+        return False
     except Exception as exc:  # configuration / unexpected errors
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         db_module.mark_pick_failed(
             pick_id=pick_id, stage="unknown", message=str(exc), latency_ms=latency_ms
         )
-        return
+        return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
+    return True
+
+
+def _run_next_queued_job(
+    pick_id: str,
+    request_dict: dict[str, Any],
+    bundle_kwargs: dict[str, Any],
+) -> None:
+    """Background task: dequeue the just-enqueued job and execute it."""
+    item = jobs_module.dequeue_pick_run()
+    if item is None:
+        return
+    dequeued_pick_id, dequeued_request, dequeued_kwargs, job_id = item
+    success = _execute_pipeline_job(
+        pick_id=dequeued_pick_id,
+        request_dict=dequeued_request,
+        bundle_kwargs=dequeued_kwargs,
+    )
+    if success:
+        jobs_module.mark_job_done(job_id)
+    else:
+        jobs_module.mark_job_failed(job_id, "pipeline execution failed")
 
 
 # --------------------------------------------------------------------------- #
@@ -322,13 +345,20 @@ def create_app() -> FastAPI:
 
         request_dict = _build_request_dict(payload)
         row = db_module.create_pending_pick_run(request_payload=request_dict)
-        background_tasks.add_task(
-            _execute_pipeline_job,
+        jobs_module.enqueue_pick_run(
             pick_id=row.id,
             request_dict=request_dict,
             bundle_kwargs=bundle_kwargs,
         )
-        return PickAcceptedResponse(id=row.id, status=row.status, created_at=row.created_at)
+        if os.environ.get("COLMILLO_WORKER_MODE") != "external":
+            background_tasks.add_task(
+                _run_next_queued_job, row.id, request_dict, bundle_kwargs
+            )
+        return PickAcceptedResponse(
+            id=row.id,
+            status=db_module.PICK_STATUS_PENDING,
+            created_at=row.created_at,
+        )
 
     @app.get("/picks", response_model=PicksListResponse)
     def list_picks(
