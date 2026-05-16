@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -258,6 +258,27 @@ def _execute_pipeline_job(
     return True
 
 
+def _run_next_queued_job(
+    pick_id: str,
+    request_dict: dict[str, Any],
+    bundle_kwargs: dict[str, Any],
+) -> None:
+    """Background task: dequeue the just-enqueued job and execute it."""
+    item = jobs_module.dequeue_pick_run()
+    if item is None:
+        return
+    dequeued_pick_id, dequeued_request, dequeued_kwargs, job_id = item
+    success = _execute_pipeline_job(
+        pick_id=dequeued_pick_id,
+        request_dict=dequeued_request,
+        bundle_kwargs=dequeued_kwargs,
+    )
+    if success:
+        jobs_module.mark_job_done(job_id)
+    else:
+        jobs_module.mark_job_failed(job_id, "pipeline execution failed")
+
+
 # --------------------------------------------------------------------------- #
 # App factory                                                                 #
 # --------------------------------------------------------------------------- #
@@ -295,7 +316,7 @@ def create_app() -> FastAPI:
 
     # ---- Picks (async) ---------------------------------------------------- #
     @app.post("/picks", response_model=PickAcceptedResponse, status_code=202)
-    def picks(payload: PicksRequest) -> PickAcceptedResponse:
+    def picks(payload: PicksRequest, background_tasks: BackgroundTasks) -> PickAcceptedResponse:
         if payload.use_llm and not payload.llm_provider:
             raise HTTPException(
                 status_code=400,
@@ -329,9 +350,13 @@ def create_app() -> FastAPI:
             request_dict=request_dict,
             bundle_kwargs=bundle_kwargs,
         )
+        if os.environ.get("COLMILLO_WORKER_MODE") != "external":
+            background_tasks.add_task(
+                _run_next_queued_job, row.id, request_dict, bundle_kwargs
+            )
         return PickAcceptedResponse(
             id=row.id,
-            status=db_module.PICK_STATUS_QUEUED,
+            status=db_module.PICK_STATUS_PENDING,
             created_at=row.created_at,
         )
 

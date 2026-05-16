@@ -41,6 +41,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.delenv("SOCCER_FIXTURE_LLM_API_KEY", raising=False)
     monkeypatch.delenv("COLMILLO_UI_ORIGIN", raising=False)
     monkeypatch.setenv("COLMILLO_API_KEY", _TEST_API_KEY)
+    monkeypatch.setenv("COLMILLO_WORKER_MODE", "external")
     test_client = TestClient(api_main.create_app())
     test_client.headers.update({"X-API-Key": _TEST_API_KEY})
     return test_client
@@ -126,7 +127,7 @@ def test_picks_returns_payload_and_report(monkeypatch: pytest.MonkeyPatch, clien
     # POST is queue-backed: returns 202 and worker processes later.
     assert response.status_code == 202
     accepted = response.json()
-    assert accepted["status"] == "queued"
+    assert accepted["status"] == "pending"
     pick_id = accepted["id"]
     _run_next_job()
 
@@ -382,7 +383,7 @@ def test_picks_post_persists_row_and_returns_id(
     body = response.json()
     assert body["id"]
     assert body["created_at"]
-    assert body["status"] == "queued"
+    assert body["status"] == "pending"
 
     _run_next_job()
     rows = db_module.list_pick_runs(limit=10, offset=0)

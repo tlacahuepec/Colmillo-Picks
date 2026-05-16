@@ -41,6 +41,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("COLMILLO_ADMIN_API_KEY", _ADMIN_API_KEY)
     # Disable rate-limiting by default; specific tests opt back in.
     monkeypatch.setenv("COLMILLO_RATE_LIMIT_PER_HOUR", "0")
+    monkeypatch.setenv("COLMILLO_WORKER_MODE", "external")
 
     test_client = TestClient(api_main.create_app())
     test_client.headers.update({"X-API-Key": _TEST_API_KEY})

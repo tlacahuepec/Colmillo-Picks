@@ -15,6 +15,7 @@ def isolated_db(tmp_path) -> None:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("COLMILLO_API_KEY", _TEST_API_KEY)
+    monkeypatch.setenv("COLMILLO_WORKER_MODE", "external")
     test_client = TestClient(api_main.create_app())
     test_client.headers.update({"X-API-Key": _TEST_API_KEY})
     return test_client
@@ -27,7 +28,7 @@ def test_post_picks_enqueues_job(monkeypatch: pytest.MonkeyPatch, client: TestCl
 
     assert response.status_code == 202
     pick_id = response.json()["id"]
-    assert response.json()["status"] == "queued"
+    assert response.json()["status"] == "pending"
 
     status = client.get(f"/picks/{pick_id}/status").json()
     assert status["status"] == "queued"
