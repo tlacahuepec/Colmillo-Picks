@@ -9,6 +9,7 @@ _DEFAULT_API_FOOTBALL_HOST = "v3.football.api-sports.io"
 _DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1"
 _DEFAULT_OPENAI_FIXTURE_MODEL = "gpt-4.1-mini"
+_DEFAULT_GEMINI_FIXTURE_MODEL = "gemini-2.5-flash"
 
 
 @dataclass(frozen=True)
@@ -72,13 +73,15 @@ class LLMFixtureProviderConfig:
         )
 
     def is_configured(self) -> bool:
+        if self.provider == "gemini":
+            return bool(self.api_key and self.model)
         return bool(self.api_key and self.base_url and self.model)
 
     def validate(self) -> None:
-        if self.provider not in {"openai", "xai", "openai-compatible"}:
+        if self.provider not in {"openai", "xai", "gemini", "openai-compatible"}:
             raise ValueError(
                 "Unsupported fixture LLM provider "
-                f"'{self.provider}'. Supported values: openai, xai, openai-compatible."
+                f"'{self.provider}'. Supported values: openai, xai, gemini, openai-compatible."
             )
         if not self.api_key:
             raise ValueError(
@@ -96,6 +99,8 @@ def _infer_llm_provider(getenv: Callable[[str], str | None]) -> str:
         return "openai"
     if _clean(getenv("XAI_API_KEY")) or _clean(getenv("GROK_API_KEY")):
         return "xai"
+    if _clean(getenv("GEMINI_API_KEY")):
+        return "gemini"
     return "openai-compatible"
 
 
@@ -103,6 +108,8 @@ def _normalize_llm_provider(provider: str) -> str:
     normalized = provider.strip().lower()
     if normalized in {"grok", "x-ai"}:
         return "xai"
+    if normalized == "google":
+        return "gemini"
     return normalized
 
 
@@ -111,6 +118,8 @@ def _provider_api_key(provider: str, getenv: Callable[[str], str | None]) -> str
         return _clean(getenv("OPENAI_API_KEY"))
     if provider == "xai":
         return _clean(getenv("XAI_API_KEY")) or _clean(getenv("GROK_API_KEY"))
+    if provider == "gemini":
+        return _clean(getenv("GEMINI_API_KEY"))
     return None
 
 
@@ -119,6 +128,8 @@ def _provider_base_url(provider: str, getenv: Callable[[str], str | None]) -> st
         return _clean(getenv("OPENAI_BASE_URL")) or _DEFAULT_OPENAI_COMPATIBLE_BASE_URL
     if provider == "xai":
         return _clean(getenv("XAI_BASE_URL")) or _clean(getenv("GROK_BASE_URL")) or _DEFAULT_XAI_BASE_URL
+    if provider == "gemini":
+        return "https://generativelanguage.googleapis.com"
     return None
 
 
@@ -127,6 +138,8 @@ def _provider_model(provider: str, getenv: Callable[[str], str | None]) -> str |
         return _clean(getenv("OPENAI_MODEL")) or _DEFAULT_OPENAI_FIXTURE_MODEL
     if provider == "xai":
         return _clean(getenv("XAI_MODEL")) or _clean(getenv("GROK_MODEL"))
+    if provider == "gemini":
+        return _clean(getenv("GEMINI_MODEL")) or _DEFAULT_GEMINI_FIXTURE_MODEL
     return None
 
 
