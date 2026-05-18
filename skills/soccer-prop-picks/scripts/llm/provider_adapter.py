@@ -7,8 +7,10 @@ from llm.langchain_enricher import LangChainEnricher, default_prompt_builder, de
 from llm.langgraph_flow import SimpleLangGraphFlow
 from llm.mock_client import DeterministicMockLLMClient
 from llm.openai_client import OpenAILLMClient
+from llm.gemini_client import GeminiLLMClient
 
 _DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 def _as_chat_model(client: object) -> Callable[[dict[str, str]], dict]:
@@ -26,11 +28,13 @@ def validate_llm_runtime_config(*, use_llm: bool, llm_provider: str | None, gete
         raise ValueError("--llm-provider is required when --use-llm is set.")
 
     provider = llm_provider.lower().strip()
-    if provider != "openai":
-        raise ValueError(f"Unsupported --llm-provider '{llm_provider}'. Supported values: openai.")
+    if provider not in {"openai", "gemini"}:
+        raise ValueError(f"Unsupported --llm-provider '{llm_provider}'. Supported values: openai, gemini.")
 
-    if not getenv("OPENAI_API_KEY"):
+    if provider == "openai" and not getenv("OPENAI_API_KEY"):
         raise ValueError("Missing credentials for provider 'openai'. Set OPENAI_API_KEY.")
+    if provider == "gemini" and not getenv("GEMINI_API_KEY"):
+        raise ValueError("Missing credentials for provider 'gemini'. Set GEMINI_API_KEY.")
 
 
 def build_enrich_with_llm(
@@ -47,16 +51,21 @@ def build_enrich_with_llm(
     else:
         validate_llm_runtime_config(use_llm=use_llm, llm_provider=llm_provider, getenv=getenv)
         provider = str(llm_provider).lower().strip()
-        if provider != "openai":
-            raise ValueError(f"Unsupported --llm-provider '{llm_provider}'. Supported values: openai.")
+        if provider == "gemini":
+            client = GeminiLLMClient(
+                api_key=getenv("GEMINI_API_KEY"),
+                model=(llm_model or _DEFAULT_GEMINI_MODEL),
+            )
+        elif provider == "openai":
+            if openai_client_factory is None:
+                from openai import OpenAI
 
-        if openai_client_factory is None:
-            from openai import OpenAI
+                openai_client_factory = OpenAI
 
-            openai_client_factory = OpenAI
-
-        sdk_client = openai_client_factory(api_key=getenv("OPENAI_API_KEY"))
-        client = OpenAILLMClient(sdk_client=sdk_client, model=(llm_model or _DEFAULT_OPENAI_MODEL))
+            sdk_client = openai_client_factory(api_key=getenv("OPENAI_API_KEY"))
+            client = OpenAILLMClient(sdk_client=sdk_client, model=(llm_model or _DEFAULT_OPENAI_MODEL))
+        else:
+            raise ValueError(f"Unsupported --llm-provider '{llm_provider}'. Supported values: openai, gemini.")
 
     chat_model = _as_chat_model(client)
 

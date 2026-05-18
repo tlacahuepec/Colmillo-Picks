@@ -15,7 +15,7 @@ from api_football_provider import (
 )
 from availability import DeterministicMockAvailabilityAdapter, PrizePicksAdapter
 from collect_match_inputs import MatchInputRequest, collect_inputs
-from llm_fixture_provider import LLMFixtureProvider
+from llm_fixture_provider import GeminiChatClient, LLMFixtureProvider
 from llm.provider_adapter import build_enrich_with_llm
 from provider_config import ApiFootballProviderConfig, LLMFixtureProviderConfig
 from render_pick_report import render_report
@@ -58,6 +58,9 @@ def _build_llm_fixture_provider(
         model=fixture_llm_model,
         base_url=fixture_llm_base_url,
     )
+    if config.provider == "gemini":
+        client = GeminiChatClient(api_key=config.api_key or "", model=config.model or "")
+        return LLMFixtureProvider(config=config, client=client)
     return LLMFixtureProvider(config=config)
 
 

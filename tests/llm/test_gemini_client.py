@@ -1,0 +1,128 @@
+"""Tests for the Gemini LLM client and provider wiring."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from llm.client import LLMError
+from llm.gemini_client import GeminiLLMClient
+from llm.provider_adapter import build_enrich_with_llm, validate_llm_runtime_config
+
+
+class _FakeResponse:
+    def __init__(self, text: str):
+        self.text = text
+
+
+class _FakeClient:
+    def __init__(self, *, api_key: str):
+        self.api_key = api_key
+        self.models = self
+
+    def generate_content(self, *, model, contents, config):
+        return _FakeResponse('{"scores": [{"player": "A", "confidence": "high"}]}')
+
+
+class _FailingClient:
+    def __init__(self, *, api_key: str):
+        self.models = self
+
+    def generate_content(self, **kwargs):
+        raise TimeoutError("request timed out")
+
+
+def test_gemini_client_returns_parsed_json() -> None:
+    client = GeminiLLMClient(api_key="test-key", client_factory=_FakeClient)
+
+    result = client.generate_structured(
+        system_prompt="You are a sports analyst.",
+        user_prompt="Score these picks.",
+        schema={},
+    )
+
+    assert result == {"scores": [{"player": "A", "confidence": "high"}]}
+
+
+def test_gemini_client_raises_on_empty_response() -> None:
+    class _EmptyClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponse("")
+
+    client = GeminiLLMClient(api_key="test-key", client_factory=_EmptyClient)
+
+    with pytest.raises(LLMError, match="empty response"):
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+
+def test_gemini_client_raises_on_invalid_json() -> None:
+    class _BadJsonClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponse("not json at all")
+
+    client = GeminiLLMClient(api_key="test-key", client_factory=_BadJsonClient)
+
+    with pytest.raises(LLMError, match="invalid JSON"):
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+
+def test_gemini_client_retries_on_timeout() -> None:
+    call_count = 0
+
+    class _TimeoutThenSuccessClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise TimeoutError("timed out")
+            return _FakeResponse('{"ok": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_TimeoutThenSuccessClient,
+        max_retries=1,
+        sleep_fn=lambda _: None,
+    )
+
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert result == {"ok": True}
+    assert call_count == 2
+
+
+def test_validate_accepts_gemini_provider() -> None:
+    validate_llm_runtime_config(
+        use_llm=True,
+        llm_provider="gemini",
+        getenv=lambda k: "fake-key" if k == "GEMINI_API_KEY" else None,
+    )
+
+
+def test_validate_rejects_gemini_without_key() -> None:
+    with pytest.raises(ValueError, match="GEMINI_API_KEY"):
+        validate_llm_runtime_config(
+            use_llm=True,
+            llm_provider="gemini",
+            getenv=lambda _: None,
+        )
+
+
+def test_build_enrich_with_llm_gemini_provider() -> None:
+    enrich_fn = build_enrich_with_llm(
+        use_llm=True,
+        llm_provider="gemini",
+        llm_model="gemini-2.5-flash",
+        getenv=lambda k: "fake-key" if k == "GEMINI_API_KEY" else None,
+        openai_client_factory=lambda **_: MagicMock(),
+    )
+
+    assert callable(enrich_fn)
