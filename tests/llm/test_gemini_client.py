@@ -126,3 +126,42 @@ def test_build_enrich_with_llm_gemini_provider() -> None:
     )
 
     assert callable(enrich_fn)
+
+
+def test_validate_falls_back_to_env_var_when_no_flag() -> None:
+    env = {"COLMILLO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "fake-key"}
+    validate_llm_runtime_config(
+        use_llm=True,
+        llm_provider=None,
+        getenv=env.get,
+    )
+
+
+def test_validate_error_mentions_env_var_when_neither_set() -> None:
+    with pytest.raises(ValueError, match="COLMILLO_LLM_PROVIDER"):
+        validate_llm_runtime_config(
+            use_llm=True,
+            llm_provider=None,
+            getenv=lambda _: None,
+        )
+
+
+def test_explicit_flag_overrides_env_var() -> None:
+    env = {"COLMILLO_LLM_PROVIDER": "openai", "GEMINI_API_KEY": "fake-key"}
+    validate_llm_runtime_config(
+        use_llm=True,
+        llm_provider="gemini",
+        getenv=env.get,
+    )
+
+
+def test_build_enrich_uses_env_provider_when_flag_is_none() -> None:
+    env = {"COLMILLO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "fake-key"}
+    enrich_fn = build_enrich_with_llm(
+        use_llm=True,
+        llm_provider=None,
+        llm_model=None,
+        getenv=env.get,
+    )
+
+    assert callable(enrich_fn)
