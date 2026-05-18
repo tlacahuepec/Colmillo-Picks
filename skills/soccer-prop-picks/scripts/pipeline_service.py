@@ -129,10 +129,22 @@ def run_pipeline_with_payload(
             fallback_used=False,
         )
 
+    availability_data: dict[str, Any] = {}
+    check_availability = deps.get("check_availability")
+    if check_availability is not None:
+        try:
+            pick_list = [
+                {"player_id": p.get("player_id", ""), "market": p.get("market", "")}
+                for p in scored_payload["scores"][:top_n]
+            ]
+            availability_data = check_availability(pick_list)
+        except Exception:
+            pass
+
     report_markdown = deps["render_report"](
         scored_props=scored_payload["scores"],
         match_inputs=match_inputs,
-        availability_data=request.get("availability_data", {}),
+        availability_data=availability_data,
         top_n=top_n,
         trace=scored_payload.get("trace"),
     )

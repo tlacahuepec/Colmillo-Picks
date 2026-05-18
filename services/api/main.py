@@ -65,6 +65,9 @@ class PicksRequest(BaseModel):
     fixture_llm_model: str | None = None
     fixture_llm_base_url: str | None = None
     allow_deterministic_fallback: bool = False
+    availability_provider: str | None = Field(
+        None, description="prizepicks | mock | none. Defaults to env COLMILLO_AVAILABILITY_PROVIDER."
+    )
 
 
 class PickAcceptedResponse(BaseModel):
@@ -335,6 +338,7 @@ def create_app() -> FastAPI:
             fixture_llm_provider=payload.fixture_llm_provider,
             fixture_llm_model=payload.fixture_llm_model,
             fixture_llm_base_url=payload.fixture_llm_base_url,
+            availability_provider=payload.availability_provider,
         )
         # Validate provider configuration synchronously so callers get a 400
         # for missing credentials instead of an asynchronous "failed" row.

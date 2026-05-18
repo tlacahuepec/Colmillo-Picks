@@ -13,6 +13,7 @@ from api_football_provider import (
     ApiFootballFixtureProvider,
     ApiFootballOddsSnapshotProvider,
 )
+from availability import DeterministicMockAvailabilityAdapter, PrizePicksAdapter
 from collect_match_inputs import MatchInputRequest, collect_inputs
 from llm_fixture_provider import LLMFixtureProvider
 from llm.provider_adapter import build_enrich_with_llm
@@ -22,6 +23,7 @@ from score_player_props import score_props
 
 
 _SUPPORTED_FIXTURE_PROVIDERS = {"api-football", "llm", "auto"}
+_SUPPORTED_AVAILABILITY_PROVIDERS = {"prizepicks", "mock", "none"}
 
 
 def _optional_value(raw_value: str | None) -> str | None:
@@ -72,6 +74,7 @@ def build_dependency_bundle(
     fixture_llm_provider: str | None = None,
     fixture_llm_model: str | None = None,
     fixture_llm_base_url: str | None = None,
+    availability_provider: str | None = None,
     parse_match_query=None,
 ) -> dict[str, object]:
     """Wire fixture/odds/LLM providers and return a deps dict for ``run_pipeline``.
@@ -121,6 +124,22 @@ def build_dependency_bundle(
     if api_football_config.api_key:
         odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
 
+    availability_source = (
+        _optional_value(availability_provider)
+        or _optional_value(os.getenv("COLMILLO_AVAILABILITY_PROVIDER"))
+        or "none"
+    ).lower()
+    if availability_source not in _SUPPORTED_AVAILABILITY_PROVIDERS:
+        supported = ", ".join(sorted(_SUPPORTED_AVAILABILITY_PROVIDERS))
+        raise ValueError(
+            f"Unsupported availability provider '{availability_source}'. Supported: {supported}."
+        )
+    availability_adapter = None
+    if availability_source == "prizepicks":
+        availability_adapter = PrizePicksAdapter()
+    elif availability_source == "mock":
+        availability_adapter = DeterministicMockAvailabilityAdapter()
+
     competition_hint = _optional_value(league)
 
     return {
@@ -147,4 +166,5 @@ def build_dependency_bundle(
             llm_provider=llm_provider,
             llm_model=llm_model,
         ),
+        "check_availability": availability_adapter.check_picks if availability_adapter else None,
     }
