@@ -21,14 +21,14 @@ services:
         sync: false  # set in the Render dashboard
       - key: COLMILLO_UI_ORIGIN
         sync: false
-      - key: API_FOOTBALL_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: XAI_API_KEY
         sync: false
       - key: SOCCER_FIXTURE_PROVIDER
-        value: auto
+        value: llm
       - key: SOCCER_FIXTURE_LLM_API_KEY
         sync: false
       - key: SOCCER_FIXTURE_LLM_MODEL

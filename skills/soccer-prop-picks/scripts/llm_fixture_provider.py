@@ -140,6 +140,9 @@ class OpenAICompatibleChatClient:
             raise LLMFixtureProviderError("Fixture LLM returned invalid response payload")
         return _parse_json_object(_extract_message_content(payload))
 
+    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
+        return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+
 
 class GeminiChatClient:
     """Gemini SDK client matching the generate_json interface used by LLMFixtureProvider."""
@@ -172,6 +175,9 @@ class GeminiChatClient:
             raise LLMFixtureProviderError("Gemini returned empty fixture response")
         return _parse_json_object(text)
 
+    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
+        return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+
 
 class LLMFixtureProvider:
     """Resolve fixtures through an LLM and map into the pipeline fixture schema."""
@@ -198,9 +204,10 @@ class LLMFixtureProvider:
         )
 
     def lookup_fixture(self, request: Any) -> dict[str, Any] | None:
-        result = self.client.generate_json(
+        result = self.client.generate_structured(
             system_prompt=self._build_system_prompt(),
             user_prompt=self._build_user_prompt(request),
+            schema={},
         )
         if not bool(result.get("match_found")):
             return None
@@ -223,8 +230,6 @@ class LLMFixtureProvider:
         away_team = getattr(request, "parsed_away_team", None) or request.away_team
         competition = getattr(request, "competition", None) or "League"
         competition_hints = getattr(request, "competition_hints", None) or []
-        league_id = getattr(request, "league_id", None)
-        season = getattr(request, "season", None)
 
         return json.dumps(
             {
@@ -236,8 +241,6 @@ class LLMFixtureProvider:
                     "match_date": match_date,
                     "competition": competition,
                     "competition_hints": competition_hints,
-                    "league_id": league_id,
-                    "season": season,
                 },
                 "required_json_shape": {
                     "match_found": True,

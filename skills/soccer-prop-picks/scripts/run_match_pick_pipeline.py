@@ -8,7 +8,6 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 
-from api_football_provider import ApiFootballFixtureProvider, ApiFootballOddsSnapshotProvider
 from collect_match_inputs import MatchInputRequest, collect_inputs
 from dependency_bundle import (
     _SUPPORTED_FIXTURE_PROVIDERS,
@@ -18,15 +17,10 @@ from llm_fixture_provider import LLMFixtureProvider
 from llm.provider_adapter import build_enrich_with_llm
 from pipeline_service import PipelineServiceError, run_pipeline
 from render_pick_report import render_report
-from provider_config import ApiFootballProviderConfig, LLMFixtureProviderConfig
+from provider_config import LLMFixtureProviderConfig
 from score_player_props import score_props
 
-# Re-exported for backwards compatibility with tests/callers that imported these
-# names from the CLI module before the dependency_bundle extraction.
 __all__ = [
-    "ApiFootballFixtureProvider",
-    "ApiFootballOddsSnapshotProvider",
-    "ApiFootballProviderConfig",
     "LLMFixtureProvider",
     "LLMFixtureProviderConfig",
     "MatchInputRequest",
@@ -135,17 +129,6 @@ def _optional_cli_value(raw_value: str | None) -> str | None:
     return value or None
 
 
-def _cli_season(raw_value: str) -> str:
-    value = raw_value.strip()
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("season must be a four-digit year") from exc
-    if parsed < 1900 or parsed > 2200:
-        raise argparse.ArgumentTypeError("season must be a four-digit year")
-    return str(parsed)
-
-
 def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run soccer prop pick pipeline for a match query.")
     parser.add_argument("match_query", help="Match query like 'juve - milan today'")
@@ -163,7 +146,7 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--llm-provider",
         default=None,
-        help="LLM provider to use when --use-llm is set (supported: openai).",
+        help="LLM provider to use when --use-llm is set (supported: gemini, openai, grok).",
     )
     parser.add_argument(
         "--llm-model",
@@ -176,17 +159,6 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional competition name hint/display value, e.g. 'Premier League'.",
     )
     parser.add_argument(
-        "--league-id",
-        default=None,
-        help="Optional API-Football league ID hint.",
-    )
-    parser.add_argument(
-        "--season",
-        type=_cli_season,
-        default=None,
-        help="Optional API-Football season hint, e.g. 2025.",
-    )
-    parser.add_argument(
         "--allow-deterministic-fallback",
         action="store_true",
         help="Use deterministic fallback data when fixture lookup fails.",
@@ -196,14 +168,13 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=sorted(_SUPPORTED_FIXTURE_PROVIDERS),
         default=None,
         help=(
-            "Fixture lookup source. Defaults to SOCCER_FIXTURE_PROVIDER or api-football. "
-            "Use llm for OpenAI/Grok/openai-compatible fixture lookup."
+            "Fixture lookup source. Defaults to SOCCER_FIXTURE_PROVIDER or llm."
         ),
     )
     parser.add_argument(
         "--fixture-llm-provider",
         default=None,
-        help="Fixture LLM provider hint (openai, xai, or openai-compatible).",
+        help="Fixture LLM provider hint (gemini, openai, xai).",
     )
     parser.add_argument(
         "--fixture-llm-model",
@@ -220,7 +191,6 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.use_llm and not args.llm_provider:
         parser.error("--llm-provider is required when --use-llm is set.")
     args.league = _optional_cli_value(args.league)
-    args.league_id = _optional_cli_value(args.league_id)
     args.fixture_provider = _optional_cli_value(args.fixture_provider)
     args.fixture_llm_provider = _optional_cli_value(args.fixture_llm_provider)
     args.fixture_llm_model = _optional_cli_value(args.fixture_llm_model)
@@ -237,8 +207,6 @@ def main(argv: list[str] | None = None) -> None:
             llm_model=args.llm_model,
             allow_deterministic_fallback=args.allow_deterministic_fallback,
             league=args.league,
-            league_id=args.league_id,
-            season=args.season,
             fixture_provider_name=getattr(args, "fixture_provider", None),
             fixture_llm_provider=getattr(args, "fixture_llm_provider", None),
             fixture_llm_model=getattr(args, "fixture_llm_model", None),

@@ -1,9 +1,10 @@
-"""CLI for the Grok daily soccer intelligence task.
+"""CLI for the daily soccer intelligence task.
 
 Usage:
-    XAI_API_KEY=... python run_daily_intelligence.py
-    XAI_API_KEY=... python run_daily_intelligence.py --top-n 3 --date 2026-05-21
-    XAI_API_KEY=... python run_daily_intelligence.py --output-json /tmp/briefing.json
+    GEMINI_API_KEY=... python run_daily_intelligence.py
+    GEMINI_API_KEY=... python run_daily_intelligence.py --provider gemini --top-n 3 --date 2026-05-21
+    XAI_API_KEY=... python run_daily_intelligence.py --provider grok
+    python run_daily_intelligence.py --output-json /tmp/briefing.json
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from grok_daily_intelligence import GrokDailyIntelligenceClient, GrokDailyIntelligenceError
+from daily_intelligence import DailyIntelligenceClient, DailyIntelligenceError
 
 
 def _today_utc() -> str:
@@ -41,7 +42,14 @@ def _parse_top_n(value: str) -> int:
 
 def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch today's top soccer matches with injuries, lineups, and odds via Grok."
+        description="Fetch today's top soccer matches with injuries, lineups, and odds via LLM."
+    )
+    parser.add_argument(
+        "--provider",
+        type=str,
+        default=None,
+        metavar="PROVIDER",
+        help="LLM provider to use: gemini, grok, openai (default: COLMILLO_LLM_PROVIDER or gemini)",
     )
     parser.add_argument(
         "--top-n",
@@ -71,13 +79,13 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_cli_args(argv)
 
     try:
-        client = GrokDailyIntelligenceClient.from_env()
-    except GrokDailyIntelligenceError as exc:
+        client = DailyIntelligenceClient.from_env(provider=args.provider)
+    except DailyIntelligenceError as exc:
         raise SystemExit(f"Error: {exc}") from exc
 
     try:
         briefing = client.fetch_daily_briefing(date_utc=args.date, top_n=args.top_n)
-    except GrokDailyIntelligenceError as exc:
+    except DailyIntelligenceError as exc:
         raise SystemExit(f"Error: {exc}") from exc
 
     output = json.dumps(briefing, indent=2, ensure_ascii=False)

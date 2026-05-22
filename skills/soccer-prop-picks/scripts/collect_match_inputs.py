@@ -7,9 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from api_football_provider import ApiFootballFixtureProvider, ApiFootballOddsSnapshotProvider
 from normalizers import normalize_match_date, normalize_player, normalize_snapshots, normalize_team_name, normalize_weather
-from provider_config import ApiFootballProviderConfig
 from payload_builder import build_payload, build_teams_payload
 from provider_resolution import (
     ResolutionContext,
@@ -62,8 +60,6 @@ class MatchInputRequest:
     parsed_away_team: str | None = None
     parsed_match_date: str | None = None
     competition_hints: list[str] | None = None
-    league_id: str | None = None
-    season: str | None = None
 
 
 def _utc_now_z() -> str:
@@ -235,17 +231,11 @@ def _default_fixture_from_request(request: MatchInputRequest) -> dict[str, Any]:
 
 
 def _default_fixture_provider() -> FixtureLookupProvider:
-    config = ApiFootballProviderConfig.from_env()
-    if not config.api_key:
-        return DeterministicFixtureProvider()
-    return ApiFootballFixtureProvider(config=config)
+    return DeterministicFixtureProvider()
 
 
 def _default_odds_provider() -> OddsSnapshotProvider:
-    config = ApiFootballProviderConfig.from_env()
-    if not config.api_key:
-        return DeterministicOddsProvider()
-    return ApiFootballOddsSnapshotProvider(config=config)
+    return DeterministicOddsProvider()
 
 
 def collect_inputs(
@@ -335,8 +325,6 @@ def main() -> None:
     parser.add_argument("away_team", help="Away team name")
     parser.add_argument("match_date", help="Match date in YYYY-MM-DD")
     parser.add_argument("--competition", default="League", help="Competition code/name")
-    parser.add_argument("--league-id", default=None, help="API-Football league ID hint")
-    parser.add_argument("--season", default=None, help="API-Football season hint")
     parser.add_argument(
         "--strict-fixture",
         action="store_true",
@@ -351,8 +339,6 @@ def main() -> None:
             match_date=args.match_date,
             competition=args.competition,
             competition_hints=[args.competition] if args.competition != "League" else None,
-            league_id=args.league_id,
-            season=args.season,
         ),
         allow_fixture_fallback=not args.strict_fixture,
     )
