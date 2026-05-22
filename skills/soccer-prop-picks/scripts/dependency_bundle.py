@@ -12,6 +12,7 @@ import os
 from availability import DeterministicMockAvailabilityAdapter, PrizePicksAdapter
 from collect_match_inputs import MatchInputRequest, collect_inputs
 from llm_fixture_provider import LLMFixtureProvider
+from llm_lineup_provider import LLMLineupProvider
 from llm.gemini_client import GeminiLLMClient
 from llm.grok_client import GrokLLMClient
 from llm.provider_adapter import build_enrich_with_llm
@@ -67,6 +68,27 @@ def _build_llm_fixture_provider(
         )
         return LLMFixtureProvider(config=config, client=client)
     return LLMFixtureProvider(config=config)
+
+
+def _build_llm_lineup_provider(
+    *,
+    fixture_llm_provider: str | None,
+    fixture_llm_model: str | None,
+    fixture_llm_base_url: str | None,
+) -> LLMLineupProvider | None:
+    config = LLMFixtureProviderConfig.from_env(
+        provider=fixture_llm_provider,
+        model=fixture_llm_model,
+        base_url=fixture_llm_base_url,
+    )
+    if config.provider == "gemini" and config.api_key:
+        client = GeminiLLMClient(
+            api_key=config.api_key,
+            model=config.model or "gemini-2.5-flash",
+            search_grounding=True,
+        )
+        return LLMLineupProvider(client=client)
+    return None
 
 
 def build_dependency_bundle(
@@ -145,6 +167,12 @@ def build_dependency_bundle(
 
     competition_hint = _optional_value(league)
 
+    lineup_provider = _build_llm_lineup_provider(
+        fixture_llm_provider=fixture_llm_provider,
+        fixture_llm_model=fixture_llm_model,
+        fixture_llm_base_url=fixture_llm_base_url,
+    )
+
     return {
         "parse_match_query": parse_match_query,
         "build_match_input_request": lambda *, parsed, competition: MatchInputRequest(
@@ -157,6 +185,7 @@ def build_dependency_bundle(
         "collect_inputs": lambda request: collect_inputs(
             request,
             fixture_provider=fixture_provider,
+            lineup_provider=lineup_provider,
             allow_fixture_fallback=allow_deterministic_fallback,
         ),
         "score_props": score_props,

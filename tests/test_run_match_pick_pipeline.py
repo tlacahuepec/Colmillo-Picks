@@ -346,6 +346,7 @@ def test_build_dependency_bundle_defaults_to_llm_fixture_provider(monkeypatch: p
         provider_label = "LLM"
 
     monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FakeProvider())
+    monkeypatch.setattr(dependency_bundle, "_build_llm_lineup_provider", lambda **kw: None)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
@@ -373,7 +374,7 @@ def test_build_dependency_bundle_wires_llm_fixture_provider(monkeypatch: pytest.
     monkeypatch.setenv("SOCCER_FIXTURE_LLM_API_KEY", "fixture-key")
     monkeypatch.setattr(dependency_bundle, "LLMFixtureProvider", _FakeLLMFixtureProvider)
 
-    deps = pipeline.build_dependency_bundle(
+    pipeline.build_dependency_bundle(
         use_llm=False,
         llm_provider=None,
         llm_model=None,
@@ -444,6 +445,7 @@ def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payload
 
     import dependency_bundle
     monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FixtureProvider())
+    monkeypatch.setattr(dependency_bundle, "_build_llm_lineup_provider", lambda **kw: None)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
@@ -483,6 +485,7 @@ def test_build_dependency_bundle_collect_inputs_rejects_missing_fixture_by_defau
 
     import dependency_bundle
     monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FixtureProvider())
+    monkeypatch.setattr(dependency_bundle, "_build_llm_lineup_provider", lambda **kw: None)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
