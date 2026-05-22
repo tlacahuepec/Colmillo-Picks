@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 import json
+import re
 from time import sleep
 from typing import Any, Callable
 
 from llm.client import LLMClient, LLMError
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
+
+_MARKDOWN_JSON_FENCE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
+
+
+def _extract_json_text(raw: str) -> str:
+    stripped = raw.strip()
+    if stripped.startswith("{"):
+        return stripped
+    match = _MARKDOWN_JSON_FENCE.search(stripped)
+    if match:
+        return match.group(1).strip()
+    return stripped
 
 
 class GeminiLLMClient(LLMClient):
@@ -59,10 +72,17 @@ class GeminiLLMClient(LLMClient):
                     contents=prompt,
                     config=config,
                 )
-                text = response.text
+                try:
+                    text = response.text
+                except (ValueError, AttributeError):
+                    text = None
+                if not text and hasattr(response, "candidates") and response.candidates:
+                    parts = response.candidates[0].content.parts
+                    if parts:
+                        text = parts[0].text
                 if not text:
                     raise LLMError("Gemini returned empty response")
-                parsed = json.loads(text)
+                parsed = json.loads(_extract_json_text(text))
                 if not isinstance(parsed, dict):
                     raise LLMError("Gemini returned non-dict JSON output")
                 return parsed

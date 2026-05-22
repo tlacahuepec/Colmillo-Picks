@@ -209,3 +209,21 @@ def test_gemini_client_omits_tools_when_grounding_disabled() -> None:
 
     assert "tools" not in captured_config
     assert captured_config["response_mime_type"] == "application/json"
+
+
+def test_gemini_client_strips_markdown_fences_from_response() -> None:
+    class _MarkdownClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, *, model, contents, config):
+            return _FakeResponse('```json\n{"competition": "DFB Pokal", "match_found": true}\n```')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_MarkdownClient,
+        search_grounding=True,
+    )
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert result == {"competition": "DFB Pokal", "match_found": True}
