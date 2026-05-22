@@ -11,6 +11,13 @@ export GEMINI_API_KEY="your-gemini-key"
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "arsenal - liverpool today"
 ```
 
+PowerShell (Windows) equivalent:
+
+```powershell
+$env:GEMINI_API_KEY = "your-gemini-key"
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "arsenal - liverpool today"
+```
+
 ## What it does
 
 1. **Parse** — Extracts teams, date, and competition from a natural-language match query
@@ -75,6 +82,39 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
   "juve - milan today" --allow-deterministic-fallback
 ```
+
+PowerShell example (force LLM for fixture lookup + enrichment):
+
+```powershell
+$env:GEMINI_API_KEY = "your-gemini-key"
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "bayern munich - vfb stuttgart 2026-05-23" --fixture-provider llm --fixture-llm-provider gemini --use-llm --llm-provider gemini
+```
+
+### Smart run modes
+
+Use the mode that matches your intent:
+
+| Intent | Command shape |
+|---|---|
+| Fast deterministic demo (no API key) | `python ... --allow-deterministic-fallback` |
+| LLM for fixture lookup only | `python ... --fixture-provider llm --fixture-llm-provider gemini` |
+| LLM for fixture lookup + pick enrichment | `python ... --fixture-provider llm --fixture-llm-provider gemini --use-llm --llm-provider gemini` |
+
+Windows PowerShell quick checks before running:
+
+```powershell
+if ($env:GEMINI_API_KEY) { "GEMINI_API_KEY is set" } else { "GEMINI_API_KEY is NOT set" }
+```
+
+Verify LLM enrichment ran by checking the report includes:
+
+- `LLM status: success`
+- `provider=gemini`
+- `latency_ms=` with a value greater than `0`
+
+If you see `LLM status: not_requested`, run included only deterministic scoring for explanation text. Add `--use-llm --llm-provider gemini`.
+
+If provider status shows fixture success but lineups still look generic/projected, check key availability in the same terminal session and rerun with explicit fixture flags.
 
 `--top-n` controls how many top picks to return in the report (1–5, default 5).
 
