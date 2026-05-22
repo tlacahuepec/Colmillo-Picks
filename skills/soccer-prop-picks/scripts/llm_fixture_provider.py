@@ -144,41 +144,6 @@ class OpenAICompatibleChatClient:
         return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
 
 
-class GeminiChatClient:
-    """Gemini SDK client matching the generate_json interface used by LLMFixtureProvider."""
-
-    def __init__(self, *, api_key: str, model: str, client_factory: Callable[..., Any] | None = None) -> None:
-        self.model = model
-        if client_factory is not None:
-            self._client = client_factory(api_key=api_key)
-        else:
-            from google import genai
-
-            self._client = genai.Client(api_key=api_key)
-
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        prompt = f"{system_prompt}\n\n{user_prompt}"
-        try:
-            response = self._client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config={
-                    "max_output_tokens": 2000,
-                    "thinking_config": {"thinking_budget": 0},
-                    "response_mime_type": "application/json",
-                },
-            )
-        except Exception as exc:
-            raise LLMFixtureProviderError(f"Gemini fixture request failed: {exc}") from exc
-        text = response.text
-        if not text:
-            raise LLMFixtureProviderError("Gemini returned empty fixture response")
-        return _parse_json_object(text)
-
-    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
-        return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
-
-
 class LLMFixtureProvider:
     """Resolve fixtures through an LLM and map into the pipeline fixture schema."""
 

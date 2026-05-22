@@ -92,7 +92,6 @@ def build_dependency_bundle(
 
     source = _fixture_provider_source(fixture_provider_name)
     fixture_provider = None
-    odds_provider = None
 
     if source == "llm":
         llm_config = LLMFixtureProviderConfig.from_env(
@@ -158,7 +157,6 @@ def build_dependency_bundle(
         "collect_inputs": lambda request: collect_inputs(
             request,
             fixture_provider=fixture_provider,
-            odds_provider=odds_provider,
             allow_fixture_fallback=allow_deterministic_fallback,
         ),
         "score_props": score_props,
