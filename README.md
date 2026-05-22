@@ -36,22 +36,17 @@ pytest -q
 ## Run the program from the CLI
 
 Use the single-command pipeline script as the primary path. For current-season
-matches, the fixture lookup can use an LLM provider instead of API-Football:
+matches, the fixture lookup uses an LLM provider (Gemini by default):
 
 ```bash
-export SOCCER_FIXTURE_PROVIDER="llm"
-export SOCCER_FIXTURE_LLM_PROVIDER="openai"
-export OPENAI_API_KEY="your-openai-api-key"
-export SOCCER_FIXTURE_LLM_MODEL="gpt-4.1-mini"
+export GEMINI_API_KEY="your-gemini-key"
 
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
   "arsenal - liverpool 2026-05-03" \
-  --league "Premier League" \
-  --season 2025
+  --league "Premier League"
 ```
 
-Grok/xAI or another OpenAI-compatible endpoint can use the same fixture provider
-contract:
+Alternative LLM providers (OpenAI, Grok/xAI) are also supported:
 
 ```bash
 export SOCCER_FIXTURE_PROVIDER="llm"
@@ -62,13 +57,6 @@ export SOCCER_FIXTURE_LLM_MODEL="your-grok-model"
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
   "arsenal - liverpool 2026-05-03" \
   --league "Premier League"
-```
-
-For legacy API-Football lookup, keep using:
-
-```bash
-export API_FOOTBALL_API_KEY="your-api-football-key"
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --top-n 5
 ```
 
 The script parses the match query, retrieves fixture metadata from the selected
@@ -86,16 +74,6 @@ deterministic fallback path explicitly:
 
 ```bash
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --allow-deterministic-fallback
-```
-
-Use API-Football hints when team names or competitions are ambiguous:
-
-```bash
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
-  "arsenal - liverpool 2026-05-03" \
-  --league "Premier League" \
-  --league-id 39 \
-  --season 2025
 ```
 
 ### CLI arguments (`run_match_pick_pipeline.py`)
@@ -152,8 +130,8 @@ can share Colmillo-Picks with friends without giving them shell access. See
 Copy `.env.example` to `.env` and fill in at minimum:
 
 - `COLMILLO_API_KEY` — required; clients send it as the `X-API-Key` header.
-- `API_FOOTBALL_API_KEY` and/or one of `OPENAI_API_KEY` / `XAI_API_KEY` —
-  whatever the fixture and LLM providers you intend to use require.
+- `GEMINI_API_KEY` — required for the LLM fixture provider (default).
+  Optionally set `OPENAI_API_KEY` or `XAI_API_KEY` for alternative providers.
 - `COLMILLO_DB_PATH` — where to persist SQLite. In Docker this defaults to
   `/var/data/colmillo.db` (the persistent disk mount).
 
@@ -258,7 +236,7 @@ services (`colmillo-api`, `colmillo-ui`) on the `starter` plan plus a
 1. Push the repo to GitHub.
 2. In Render: **New → Blueprint → connect repo**.
 3. Set the secret env vars in the dashboard (`COLMILLO_API_KEY`,
-   `API_FOOTBALL_API_KEY`, `OPENAI_API_KEY` / `XAI_API_KEY`,
+   `GEMINI_API_KEY`, optionally `OPENAI_API_KEY` / `XAI_API_KEY`,
    `COLMILLO_ADMIN_API_KEY`, optionally `SENTRY_DSN`).
 4. Render auto-deploys on every push to `main`.
 

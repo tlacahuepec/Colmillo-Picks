@@ -122,7 +122,7 @@ def test_collect_inputs_fallbacks_are_transparent_and_flagged() -> None:
 def test_collect_inputs_rejects_missing_fixture_when_fallback_disabled() -> None:
     collector = load_script_module("collect_match_inputs.py")
 
-    with pytest.raises(Exception, match="Fixture lookup failed: No API-Football fixture matched Juve vs Milan on 2026-05-03\\."):
+    with pytest.raises(Exception, match="Fixture lookup failed: No fixture provider fixture matched Juve vs Milan on 2026-05-03\\."):
         collector.collect_inputs(
             collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
             fixture_provider=_MissingFixtureProvider(),
@@ -231,37 +231,31 @@ def test_collect_inputs_characterizes_rejection_when_players_missing() -> None:
     assert payload["validation"]["should_reject_prediction"] is True
 
 
-def test_collect_inputs_uses_api_provider_by_default_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collect_inputs_uses_injected_fixture_provider() -> None:
     collector = load_script_module("collect_match_inputs.py")
 
     called: dict[str, object] = {}
 
     class _Provider:
-        api_key = "fake"
-
         def lookup_fixture(self, request):
             called["lookup"] = request.home_team
             return collector.DeterministicFixtureProvider().lookup_fixture(request)
 
-    monkeypatch.setenv("API_FOOTBALL_API_KEY", "fake")
-    monkeypatch.setattr(collector, "ApiFootballFixtureProvider", lambda *, config: _Provider())
-
     payload = collector.collect_inputs(
-        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03")
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+        fixture_provider=_Provider(),
     )
 
     assert called["lookup"] == "Juve"
     assert payload["match"]["match_id"]
 
 
-def test_collect_inputs_uses_api_odds_provider_by_default_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collect_inputs_uses_injected_odds_provider() -> None:
     collector = load_script_module("collect_match_inputs.py")
 
     called: dict[str, object] = {}
 
     class _OddsProvider:
-        api_key = "fake"
-
         def get_odds_snapshots(self, fixture):
             called["fixture"] = fixture["match_id"]
             ts = "2026-05-03T10:00:00Z"
@@ -273,11 +267,9 @@ def test_collect_inputs_uses_api_odds_provider_by_default_when_available(monkeyp
                 ],
             }
 
-    monkeypatch.setenv("API_FOOTBALL_API_KEY", "fake")
-    monkeypatch.setattr(collector, "ApiFootballOddsSnapshotProvider", lambda *, config: _OddsProvider())
-
     payload = collector.collect_inputs(
-        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03")
+        collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+        odds_provider=_OddsProvider(),
     )
 
     assert called["fixture"] == payload["match"]["match_id"]

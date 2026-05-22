@@ -9,20 +9,18 @@ from __future__ import annotations
 
 import os
 
-from api_football_provider import (
-    ApiFootballFixtureProvider,
-    ApiFootballOddsSnapshotProvider,
-)
 from availability import DeterministicMockAvailabilityAdapter, PrizePicksAdapter
 from collect_match_inputs import MatchInputRequest, collect_inputs
-from llm_fixture_provider import GeminiChatClient, LLMFixtureProvider
+from llm_fixture_provider import LLMFixtureProvider
+from llm.gemini_client import GeminiLLMClient
+from llm.grok_client import GrokLLMClient
 from llm.provider_adapter import build_enrich_with_llm
-from provider_config import ApiFootballProviderConfig, LLMFixtureProviderConfig
+from provider_config import LLMFixtureProviderConfig
 from render_pick_report import render_report
 from score_player_props import score_props
 
 
-_SUPPORTED_FIXTURE_PROVIDERS = {"api-football", "llm", "auto"}
+_SUPPORTED_FIXTURE_PROVIDERS = {"llm", "auto"}
 _SUPPORTED_AVAILABILITY_PROVIDERS = {"prizepicks", "mock", "none"}
 
 
@@ -37,7 +35,7 @@ def _fixture_provider_source(raw_value: str | None) -> str:
     source = (
         _optional_value(raw_value)
         or _optional_value(os.getenv("SOCCER_FIXTURE_PROVIDER"))
-        or "api-football"
+        or "llm"
     ).lower()
     if source not in _SUPPORTED_FIXTURE_PROVIDERS:
         supported = ", ".join(sorted(_SUPPORTED_FIXTURE_PROVIDERS))
@@ -59,7 +57,14 @@ def _build_llm_fixture_provider(
         base_url=fixture_llm_base_url,
     )
     if config.provider == "gemini":
-        client = GeminiChatClient(api_key=config.api_key or "", model=config.model or "")
+        client = GeminiLLMClient(api_key=config.api_key or "", model=config.model or "gemini-2.5-flash")
+        return LLMFixtureProvider(config=config, client=client)
+    if config.provider == "xai" or config.provider == "grok":
+        client = GrokLLMClient(
+            api_key=config.api_key or "",
+            base_url=config.base_url or "https://api.x.ai/v1",
+            model=config.model or "grok-3",
+        )
         return LLMFixtureProvider(config=config, client=client)
     return LLMFixtureProvider(config=config)
 
@@ -71,8 +76,6 @@ def build_dependency_bundle(
     llm_model: str | None,
     allow_deterministic_fallback: bool = False,
     league: str | None = None,
-    league_id: str | None = None,
-    season: str | None = None,
     fixture_provider_name: str | None = None,
     fixture_llm_provider: str | None = None,
     fixture_llm_model: str | None = None,
@@ -80,33 +83,34 @@ def build_dependency_bundle(
     availability_provider: str | None = None,
     parse_match_query=None,
 ) -> dict[str, object]:
-    """Wire fixture/odds/LLM providers and return a deps dict for ``run_pipeline``.
-
-    ``parse_match_query`` is injected to avoid an import cycle with the CLI
-    module; callers that drive the pipeline programmatically can pass any
-    callable matching the same signature.
-    """
+    """Wire fixture/LLM providers and return a deps dict for ``run_pipeline``."""
 
     if parse_match_query is None:
-        # Late import to avoid a circular dependency with the CLI module that
-        # also imports from this file. This keeps the function usable both
-        # from the CLI (which always has parse_match_query handy) and from
-        # the FastAPI service (which can rely on the default).
         from run_match_pick_pipeline import parse_match_query as _parse_match_query
 
         parse_match_query = _parse_match_query
 
     source = _fixture_provider_source(fixture_provider_name)
-    api_football_config = ApiFootballProviderConfig.from_env()
     fixture_provider = None
     odds_provider = None
 
     if source == "llm":
-        fixture_provider = _build_llm_fixture_provider(
-            fixture_llm_provider=fixture_llm_provider,
-            fixture_llm_model=fixture_llm_model,
-            fixture_llm_base_url=fixture_llm_base_url,
+        llm_config = LLMFixtureProviderConfig.from_env(
+            provider=fixture_llm_provider,
+            model=fixture_llm_model,
+            base_url=fixture_llm_base_url,
         )
+        has_explicit_config = any([fixture_llm_provider, fixture_llm_model, fixture_llm_base_url])
+        if llm_config.is_configured() or has_explicit_config:
+            fixture_provider = _build_llm_fixture_provider(
+                fixture_llm_provider=fixture_llm_provider,
+                fixture_llm_model=fixture_llm_model,
+                fixture_llm_base_url=fixture_llm_base_url,
+            )
+        elif not allow_deterministic_fallback:
+            raise ValueError(
+                "No LLM fixture provider configured. Set GEMINI_API_KEY or pass --fixture-llm-provider."
+            )
     elif source == "auto":
         llm_config = LLMFixtureProviderConfig.from_env(
             provider=fixture_llm_provider,
@@ -114,18 +118,15 @@ def build_dependency_bundle(
             base_url=fixture_llm_base_url,
         )
         if llm_config.is_configured():
-            fixture_provider = LLMFixtureProvider(config=llm_config)
-        elif api_football_config.api_key:
-            fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
+            fixture_provider = _build_llm_fixture_provider(
+                fixture_llm_provider=fixture_llm_provider,
+                fixture_llm_model=fixture_llm_model,
+                fixture_llm_base_url=fixture_llm_base_url,
+            )
         elif not allow_deterministic_fallback:
-            api_football_config.validate()
-    elif api_football_config.api_key:
-        fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
-    elif not allow_deterministic_fallback:
-        api_football_config.validate()
-
-    if api_football_config.api_key:
-        odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
+            raise ValueError(
+                "No LLM fixture provider configured. Set GEMINI_API_KEY or pass --fixture-llm-provider."
+            )
 
     availability_source = (
         _optional_value(availability_provider)
@@ -153,8 +154,6 @@ def build_dependency_bundle(
             match_date=parsed.match_date,
             competition=competition_hint or competition,
             competition_hints=[competition_hint] if competition_hint else None,
-            league_id=league_id,
-            season=season,
         ),
         "collect_inputs": lambda request: collect_inputs(
             request,

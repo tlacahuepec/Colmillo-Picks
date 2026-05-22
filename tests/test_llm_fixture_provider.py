@@ -81,8 +81,6 @@ def test_llm_fixture_provider_maps_chat_completion_json_to_fixture() -> None:
             away_team="Liverpool",
             match_date="2026-05-03",
             competition="Premier League",
-            league_id="39",
-            season="2025",
         )
     )
 
@@ -113,7 +111,7 @@ def test_llm_fixture_provider_returns_none_when_match_not_verified() -> None:
     collector = load_script_module("collect_match_inputs.py")
 
     class _Client:
-        def generate_json(self, *, system_prompt, user_prompt):
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
             return {"match_found": False, "reason": "not verified"}
 
     provider = module.LLMFixtureProvider(config=_config(), client=_Client())
@@ -135,7 +133,7 @@ def test_llm_fixture_provider_uses_safe_defaults_for_partial_fixture_json() -> N
     collector = load_script_module("collect_match_inputs.py")
 
     class _Client:
-        def generate_json(self, *, system_prompt, user_prompt):
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
             return {
                 "match_found": True,
                 "competition": "Premier League",

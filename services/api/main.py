@@ -53,13 +53,11 @@ class PicksRequest(BaseModel):
     top_n: int = Field(5, ge=1, le=5)
     competition: str = Field("League", description="Display label for the competition.")
     league: str | None = None
-    league_id: str | None = None
-    season: str | None = None
     use_llm: bool = False
     llm_provider: str | None = None
     llm_model: str | None = None
     fixture_provider: str | None = Field(
-        None, description="api-football | llm | auto. Defaults to env SOCCER_FIXTURE_PROVIDER."
+        None, description="llm | auto. Defaults to env SOCCER_FIXTURE_PROVIDER."
     )
     fixture_llm_provider: str | None = None
     fixture_llm_model: str | None = None
@@ -171,7 +169,7 @@ class HitRateResponse(BaseModel):
 def _provider_status() -> dict[str, bool]:
     """Report which credentials are configured without leaking values."""
     return {
-        "api_football": bool(os.getenv("API_FOOTBALL_API_KEY")),
+        "gemini": bool(os.getenv("GEMINI_API_KEY")),
         "openai": bool(os.getenv("OPENAI_API_KEY")),
         "xai": bool(os.getenv("XAI_API_KEY") or os.getenv("GROK_API_KEY")),
         "fixture_llm": bool(os.getenv("SOCCER_FIXTURE_LLM_API_KEY")),
@@ -332,8 +330,6 @@ def create_app() -> FastAPI:
             llm_model=payload.llm_model,
             allow_deterministic_fallback=payload.allow_deterministic_fallback,
             league=payload.league,
-            league_id=payload.league_id,
-            season=payload.season,
             fixture_provider_name=payload.fixture_provider,
             fixture_llm_provider=payload.fixture_llm_provider,
             fixture_llm_model=payload.fixture_llm_model,

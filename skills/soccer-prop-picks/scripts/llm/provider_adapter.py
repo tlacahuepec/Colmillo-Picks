@@ -8,9 +8,12 @@ from llm.langgraph_flow import SimpleLangGraphFlow
 from llm.mock_client import DeterministicMockLLMClient
 from llm.openai_client import OpenAILLMClient
 from llm.gemini_client import GeminiLLMClient
+from llm.grok_client import GrokLLMClient
 
 _DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
 _DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+_DEFAULT_GROK_MODEL = "grok-3"
+_DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1"
 
 
 def _as_chat_model(client: object) -> Callable[[dict[str, str]], dict]:
@@ -38,13 +41,15 @@ def validate_llm_runtime_config(*, use_llm: bool, llm_provider: str | None, gete
         )
 
     provider = resolved.lower().strip()
-    if provider not in {"openai", "gemini"}:
-        raise ValueError(f"Unsupported --llm-provider '{resolved}'. Supported values: openai, gemini.")
+    if provider not in {"openai", "gemini", "grok"}:
+        raise ValueError(f"Unsupported --llm-provider '{resolved}'. Supported values: openai, gemini, grok.")
 
     if provider == "openai" and not getenv("OPENAI_API_KEY"):
         raise ValueError("Missing credentials for provider 'openai'. Set OPENAI_API_KEY.")
     if provider == "gemini" and not getenv("GEMINI_API_KEY"):
         raise ValueError("Missing credentials for provider 'gemini'. Set GEMINI_API_KEY.")
+    if provider == "grok" and not getenv("XAI_API_KEY"):
+        raise ValueError("Missing credentials for provider 'grok'. Set XAI_API_KEY.")
 
 
 def build_enrich_with_llm(
@@ -75,6 +80,12 @@ def build_enrich_with_llm(
 
             sdk_client = openai_client_factory(api_key=getenv("OPENAI_API_KEY"))
             client = OpenAILLMClient(sdk_client=sdk_client, model=(llm_model or _DEFAULT_OPENAI_MODEL))
+        elif provider == "grok":
+            client = GrokLLMClient(
+                api_key=getenv("XAI_API_KEY") or "",
+                base_url=getenv("XAI_BASE_URL") or _DEFAULT_XAI_BASE_URL,
+                model=(llm_model or getenv("XAI_MODEL") or _DEFAULT_GROK_MODEL),
+            )
         else:
             raise ValueError(f"Unsupported --llm-provider '{resolved_provider}'. Supported values: openai, gemini.")
 
