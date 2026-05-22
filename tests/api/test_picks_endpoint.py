@@ -34,7 +34,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     Sets ``COLMILLO_API_KEY`` and injects ``X-API-Key`` on every request so
     individual tests can focus on the handler behaviour, not on auth.
     """
-    monkeypatch.delenv("API_FOOTBALL_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     monkeypatch.delenv("GROK_API_KEY", raising=False)
@@ -100,14 +100,14 @@ def _patch_pipeline(
 
 
 def test_healthz_reports_provider_status(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
-    monkeypatch.setenv("API_FOOTBALL_API_KEY", "x")
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
 
     response = client.get("/healthz")
 
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["providers"]["api_football"] is True
+    assert body["providers"]["gemini"] is True
     assert body["providers"]["openai"] is False
 
 
@@ -120,7 +120,6 @@ def test_picks_returns_payload_and_report(monkeypatch: pytest.MonkeyPatch, clien
             "match_query": "juve - milan today",
             "top_n": 3,
             "league": "Serie A",
-            "season": "2025",
         },
     )
 
@@ -139,7 +138,6 @@ def test_picks_returns_payload_and_report(monkeypatch: pytest.MonkeyPatch, clien
 
     assert captured["bundle_kwargs"]["use_llm"] is False
     assert captured["bundle_kwargs"]["league"] == "Serie A"
-    assert captured["bundle_kwargs"]["season"] == "2025"
     assert captured["request"]["match_query"] == "juve - milan today"
     assert captured["request"]["top_n"] == 3
     assert captured["request"]["competition"] == "Serie A"
@@ -168,7 +166,7 @@ def test_picks_returns_400_when_dependency_bundle_rejects_inputs(
     monkeypatch: pytest.MonkeyPatch, client: TestClient
 ) -> None:
     def raising_bundle(**_: Any) -> dict[str, Any]:
-        raise ValueError("Missing credentials for provider 'api-football'.")
+        raise ValueError("Missing credentials for LLM fixture provider.")
 
     monkeypatch.setattr(api_main, "build_dependency_bundle", raising_bundle)
 

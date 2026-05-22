@@ -21,8 +21,8 @@ def _minimal_briefing() -> dict:
         "schema_version": "v1.0.0",
         "date_utc": "2026-05-21",
         "generated_at_utc": "2026-05-21T10:00:00Z",
-        "provider": "xai",
-        "model": "grok-3",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
         "top_matches": [],
     }
 
@@ -69,6 +69,18 @@ def test_parse_cli_args_rejects_invalid_date_format() -> None:
         module.parse_cli_args(["--date", "not-a-date"])
 
 
+def test_parse_cli_args_accepts_provider_flag() -> None:
+    module = _load()
+    args = module.parse_cli_args(["--provider", "grok"])
+    assert args.provider == "grok"
+
+
+def test_parse_cli_args_provider_defaults_to_none() -> None:
+    module = _load()
+    args = module.parse_cli_args([])
+    assert args.provider is None
+
+
 def test_main_prints_json_to_stdout_on_success(capsys) -> None:
     module = _load()
     briefing = _minimal_briefing()
@@ -76,7 +88,7 @@ def test_main_prints_json_to_stdout_on_success(capsys) -> None:
     mock_client = MagicMock()
     mock_client.fetch_daily_briefing.return_value = briefing
 
-    with patch.object(module, "GrokDailyIntelligenceClient") as MockClass:
+    with patch.object(module, "DailyIntelligenceClient") as MockClass:
         MockClass.from_env.return_value = mock_client
         module.main(["--date", "2026-05-21", "--top-n", "1"])
 
@@ -93,7 +105,7 @@ def test_main_writes_json_to_file(tmp_path) -> None:
     mock_client = MagicMock()
     mock_client.fetch_daily_briefing.return_value = briefing
 
-    with patch.object(module, "GrokDailyIntelligenceClient") as MockClass:
+    with patch.object(module, "DailyIntelligenceClient") as MockClass:
         MockClass.from_env.return_value = mock_client
         module.main(["--date", "2026-05-21", "--output-json", str(output_file)])
 
@@ -105,8 +117,8 @@ def test_main_writes_json_to_file(tmp_path) -> None:
 def test_main_exits_with_error_when_api_key_missing() -> None:
     module = _load()
 
-    with patch.object(module, "GrokDailyIntelligenceClient") as MockClass:
-        MockClass.from_env.side_effect = module.GrokDailyIntelligenceError("XAI_API_KEY is required")
+    with patch.object(module, "DailyIntelligenceClient") as MockClass:
+        MockClass.from_env.side_effect = module.DailyIntelligenceError("GEMINI_API_KEY is required")
         with pytest.raises(SystemExit, match="Error:"):
             module.main(["--date", "2026-05-21"])
 
@@ -114,9 +126,23 @@ def test_main_exits_with_error_when_api_key_missing() -> None:
 def test_main_exits_with_error_on_fetch_failure() -> None:
     module = _load()
     mock_client = MagicMock()
-    mock_client.fetch_daily_briefing.side_effect = module.GrokDailyIntelligenceError("HTTP 500")
+    mock_client.fetch_daily_briefing.side_effect = module.DailyIntelligenceError("provider timeout")
 
-    with patch.object(module, "GrokDailyIntelligenceClient") as MockClass:
+    with patch.object(module, "DailyIntelligenceClient") as MockClass:
         MockClass.from_env.return_value = mock_client
         with pytest.raises(SystemExit, match="Error:"):
             module.main(["--date", "2026-05-21"])
+
+
+def test_main_passes_provider_to_from_env() -> None:
+    module = _load()
+    briefing = _minimal_briefing()
+
+    mock_client = MagicMock()
+    mock_client.fetch_daily_briefing.return_value = briefing
+
+    with patch.object(module, "DailyIntelligenceClient") as MockClass:
+        MockClass.from_env.return_value = mock_client
+        module.main(["--provider", "grok", "--date", "2026-05-21"])
+
+    MockClass.from_env.assert_called_once_with(provider="grok")

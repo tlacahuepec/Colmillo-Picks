@@ -22,7 +22,7 @@ from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient
 
 
 PAGES = ("Generate", "History")
-FIXTURE_PROVIDERS = ("auto", "api-football", "llm")
+FIXTURE_PROVIDERS = ("auto", "llm")
 
 
 @st.cache_resource(show_spinner=False)
@@ -74,9 +74,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             league = st.text_input("League (optional)", value="")
-            league_id = st.text_input("League ID (optional)", value="")
         with col_b:
-            season = st.text_input("Season (optional)", value="")
             top_n = st.slider("Top N", min_value=1, max_value=5, value=5)
         with col_c:
             fixture_provider = st.selectbox("Fixture provider", FIXTURE_PROVIDERS, index=0)
@@ -100,10 +98,6 @@ def render_generate_page(client: PicksAPIClient) -> None:
     }
     if league.strip():
         payload["league"] = league.strip()
-    if league_id.strip():
-        payload["league_id"] = league_id.strip()
-    if season.strip():
-        payload["season"] = season.strip()
     if use_llm:
         payload["use_llm"] = True
         if llm_provider.strip():

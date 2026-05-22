@@ -60,7 +60,7 @@ def _fixture_request_label(request: Any) -> str:
 
 
 def _fixture_provider_label(fixture_provider: Any) -> str:
-    return str(getattr(fixture_provider, "provider_label", "API-Football"))
+    return str(getattr(fixture_provider, "provider_label", "fixture provider"))
 
 
 def resolve_fixture(

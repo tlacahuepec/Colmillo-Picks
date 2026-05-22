@@ -109,7 +109,7 @@ def test_parse_cli_args_supports_llm_flags() -> None:
     assert args.llm_model == "gpt-4.1-mini"
 
 
-def test_parse_cli_args_supports_api_football_hints_and_fallback_flag() -> None:
+def test_parse_cli_args_supports_league_and_fallback_flag() -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 
     args = pipeline.parse_cli_args(
@@ -117,17 +117,11 @@ def test_parse_cli_args_supports_api_football_hints_and_fallback_flag() -> None:
             "arsenal - liverpool 2026-05-03",
             "--league",
             "Premier League",
-            "--league-id",
-            "39",
-            "--season",
-            "2025",
             "--allow-deterministic-fallback",
         ]
     )
 
     assert args.league == "Premier League"
-    assert args.league_id == "39"
-    assert args.season == "2025"
     assert args.allow_deterministic_fallback is True
 
 
@@ -238,10 +232,12 @@ def test_pipeline_cli_rejects_llm_without_credentials() -> None:
 
 def test_build_dependency_bundle_includes_llm_enricher_callable(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
-    monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
     monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
-    deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
+    deps = pipeline.build_dependency_bundle(
+        use_llm=False, llm_provider=None, llm_model=None, allow_deterministic_fallback=True
+    )
 
     assert "enrich_with_llm" in deps
     assert callable(deps["enrich_with_llm"])
@@ -265,8 +261,6 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
                 "llm_model": "gpt-4.1-mini",
                 "allow_deterministic_fallback": False,
                 "league": "Serie A",
-                "league_id": "135",
-                "season": "2025",
                 "fixture_provider": "llm",
                 "fixture_llm_provider": "openai-compatible",
                 "fixture_llm_model": "fixture-model",
@@ -283,8 +277,6 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
         llm_model,
         allow_deterministic_fallback,
         league,
-        league_id,
-        season,
         fixture_provider_name,
         fixture_llm_provider,
         fixture_llm_model,
@@ -297,8 +289,6 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
             "llm_model": llm_model,
             "allow_deterministic_fallback": allow_deterministic_fallback,
             "league": league,
-            "league_id": league_id,
-            "season": season,
             "fixture_provider_name": fixture_provider_name,
             "fixture_llm_provider": fixture_llm_provider,
             "fixture_llm_model": fixture_llm_model,
@@ -328,8 +318,6 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
         "llm_model": "gpt-4.1-mini",
         "allow_deterministic_fallback": False,
         "league": "Serie A",
-        "league_id": "135",
-        "season": "2025",
         "fixture_provider_name": "llm",
         "fixture_llm_provider": "openai-compatible",
         "fixture_llm_model": "fixture-model",
@@ -347,82 +335,29 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
     assert captured["printed"] == "mock report"
 
 
-def test_build_dependency_bundle_wires_api_providers_with_shared_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_dependency_bundle_defaults_to_llm_fixture_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
     import dependency_bundle
+
     monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
 
-    captured: dict[str, object] = {}
+    class _FakeProvider:
+        provider_label = "LLM"
 
-    fake_config = type("_FakeConfig", (), {"api_key": "fake"})()
+    monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FakeProvider())
 
-    class _FakeFixtureProvider:
-        pass
-
-    class _FakeOddsProvider:
-        pass
-
-    fake_config_factory = type(
-        "_FakeConfigFactory", (), {"from_env": staticmethod(lambda: fake_config)}
+    deps = pipeline.build_dependency_bundle(
+        use_llm=False,
+        llm_provider=None,
+        llm_model=None,
+        allow_deterministic_fallback=True,
     )
-    monkeypatch.setattr(pipeline, "ApiFootballProviderConfig", fake_config_factory)
-    monkeypatch.setattr(dependency_bundle, "ApiFootballProviderConfig", fake_config_factory)
 
-    def fake_fixture_provider(*, config):
-        captured["fixture_config"] = config
-        return _FakeFixtureProvider()
-
-    def fake_odds_provider(*, config):
-        captured["odds_config"] = config
-        return _FakeOddsProvider()
-
-    monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", fake_fixture_provider)
-    monkeypatch.setattr(pipeline, "ApiFootballOddsSnapshotProvider", fake_odds_provider)
-    monkeypatch.setattr(dependency_bundle, "ApiFootballFixtureProvider", fake_fixture_provider)
-    monkeypatch.setattr(dependency_bundle, "ApiFootballOddsSnapshotProvider", fake_odds_provider)
-
-    def fake_collect_inputs(request, fixture_provider=None, odds_provider=None, allow_fixture_fallback=True, **kwargs):
-        captured["fixture_provider"] = fixture_provider
-        captured["odds_provider"] = odds_provider
-        captured["allow_fixture_fallback"] = allow_fixture_fallback
-        return {"ok": True}
-
-    monkeypatch.setattr(pipeline, "collect_inputs", fake_collect_inputs)
-    monkeypatch.setattr(dependency_bundle, "collect_inputs", fake_collect_inputs)
-
-    deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
-    deps["collect_inputs"](object())
-
-    assert captured["fixture_config"] is fake_config
-    assert captured["odds_config"] is fake_config
-    assert captured["fixture_provider"]
-    assert captured["odds_provider"]
-    assert captured["allow_fixture_fallback"] is False
+    assert deps["collect_inputs"] is not None
 
 
-def test_build_dependency_bundle_requires_api_football_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    pipeline = load_script_module("run_match_pick_pipeline.py")
-
-    monkeypatch.delenv("API_FOOTBALL_API_KEY", raising=False)
-    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
-
-    with pytest.raises(ValueError, match=r"Missing credentials for provider 'api-football'\. Set API_FOOTBALL_API_KEY\."):
-        pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
-
-
-def test_build_dependency_bundle_wires_real_api_providers_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    pipeline = load_script_module("run_match_pick_pipeline.py")
-    monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
-    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
-
-    deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
-    closure_cells = [cell.cell_contents for cell in deps["collect_inputs"].__closure__ or ()]
-
-    assert any(isinstance(value, pipeline.ApiFootballFixtureProvider) for value in closure_cells)
-    assert any(isinstance(value, pipeline.ApiFootballOddsSnapshotProvider) for value in closure_cells)
-
-
-def test_build_dependency_bundle_wires_llm_fixture_provider_without_api_football(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_dependency_bundle_wires_llm_fixture_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 
     captured: dict[str, object] = {}
@@ -430,14 +365,12 @@ def test_build_dependency_bundle_wires_llm_fixture_provider_without_api_football
     class _FakeLLMFixtureProvider:
         provider_label = "LLM"
 
-        def __init__(self, *, config):
+        def __init__(self, *, config, **kwargs):
             captured["config"] = config
 
     import dependency_bundle
-    monkeypatch.delenv("API_FOOTBALL_API_KEY", raising=False)
     monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
     monkeypatch.setenv("SOCCER_FIXTURE_LLM_API_KEY", "fixture-key")
-    monkeypatch.setattr(pipeline, "LLMFixtureProvider", _FakeLLMFixtureProvider)
     monkeypatch.setattr(dependency_bundle, "LLMFixtureProvider", _FakeLLMFixtureProvider)
 
     deps = pipeline.build_dependency_bundle(
@@ -449,47 +382,44 @@ def test_build_dependency_bundle_wires_llm_fixture_provider_without_api_football
         fixture_llm_model="fixture-model",
         fixture_llm_base_url="https://llm.example.test/v1",
     )
-    closure_cells = [cell.cell_contents for cell in deps["collect_inputs"].__closure__ or ()]
 
     assert captured["config"].api_key == "fixture-key"
     assert captured["config"].base_url == "https://llm.example.test/v1"
     assert captured["config"].model == "fixture-model"
-    assert any(isinstance(value, _FakeLLMFixtureProvider) for value in closure_cells)
-    assert not any(isinstance(value, pipeline.ApiFootballFixtureProvider) for value in closure_cells)
 
 
 def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payloads_are_none_or_malformed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
-    monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
     monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     class _FixtureProvider:
-        def __init__(self, *, config):
-            self.config = config
+        provider_label = "LLM"
 
         def lookup_fixture(self, request):
             return None
-
-    class _OddsProvider:
-        def __init__(self, *, config):
-            self.config = config
-
-        def get_odds_snapshots(self, fixture):
-            return {"source_timestamp_utc": "2026-05-03T10:00:00Z", "sportsbook_snapshots": [{"source": "bad-book"}]}
-
-    import dependency_bundle
-    monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", _FixtureProvider)
-    monkeypatch.setattr(pipeline, "ApiFootballOddsSnapshotProvider", _OddsProvider)
-    monkeypatch.setattr(dependency_bundle, "ApiFootballFixtureProvider", _FixtureProvider)
-    monkeypatch.setattr(dependency_bundle, "ApiFootballOddsSnapshotProvider", _OddsProvider)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
         llm_provider=None,
         llm_model=None,
         allow_deterministic_fallback=True,
+        fixture_provider_name="llm",
+    )
+
+    import dependency_bundle
+    monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FixtureProvider())
+
+    deps = pipeline.build_dependency_bundle(
+        use_llm=False,
+        llm_provider=None,
+        llm_model=None,
+        allow_deterministic_fallback=True,
+        fixture_provider_name="llm",
+        fixture_llm_provider="openai-compatible",
+        fixture_llm_model="m",
+        fixture_llm_base_url="https://x.test/v1",
     )
     payload = deps["collect_inputs"](
         pipeline.MatchInputRequest(
@@ -501,39 +431,36 @@ def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payload
     )
 
     assert payload["match"]["match_id"]
-    assert len(payload["market"]["sportsbook_snapshots"]) == 2
     assert payload["validation"]["should_reject_prediction"] is True
     assert "match" in payload["validation"]["critical_missing_fields"]
-    assert "market.sportsbook_snapshots" in payload["validation"]["critical_missing_fields"]
 
 
 def test_build_dependency_bundle_collect_inputs_rejects_missing_fixture_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
-    monkeypatch.setenv("API_FOOTBALL_API_KEY", "dummy-test-key")
     monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
 
     class _FixtureProvider:
-        def __init__(self, *, config):
-            self.config = config
+        provider_label = "LLM"
 
         def lookup_fixture(self, request):
             return None
 
-    class _OddsProvider:
-        def __init__(self, *, config):
-            self.config = config
-
     import dependency_bundle
-    monkeypatch.setattr(pipeline, "ApiFootballFixtureProvider", _FixtureProvider)
-    monkeypatch.setattr(pipeline, "ApiFootballOddsSnapshotProvider", _OddsProvider)
-    monkeypatch.setattr(dependency_bundle, "ApiFootballFixtureProvider", _FixtureProvider)
-    monkeypatch.setattr(dependency_bundle, "ApiFootballOddsSnapshotProvider", _OddsProvider)
+    monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FixtureProvider())
 
-    deps = pipeline.build_dependency_bundle(use_llm=False, llm_provider=None, llm_model=None)
+    deps = pipeline.build_dependency_bundle(
+        use_llm=False,
+        llm_provider=None,
+        llm_model=None,
+        fixture_provider_name="llm",
+        fixture_llm_provider="openai-compatible",
+        fixture_llm_model="m",
+        fixture_llm_base_url="https://x.test/v1",
+    )
 
-    with pytest.raises(Exception, match="Fixture lookup failed: No API-Football fixture matched Juve vs Milan on 2026-05-03\\."):
+    with pytest.raises(Exception, match="Fixture lookup failed"):
         deps["collect_inputs"](
             pipeline.MatchInputRequest(
                 home_team="Juve",
@@ -559,14 +486,12 @@ def test_main_reports_pipeline_service_cause(monkeypatch: pytest.MonkeyPatch) ->
                 "llm_model": None,
                 "allow_deterministic_fallback": False,
                 "league": None,
-                "league_id": None,
-                "season": None,
             },
         )()
 
     def fake_run_pipeline(*, request, deps):
         try:
-            raise ValueError("Fixture lookup failed: No API-Football fixture matched Juve vs Milan on 2026-05-03.")
+            raise ValueError("Fixture lookup failed: No fixture matched Juve vs Milan on 2026-05-03.")
         except ValueError as exc:
             raise pipeline.PipelineServiceError(stage="collect") from exc
 
@@ -574,5 +499,5 @@ def test_main_reports_pipeline_service_cause(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(pipeline, "build_dependency_bundle", lambda **kwargs: {})
     monkeypatch.setattr(pipeline, "run_pipeline", fake_run_pipeline)
 
-    with pytest.raises(SystemExit, match="Fixture lookup failed: No API-Football fixture matched"):
+    with pytest.raises(SystemExit, match="Fixture lookup failed: No fixture matched"):
         pipeline.main()

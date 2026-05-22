@@ -29,7 +29,7 @@ def isolated_db(tmp_path) -> None:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     for var in (
-        "API_FOOTBALL_API_KEY",
+        "GEMINI_API_KEY",
         "OPENAI_API_KEY",
         "XAI_API_KEY",
         "GROK_API_KEY",
@@ -283,7 +283,7 @@ def test_admin_stats_returns_503_when_admin_key_unset(
 def test_rate_limit_returns_429_when_exceeded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for var in ("API_FOOTBALL_API_KEY", "OPENAI_API_KEY", "COLMILLO_UI_ORIGIN"):
+    for var in ("GEMINI_API_KEY", "OPENAI_API_KEY", "COLMILLO_UI_ORIGIN"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("COLMILLO_API_KEY", _TEST_API_KEY)
     monkeypatch.setenv("COLMILLO_RATE_LIMIT_PER_HOUR", "2")

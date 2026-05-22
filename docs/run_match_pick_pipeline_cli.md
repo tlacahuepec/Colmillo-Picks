@@ -5,7 +5,6 @@
 The pipeline command is:
 
 ```bash
-API_FOOTBALL_API_KEY="your-api-football-key" \
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "<match_query>" [--top-n N]
 ```
 
@@ -53,12 +52,18 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "real madrid 
 The command resolves a real fixture before scoring. Use `--fixture-provider` or
 `SOCCER_FIXTURE_PROVIDER` to choose the source:
 
-- `api-football`: legacy API-Football lookup.
-- `llm`: OpenAI, Grok/xAI, or another OpenAI-compatible LLM endpoint.
-- `auto`: use fixture LLM config when complete, otherwise API-Football.
+- `llm` (default): Gemini, OpenAI, Grok/xAI, or another OpenAI-compatible LLM endpoint.
+- `auto`: use fixture LLM config when complete, otherwise deterministic fallback (if allowed).
 
-LLM fixture lookup uses the same provider contract as API-Football and returns
-the normalized fixture metadata needed by the scoring pipeline.
+Gemini example (default — only requires `GEMINI_API_KEY`):
+
+```bash
+export GEMINI_API_KEY="your-gemini-key"
+
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "arsenal - liverpool 2026-05-03" \
+  --league "Premier League"
+```
 
 OpenAI example:
 
@@ -70,8 +75,7 @@ export SOCCER_FIXTURE_LLM_MODEL="gpt-4.1-mini"
 
 python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
   "arsenal - liverpool 2026-05-03" \
-  --league "Premier League" \
-  --season 2025
+  --league "Premier League"
 ```
 
 Grok/xAI example:
@@ -109,26 +113,10 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
   --fixture-llm-model "provider-model"
 ```
 
-#### API-Football fixture lookup
+#### Deterministic fallback
 
-Fixture lookup is strict by default. The command must resolve a real API-Football fixture before scoring; otherwise it exits with a clear error and does not render deterministic match metadata.
-
-Set `API_FOOTBALL_API_KEY` before running a strict lookup:
-
-```bash
-export API_FOOTBALL_API_KEY="your-api-football-key"
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "arsenal - liverpool 2026-05-03"
-```
-
-Use optional hints when a team search or date could match multiple competitions:
-
-```bash
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
-  "arsenal - liverpool 2026-05-03" \
-  --league "Premier League" \
-  --league-id 39 \
-  --season 2025
-```
+Fixture lookup is strict by default: if the provider cannot resolve the requested
+match, the CLI exits with a clear error instead of generating synthetic data.
 
 For local demos, tests, or offline development, opt into deterministic fallback:
 
@@ -138,7 +126,7 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
   --allow-deterministic-fallback
 ```
 
-`--allow-deterministic-fallback` is intentionally explicit so synthetic fixture metadata is never mistaken for live API-Football data.
+`--allow-deterministic-fallback` is intentionally explicit so synthetic fixture metadata is never mistaken for live data.
 
 #### Error examples (parser behavior)
 
