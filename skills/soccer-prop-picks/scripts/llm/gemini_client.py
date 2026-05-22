@@ -92,9 +92,12 @@ class GeminiLLMClient(LLMClient):
                     parts = response.candidates[0].content.parts
                     if parts:
                         text = parts[0].text
-                if not text:
+                if not text or not text.strip():
                     raise LLMError("Gemini returned empty response")
-                parsed = _parse_first_json_object(_extract_json_text(text))
+                json_text = _extract_json_text(text)
+                if not json_text:
+                    raise LLMError("Gemini returned empty response")
+                parsed = _parse_first_json_object(json_text)
                 if not isinstance(parsed, dict):
                     raise LLMError("Gemini returned non-dict JSON output")
                 return parsed

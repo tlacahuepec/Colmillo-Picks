@@ -59,6 +59,20 @@ def test_gemini_client_raises_on_empty_response() -> None:
         client.generate_structured(system_prompt="x", user_prompt="y", schema={})
 
 
+def test_gemini_client_raises_on_whitespace_only_response() -> None:
+    class _WhitespaceClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponse("\n  \n")
+
+    client = GeminiLLMClient(api_key="test-key", client_factory=_WhitespaceClient)
+
+    with pytest.raises(LLMError, match="empty response"):
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+
 def test_gemini_client_raises_on_invalid_json() -> None:
     class _BadJsonClient:
         def __init__(self, *, api_key):
