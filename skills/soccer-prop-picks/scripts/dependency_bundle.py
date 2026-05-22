@@ -71,6 +71,10 @@ def _build_llm_fixture_provider(
     return LLMFixtureProvider(config=config)
 
 
+def _supports_search_grounding(model: str) -> bool:
+    return model.startswith("gemini-2")
+
+
 def _build_llm_lineup_provider(
     *,
     fixture_llm_provider: str | None,
@@ -83,10 +87,11 @@ def _build_llm_lineup_provider(
         base_url=fixture_llm_base_url,
     )
     if config.provider == "gemini" and config.api_key:
+        model = _optional_value(os.getenv("COLMILLO_LINEUP_LLM_MODEL")) or config.model or "gemini-2.5-flash"
         client = GeminiLLMClient(
             api_key=config.api_key,
-            model=config.model or "gemini-2.5-flash",
-            search_grounding=True,
+            model=model,
+            search_grounding=_supports_search_grounding(model),
             max_output_tokens=4000,
             max_retries=2,
             retry_delay_seconds=5.0,
@@ -109,10 +114,11 @@ def _build_llm_odds_provider(
         base_url=fixture_llm_base_url,
     )
     if config.provider == "gemini" and config.api_key:
+        model = _optional_value(os.getenv("COLMILLO_ODDS_LLM_MODEL")) or config.model or "gemini-2.5-flash"
         client = GeminiLLMClient(
             api_key=config.api_key,
-            model=config.model or "gemini-2.5-flash",
-            search_grounding=True,
+            model=model,
+            search_grounding=_supports_search_grounding(model),
             max_output_tokens=4000,
             max_retries=2,
             retry_delay_seconds=5.0,
