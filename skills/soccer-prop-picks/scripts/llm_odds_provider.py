@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,14 +22,19 @@ class LLMOddsProvider:
         self._client = client
 
     def get_odds_snapshots(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
+        debug = os.getenv("COLMILLO_ODDS_LLM_DEBUG", "").strip() not in ("", "0", "false")
         try:
             result = self._client.generate_structured(
                 system_prompt=self._build_system_prompt(),
                 user_prompt=self._build_user_prompt(fixture),
                 schema={},
             )
+            if debug:
+                print(f"[odds-llm-debug] response: {json.dumps(result, default=str)[:2000]}", file=sys.stderr)
             return self._map_response(result)
-        except Exception:
+        except Exception as exc:
+            if debug:
+                print(f"[odds-llm-debug] error: {type(exc).__name__}: {exc}", file=sys.stderr)
             return None
 
     @staticmethod
