@@ -55,6 +55,9 @@ The command resolves a real fixture before scoring. Use `--fixture-provider` or
 - `llm` (default): Gemini, OpenAI, Grok/xAI, or another OpenAI-compatible LLM endpoint.
 - `auto`: use fixture LLM config when complete, otherwise deterministic fallback (if allowed).
 
+Shell note: examples below use bash `export`. In PowerShell, set variables with
+`$env:NAME = "value"` (for example, `$env:GEMINI_API_KEY = "your-gemini-key"`).
+
 Gemini example (default — only requires `GEMINI_API_KEY`):
 
 ```bash
