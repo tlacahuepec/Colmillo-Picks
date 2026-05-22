@@ -347,6 +347,7 @@ def test_build_dependency_bundle_defaults_to_llm_fixture_provider(monkeypatch: p
 
     monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FakeProvider())
     monkeypatch.setattr(dependency_bundle, "_build_llm_lineup_provider", lambda **kw: None)
+    monkeypatch.setattr(dependency_bundle, "_build_llm_odds_provider", lambda **kw: None)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
@@ -446,6 +447,7 @@ def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payload
     import dependency_bundle
     monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FixtureProvider())
     monkeypatch.setattr(dependency_bundle, "_build_llm_lineup_provider", lambda **kw: None)
+    monkeypatch.setattr(dependency_bundle, "_build_llm_odds_provider", lambda **kw: None)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
@@ -486,6 +488,7 @@ def test_build_dependency_bundle_collect_inputs_rejects_missing_fixture_by_defau
     import dependency_bundle
     monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FixtureProvider())
     monkeypatch.setattr(dependency_bundle, "_build_llm_lineup_provider", lambda **kw: None)
+    monkeypatch.setattr(dependency_bundle, "_build_llm_odds_provider", lambda **kw: None)
 
     deps = pipeline.build_dependency_bundle(
         use_llm=False,
