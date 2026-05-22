@@ -55,33 +55,18 @@ class LLMOddsProvider:
         match_date = fixture.get("kickoff_utc", "")[:10] or "unknown"
         competition = fixture.get("competition", "League")
 
-        return json.dumps(
-            {
-                "task": "Provide pre-match betting odds for this soccer match from multiple sportsbooks.",
-                "match": {
-                    "home_team": home_name,
-                    "away_team": away_name,
-                    "date": match_date,
-                    "competition": competition,
-                },
-                "required_json_shape": {
-                    "sportsbook_snapshots": [
-                        {
-                            "source": "sportsbook name (e.g. bet365, DraftKings, FanDuel, BetMGM, Pinnacle)",
-                            "odds_decimal": "decimal odds for home team win (float, e.g. 1.85)",
-                        }
-                    ],
-                },
-                "rules": [
-                    "Return odds from at least 5 different sportsbooks if available.",
-                    "Use decimal format (European odds), not American or fractional.",
-                    "Return the home team win (1) odds from each sportsbook.",
-                    "Use real current pre-match odds from major sportsbooks.",
-                    "If odds are not yet available, return an empty sportsbook_snapshots array.",
-                    "Return JSON only.",
-                ],
-            },
-            sort_keys=True,
+        return (
+            f"Find pre-match betting odds for {home_name} vs {away_name} "
+            f"({competition}, {match_date}) from major sportsbooks.\n\n"
+            "Return a JSON object with this exact shape:\n"
+            '{"sportsbook_snapshots": [{"source": "sportsbook name", "odds_decimal": 1.85}]}\n\n'
+            "Rules:\n"
+            "- Include odds from at least 5 sportsbooks (bet365, DraftKings, FanDuel, BetMGM, Pinnacle, etc.)\n"
+            "- Use decimal format (European odds), not American or fractional\n"
+            "- Return the home team win (1X2 market, home win) odds from each sportsbook\n"
+            "- Use real current pre-match odds\n"
+            "- If odds are not yet available, return: {\"sportsbook_snapshots\": []}\n"
+            "- Return JSON only, no explanation"
         )
 
     def _map_response(self, result: dict[str, Any]) -> dict[str, Any]:

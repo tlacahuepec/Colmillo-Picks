@@ -60,54 +60,29 @@ class LLMLineupProvider:
         match_date = fixture.get("kickoff_utc", "")[:10] or "unknown"
         competition = fixture.get("competition", "League")
 
-        return json.dumps(
-            {
-                "task": "Provide projected lineups and key player statistics for this match.",
-                "match": {
-                    "home_team": home_name,
-                    "away_team": away_name,
-                    "date": match_date,
-                    "competition": competition,
-                },
-                "required_json_shape": {
-                    "teams": {
-                        "home": {
-                            "formation": "e.g. 4-2-3-1",
-                            "starters": ["11 player full names"],
-                            "injuries": ["injured player names"],
-                            "suspensions": ["suspended player names"],
-                        },
-                        "away": {
-                            "formation": "e.g. 4-2-3-1",
-                            "starters": ["11 player full names"],
-                            "injuries": ["injured player names"],
-                            "suspensions": ["suspended player names"],
-                        },
-                    },
-                    "players": [
-                        {
-                            "player_name": "full name",
-                            "team": "home|away",
-                            "role_tag": "GK|CB|LB|RB|CM|CDM|CAM|LM|RM|ST|CF",
-                            "expected_minutes": "integer 0-90",
-                            "substitution_risk": "low|medium|high",
-                            "captain": "true|false",
-                            "is_lone_striker": "true|false",
-                            "expected_passes_per_game": "season average (float)",
-                            "expected_shots_per_game": "season average (float)",
-                        }
-                    ],
-                },
-                "rules": [
-                    "Include projected starting XI for both teams based on latest available information.",
-                    "List all currently injured and suspended players.",
-                    f"In the players array, include exactly 6 key players: 3 from {home_name} (1 midfielder, 1 forward, 1 defender) and 3 from {away_name} (1 midfielder, 1 forward, 1 defender).",
-                    "For each player, provide their season average passes per game and shots per game.",
-                    "Use real current-season statistics, not estimates.",
-                    "Return JSON only.",
-                ],
-            },
-            sort_keys=True,
+        return (
+            f"Provide projected lineups and key player statistics for "
+            f"{home_name} vs {away_name} ({competition}, {match_date}).\n\n"
+            "Return a JSON object with this exact shape:\n"
+            "{\n"
+            '  "teams": {\n'
+            '    "home": {"formation": "4-2-3-1", "starters": ["11 player full names"], "injuries": ["names"], "suspensions": ["names"]},\n'
+            '    "away": {"formation": "4-2-3-1", "starters": ["11 player full names"], "injuries": ["names"], "suspensions": ["names"]}\n'
+            "  },\n"
+            '  "players": [\n'
+            '    {"player_name": "full name", "team": "home|away", "role_tag": "GK|CB|LB|RB|CM|CDM|CAM|LM|RM|ST|CF",\n'
+            '     "expected_minutes": 90, "substitution_risk": "low|medium|high", "captain": false,\n'
+            '     "is_lone_striker": false, "expected_passes_per_game": 45.2, "expected_shots_per_game": 2.1}\n'
+            "  ]\n"
+            "}\n\n"
+            "Rules:\n"
+            "- Include projected starting XI for both teams based on latest available information\n"
+            "- List all currently injured and suspended players\n"
+            f"- In the players array, include exactly 6 key players: 3 from {home_name} "
+            f"(1 midfielder, 1 forward, 1 defender) and 3 from {away_name} (1 midfielder, 1 forward, 1 defender)\n"
+            "- For each player, provide their season average passes per game and shots per game\n"
+            "- Use real current-season statistics, not estimates\n"
+            "- Return JSON only, no explanation"
         )
 
     def _map_response(self, result: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
