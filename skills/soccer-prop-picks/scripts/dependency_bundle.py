@@ -90,6 +90,8 @@ def _build_llm_lineup_provider(
             max_output_tokens=4000,
         )
         return LLMLineupProvider(client=client)
+    import sys
+    print(f"[bundle-debug] lineup provider not built: provider={config.provider!r}, has_key={bool(config.api_key)}", file=sys.stderr)
     return None
 
 
@@ -112,6 +114,8 @@ def _build_llm_odds_provider(
             max_output_tokens=4000,
         )
         return LLMOddsProvider(client=client)
+    import sys
+    print(f"[bundle-debug] odds provider not built: provider={config.provider!r}, has_key={bool(config.api_key)}", file=sys.stderr)
     return None
 
 
