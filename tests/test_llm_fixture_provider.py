@@ -335,3 +335,122 @@ def test_system_prompt_mentions_determining_competition() -> None:
 
     assert "competition" in system_prompt.lower()
     assert "cup" in system_prompt.lower() or "determine" in system_prompt.lower()
+
+
+def test_map_fixture_includes_standings_context_from_llm_response() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {
+                "match_found": True,
+                "confidence": "high",
+                "match_id": "BAYSTU-2026-05-23",
+                "competition": "Bundesliga",
+                "competition_type": "league",
+                "kickoff_utc": "2026-05-23T14:30:00Z",
+                "teams": {
+                    "home": {
+                        "team_id": "BAY",
+                        "team_name": "Bayern Munich",
+                        "standings_context": {
+                            "table_position": 1,
+                            "points": 75,
+                            "games_played": 33,
+                            "motivation_tag": "title_race",
+                        },
+                        "last_5_results": ["W", "W", "D", "W", "L"],
+                    },
+                    "away": {
+                        "team_id": "VFB",
+                        "team_name": "VfB Stuttgart",
+                        "standings_context": {
+                            "table_position": 5,
+                            "points": 55,
+                            "games_played": 33,
+                            "motivation_tag": "europe_race",
+                        },
+                        "last_5_results": ["L", "W", "W", "D", "W"],
+                    },
+                },
+                "venue": {"name": "Allianz Arena", "city": "Munich", "country": "Germany"},
+                "status": {"long": "Not Started", "short": "NS"},
+            }
+
+    provider = module.LLMFixtureProvider(config=_config(), client=_Client())
+    fixture = provider.lookup_fixture(
+        collector.MatchInputRequest(
+            home_team="Bayern Munich",
+            away_team="VfB Stuttgart",
+            match_date="2026-05-23",
+        )
+    )
+
+    assert fixture is not None
+    assert fixture["teams"]["home"]["standings_context"] == {
+        "table_position": 1,
+        "points": 75,
+        "games_played": 33,
+        "motivation_tag": "title_race",
+    }
+    assert fixture["teams"]["home"]["last_5_results"] == ["W", "W", "D", "W", "L"]
+    assert fixture["teams"]["away"]["standings_context"] == {
+        "table_position": 5,
+        "points": 55,
+        "games_played": 33,
+        "motivation_tag": "europe_race",
+    }
+    assert fixture["teams"]["away"]["last_5_results"] == ["L", "W", "W", "D", "W"]
+
+
+def test_map_fixture_omits_standings_when_not_in_response() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {
+                "match_found": True,
+                "confidence": "high",
+                "match_id": "BAYSTU-2026-05-23",
+                "competition": "Bundesliga",
+                "competition_type": "league",
+                "teams": {
+                    "home": {"team_id": "BAY", "team_name": "Bayern Munich"},
+                    "away": {"team_id": "VFB", "team_name": "VfB Stuttgart"},
+                },
+                "venue": {},
+            }
+
+    provider = module.LLMFixtureProvider(config=_config(), client=_Client())
+    fixture = provider.lookup_fixture(
+        collector.MatchInputRequest(
+            home_team="Bayern Munich",
+            away_team="VfB Stuttgart",
+            match_date="2026-05-23",
+        )
+    )
+
+    assert fixture is not None
+    assert "standings_context" not in fixture["teams"]["home"]
+    assert "last_5_results" not in fixture["teams"]["home"]
+
+
+def test_user_prompt_requests_standings_data() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    request = collector.MatchInputRequest(
+        home_team="Bayern Munich",
+        away_team="VfB Stuttgart",
+        match_date="2026-05-23",
+    )
+    prompt_json = json.loads(module.LLMFixtureProvider._build_user_prompt(request))
+    shape = prompt_json["required_json_shape"]
+
+    home_shape = shape["teams"]["home"]
+    assert "standings_context" in home_shape
+    assert "last_5_results" in home_shape
+    assert "table_position" in home_shape["standings_context"]
+    assert "motivation_tag" in home_shape["standings_context"]

@@ -342,8 +342,28 @@ class LLMFixtureProvider:
                     "kickoff_utc": "ISO-8601 UTC timestamp ending with Z, or null if unknown",
                     "venue": {"name": "stadium", "city": "city", "country": "country"},
                     "teams": {
-                        "home": {"team_id": "stable id/code", "team_name": "official home team"},
-                        "away": {"team_id": "stable id/code", "team_name": "official away team"},
+                        "home": {
+                            "team_id": "stable id/code",
+                            "team_name": "official home team",
+                            "standings_context": {
+                                "table_position": "current league position (integer)",
+                                "points": "total points (integer)",
+                                "games_played": "matches played (integer)",
+                                "motivation_tag": "must_win|title_race|promotion_race|europe_race|relegation_battle|midtable",
+                            },
+                            "last_5_results": ["W|D|L", "W|D|L", "W|D|L", "W|D|L", "W|D|L"],
+                        },
+                        "away": {
+                            "team_id": "stable id/code",
+                            "team_name": "official away team",
+                            "standings_context": {
+                                "table_position": "current league position (integer)",
+                                "points": "total points (integer)",
+                                "games_played": "matches played (integer)",
+                                "motivation_tag": "must_win|title_race|promotion_race|europe_race|relegation_battle|midtable",
+                            },
+                            "last_5_results": ["W|D|L", "W|D|L", "W|D|L", "W|D|L", "W|D|L"],
+                        },
                     },
                     "status": {"long": "Not Started", "short": "NS"},
                     "sources": [{"title": "source title", "url": "https://..."}],
@@ -355,6 +375,7 @@ class LLMFixtureProvider:
                     "Consider all active competitions for the teams (league, domestic cup, continental cup, friendly) — do not default to league.",
                     "If you cannot determine the specific competition with certainty, still return match_found=true with confidence='medium' and your best assessment of the competition type.",
                     "Set is_elimination and overtime_possible based on the actual competition format, not the generic competition hint.",
+                    "Include current league standings and last 5 match results for both teams.",
                     "Prefer official home/away orientation over the order in the request.",
                     "Use null for unknown optional values instead of guessing.",
                     "Return JSON only.",
@@ -421,5 +442,18 @@ class LLMFixtureProvider:
                     pass
             if mapped_status:
                 mapped["status"] = mapped_status
+
+        for side, side_data in (("home", home), ("away", away)):
+            standings = side_data.get("standings_context")
+            if isinstance(standings, dict):
+                mapped["teams"][side]["standings_context"] = {
+                    "table_position": int(standings.get("table_position", 10)),
+                    "points": int(standings.get("points", 40)),
+                    "games_played": int(standings.get("games_played", 30)),
+                    "motivation_tag": _clean_string(standings.get("motivation_tag"), "midtable"),
+                }
+            last_5 = side_data.get("last_5_results")
+            if isinstance(last_5, list) and len(last_5) == 5:
+                mapped["teams"][side]["last_5_results"] = [str(r).upper()[:1] for r in last_5]
 
         return mapped
