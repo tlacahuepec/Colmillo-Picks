@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 
 from availability.mock_adapter import DeterministicMockAvailabilityAdapter
 from pipeline_service import run_pipeline_with_payload

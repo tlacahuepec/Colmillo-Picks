@@ -471,6 +471,50 @@ def test_build_dependency_bundle_lineup_uses_env_model_override(monkeypatch: pyt
     assert odds_client["search_grounding"] is False
 
 
+def test_build_dependency_bundle_lineup_defaults_to_flash_lite_with_search_grounding(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    captured_clients: list[dict] = []
+
+    class _FakeGeminiClient:
+        def __init__(self, **kwargs):
+            captured_clients.append(kwargs)
+
+    class _FakeFixtureProvider:
+        provider_label = "LLM"
+
+        def __init__(self, *, config, **kwargs):
+            pass
+
+    import dependency_bundle
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
+    monkeypatch.delenv("COLMILLO_LINEUP_LLM_MODEL", raising=False)
+    monkeypatch.delenv("COLMILLO_ODDS_LLM_MODEL", raising=False)
+    monkeypatch.delenv("SOCCER_FIXTURE_LLM_MODEL", raising=False)
+    monkeypatch.setenv("SOCCER_FIXTURE_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("SOCCER_FIXTURE_LLM_API_KEY", "fake-key")
+    monkeypatch.setattr(dependency_bundle, "GeminiLLMClient", _FakeGeminiClient)
+    monkeypatch.setattr(dependency_bundle, "LLMFixtureProvider", _FakeFixtureProvider)
+    monkeypatch.setattr(dependency_bundle, "LLMLineupProvider", lambda **kw: None)
+    monkeypatch.setattr(dependency_bundle, "LLMOddsProvider", lambda **kw: None)
+
+    pipeline.build_dependency_bundle(
+        use_llm=False,
+        llm_provider=None,
+        llm_model=None,
+        fixture_provider_name="llm",
+        fixture_llm_provider="gemini",
+    )
+
+    lineup_client = captured_clients[1]
+    assert lineup_client["model"] == "gemini-2.5-flash-lite"
+    assert lineup_client["search_grounding"] is True
+
+    odds_client = captured_clients[2]
+    assert odds_client["model"] == "gemini-2.5-flash-lite"
+    assert odds_client["search_grounding"] is True
+
+
 def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payloads_are_none_or_malformed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

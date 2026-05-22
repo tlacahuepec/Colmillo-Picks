@@ -71,6 +71,9 @@ def _build_llm_fixture_provider(
     return LLMFixtureProvider(config=config)
 
 
+_DEFAULT_LINEUP_ODDS_MODEL = "gemini-2.5-flash-lite"
+
+
 def _supports_search_grounding(model: str) -> bool:
     return model.startswith("gemini-2")
 
@@ -87,7 +90,7 @@ def _build_llm_lineup_provider(
         base_url=fixture_llm_base_url,
     )
     if config.provider == "gemini" and config.api_key:
-        model = _optional_value(os.getenv("COLMILLO_LINEUP_LLM_MODEL")) or config.model or "gemini-2.5-flash"
+        model = _optional_value(os.getenv("COLMILLO_LINEUP_LLM_MODEL")) or _DEFAULT_LINEUP_ODDS_MODEL
         client = GeminiLLMClient(
             api_key=config.api_key,
             model=model,
@@ -97,8 +100,6 @@ def _build_llm_lineup_provider(
             retry_delay_seconds=5.0,
         )
         return LLMLineupProvider(client=client)
-    import sys
-    print(f"[bundle-debug] lineup provider not built: provider={config.provider!r}, has_key={bool(config.api_key)}", file=sys.stderr)
     return None
 
 
@@ -114,7 +115,7 @@ def _build_llm_odds_provider(
         base_url=fixture_llm_base_url,
     )
     if config.provider == "gemini" and config.api_key:
-        model = _optional_value(os.getenv("COLMILLO_ODDS_LLM_MODEL")) or config.model or "gemini-2.5-flash"
+        model = _optional_value(os.getenv("COLMILLO_ODDS_LLM_MODEL")) or _DEFAULT_LINEUP_ODDS_MODEL
         client = GeminiLLMClient(
             api_key=config.api_key,
             model=model,
@@ -124,8 +125,6 @@ def _build_llm_odds_provider(
             retry_delay_seconds=5.0,
         )
         return LLMOddsProvider(client=client)
-    import sys
-    print(f"[bundle-debug] odds provider not built: provider={config.provider!r}, has_key={bool(config.api_key)}", file=sys.stderr)
     return None
 
 
