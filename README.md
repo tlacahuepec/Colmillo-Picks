@@ -76,6 +76,8 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
   "juve - milan today" --allow-deterministic-fallback
 ```
 
+`--top-n` controls how many top picks to return in the report (1–5, default 5).
+
 Match query format: `"home - away today|tomorrow|YYYY-MM-DD"`
 
 Full CLI reference: [`docs/run_match_pick_pipeline_cli.md`](docs/run_match_pick_pipeline_cli.md)
