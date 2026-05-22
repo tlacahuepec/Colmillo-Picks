@@ -22,6 +22,18 @@ def _extract_json_text(raw: str) -> str:
     return stripped
 
 
+def _parse_first_json_object(text: str) -> dict:
+    """Parse the first JSON object from text that may contain trailing data."""
+    decoder = json.JSONDecoder()
+    try:
+        obj, _ = decoder.raw_decode(text)
+        if isinstance(obj, dict):
+            return obj
+        raise json.JSONDecodeError("Expected dict", text, 0)
+    except json.JSONDecodeError:
+        return json.loads(text)
+
+
 class GeminiLLMClient(LLMClient):
     """Google Gemini adapter implementing the project LLM client contract."""
 
@@ -82,7 +94,7 @@ class GeminiLLMClient(LLMClient):
                         text = parts[0].text
                 if not text:
                     raise LLMError("Gemini returned empty response")
-                parsed = json.loads(_extract_json_text(text))
+                parsed = _parse_first_json_object(_extract_json_text(text))
                 if not isinstance(parsed, dict):
                     raise LLMError("Gemini returned non-dict JSON output")
                 return parsed
@@ -95,6 +107,13 @@ class GeminiLLMClient(LLMClient):
                     raise LLMError(str(exc)) from exc
                 self._sleep(self._retry_delay_seconds)
             except Exception as exc:
-                raise LLMError(str(exc)) from exc
+                error_str = str(exc)
+                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                    if attempt >= attempts:
+                        raise LLMError(error_str) from exc
+                    retry_delay = self._retry_delay_seconds * (2 ** (attempt - 1))
+                    self._sleep(min(retry_delay, 60.0))
+                    continue
+                raise LLMError(error_str) from exc
 
         raise LLMError("Gemini provider failed without returning data")

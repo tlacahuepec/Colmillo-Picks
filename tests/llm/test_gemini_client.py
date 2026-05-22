@@ -227,3 +227,68 @@ def test_gemini_client_strips_markdown_fences_from_response() -> None:
     result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
 
     assert result == {"competition": "DFB Pokal", "match_found": True}
+
+
+def test_gemini_client_parses_first_json_object_when_extra_data_follows() -> None:
+    class _ExtraDataClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, *, model, contents, config):
+            return _FakeResponse('{"teams": {"home": "Bayern"}}\n{"extra": "data"}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_ExtraDataClient,
+        search_grounding=True,
+    )
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert result == {"teams": {"home": "Bayern"}}
+
+
+def test_gemini_client_retries_on_rate_limit_429() -> None:
+    call_count = 0
+
+    class _RateLimitClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("429 RESOURCE_EXHAUSTED: quota exceeded")
+            return _FakeResponse('{"ok": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_RateLimitClient,
+        max_retries=2,
+        retry_delay_seconds=0.01,
+        sleep_fn=lambda _: None,
+    )
+
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert result == {"ok": True}
+    assert call_count == 2
+
+
+def test_gemini_client_raises_after_exhausting_rate_limit_retries() -> None:
+    class _AlwaysRateLimitClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            raise Exception("429 RESOURCE_EXHAUSTED: quota exceeded")
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_AlwaysRateLimitClient,
+        max_retries=1,
+        retry_delay_seconds=0.01,
+        sleep_fn=lambda _: None,
+    )
+
+    with pytest.raises(LLMError, match="429"):
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})

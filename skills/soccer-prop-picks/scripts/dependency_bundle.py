@@ -88,6 +88,8 @@ def _build_llm_lineup_provider(
             model=config.model or "gemini-2.5-flash",
             search_grounding=True,
             max_output_tokens=4000,
+            max_retries=2,
+            retry_delay_seconds=5.0,
         )
         return LLMLineupProvider(client=client)
     import sys
@@ -112,6 +114,8 @@ def _build_llm_odds_provider(
             model=config.model or "gemini-2.5-flash",
             search_grounding=True,
             max_output_tokens=4000,
+            max_retries=2,
+            retry_delay_seconds=5.0,
         )
         return LLMOddsProvider(client=client)
     import sys
