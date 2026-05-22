@@ -86,6 +86,7 @@ def _build_llm_lineup_provider(
             api_key=config.api_key,
             model=config.model or "gemini-2.5-flash",
             search_grounding=True,
+            max_output_tokens=4000,
         )
         return LLMLineupProvider(client=client)
     return None
