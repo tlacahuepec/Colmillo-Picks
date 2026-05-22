@@ -57,7 +57,7 @@ def _build_llm_fixture_provider(
         base_url=fixture_llm_base_url,
     )
     if config.provider == "gemini":
-        client = GeminiLLMClient(api_key=config.api_key or "", model=config.model or "gemini-2.5-flash")
+        client = GeminiLLMClient(api_key=config.api_key or "", model=config.model or "gemini-2.5-flash", search_grounding=True)
         return LLMFixtureProvider(config=config, client=client)
     if config.provider == "xai" or config.provider == "grok":
         client = GrokLLMClient(

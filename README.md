@@ -116,6 +116,27 @@ If you see `LLM status: not_requested`, run included only deterministic scoring 
 
 If provider status shows fixture success but lineups still look generic/projected, check key availability in the same terminal session and rerun with explicit fixture flags.
 
+### Inspect fixture LLM request/response logs
+
+To debug fixture matching failures, enable opt-in fixture LLM debug logs:
+
+```powershell
+$env:COLMILLO_FIXTURE_LLM_DEBUG = "1"
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "bayern munich - vfb stuttgart 2026-05-23" --fixture-provider llm --fixture-llm-provider gemini --use-llm --llm-provider gemini 2> fixture-llm-debug.log
+```
+
+The debug stream includes:
+
+- `[fixture-llm-debug] request:` provider/model + exact user/system prompt payload sent for fixture lookup.
+- `[fixture-llm-debug] response:` parsed JSON returned by the fixture LLM adapter.
+- `[fixture-llm-debug] match_not_found:` rejection reason and normalized request fields.
+
+Optional log size control:
+
+```powershell
+$env:COLMILLO_FIXTURE_LLM_DEBUG_MAX_CHARS = "5000"
+```
+
 `--top-n` controls how many top picks to return in the report (1–5, default 5).
 
 Match query format: `"home - away today|tomorrow|YYYY-MM-DD"`

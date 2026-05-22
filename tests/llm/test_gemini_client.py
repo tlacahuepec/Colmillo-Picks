@@ -165,3 +165,47 @@ def test_build_enrich_uses_env_provider_when_flag_is_none() -> None:
     )
 
     assert callable(enrich_fn)
+
+
+def test_gemini_client_passes_google_search_tool_when_grounding_enabled() -> None:
+    captured_config = {}
+
+    class _CapturingClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, *, model, contents, config):
+            captured_config.update(config)
+            return _FakeResponse('{"match_found": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_CapturingClient,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert "tools" in captured_config
+    assert captured_config["tools"] == [{"google_search": {}}]
+    assert "response_mime_type" not in captured_config
+
+
+def test_gemini_client_omits_tools_when_grounding_disabled() -> None:
+    captured_config = {}
+
+    class _CapturingClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, *, model, contents, config):
+            captured_config.update(config)
+            return _FakeResponse('{"match_found": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_CapturingClient,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert "tools" not in captured_config
+    assert captured_config["response_mime_type"] == "application/json"

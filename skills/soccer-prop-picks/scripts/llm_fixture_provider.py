@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from typing import Any, Callable
@@ -15,6 +17,19 @@ from provider_config import LLMFixtureProviderConfig
 
 class LLMFixtureProviderError(RuntimeError):
     """Sanitized fixture LLM provider failure safe to show in CLI output."""
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _truncate_debug(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars]}... <truncated {len(value) - max_chars} chars>"
 
 
 def _utc_now_z() -> str:
@@ -48,6 +63,70 @@ def _clean_string(value: Any, fallback: str) -> str:
         return fallback
     cleaned = str(value).strip()
     return cleaned or fallback
+
+
+def _normalize_name(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalpha())
+
+
+def _request_team_names(request: Any) -> tuple[str, str]:
+    requested_home = getattr(request, "parsed_home_team", None) or request.home_team
+    requested_away = getattr(request, "parsed_away_team", None) or request.away_team
+    return str(requested_home), str(requested_away)
+
+
+def _request_match_date(request: Any) -> str:
+    return str(getattr(request, "parsed_match_date", None) or request.match_date)
+
+
+def _response_team_names(result: dict[str, Any], request: Any) -> tuple[str, str]:
+    teams = result.get("teams") if isinstance(result.get("teams"), dict) else {}
+    home = teams.get("home") if isinstance(teams.get("home"), dict) else {}
+    away = teams.get("away") if isinstance(teams.get("away"), dict) else {}
+    fallback_home, fallback_away = _request_team_names(request)
+    home_name = _clean_string(home.get("team_name"), fallback_home)
+    away_name = _clean_string(away.get("team_name"), fallback_away)
+    return home_name, away_name
+
+
+def _response_date(result: dict[str, Any], request: Any) -> str | None:
+    kickoff_utc = _as_utc_z(result.get("kickoff_utc"))
+    if kickoff_utc:
+        return kickoff_utc[:10]
+    match_id = str(result.get("match_id") or "")
+    requested_date = _request_match_date(request)
+    if requested_date and requested_date in match_id:
+        return requested_date
+    return None
+
+
+def _confidence_value(result: dict[str, Any]) -> str:
+    raw = str(result.get("confidence") or "").strip().lower()
+    if raw in {"high", "medium", "low"}:
+        return raw
+    return "unknown"
+
+
+def _should_soft_accept_match(result: dict[str, Any], request: Any) -> bool:
+    if bool(result.get("match_found")):
+        return True
+
+    confidence = _confidence_value(result)
+    if confidence != "high":
+        return False
+
+    request_home, request_away = _request_team_names(request)
+    response_home, response_away = _response_team_names(result, request)
+    req_pair = (_normalize_name(request_home), _normalize_name(request_away))
+    resp_pair = (_normalize_name(response_home), _normalize_name(response_away))
+
+    teams_match = req_pair == resp_pair or req_pair == (resp_pair[1], resp_pair[0])
+    if not teams_match:
+        return False
+
+    requested_date = _request_match_date(request)
+    response_date = _response_date(result, request)
+    return bool(response_date and response_date == requested_date)
 
 
 def _extract_message_content(payload: dict[str, Any]) -> str:
@@ -160,6 +239,8 @@ class LLMFixtureProvider:
         resolved = config or LLMFixtureProviderConfig.from_env()
         resolved.validate()
         self.config = resolved
+        self.debug_enabled = _env_flag("COLMILLO_FIXTURE_LLM_DEBUG", default=False)
+        self.debug_max_chars = int(os.getenv("COLMILLO_FIXTURE_LLM_DEBUG_MAX_CHARS", "2500"))
         self.client = client or OpenAICompatibleChatClient(
             api_key=resolved.api_key or "",
             base_url=resolved.base_url or "",
@@ -168,14 +249,56 @@ class LLMFixtureProvider:
             urlopen_fn=urlopen_fn,
         )
 
+    def _debug(self, event: str, payload: dict[str, Any]) -> None:
+        if not self.debug_enabled:
+            return
+        rendered = json.dumps(payload, ensure_ascii=True, default=str)
+        clipped = _truncate_debug(rendered, max_chars=max(256, self.debug_max_chars))
+        print(f"[fixture-llm-debug] {event}: {clipped}", file=sys.stderr)
+
     def lookup_fixture(self, request: Any) -> dict[str, Any] | None:
+        system_prompt = self._build_system_prompt()
+        user_prompt = self._build_user_prompt(request)
+        self._debug(
+            "request",
+            {
+                "provider": self.config.provider,
+                "model": self.config.model,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+            },
+        )
         result = self.client.generate_structured(
-            system_prompt=self._build_system_prompt(),
-            user_prompt=self._build_user_prompt(request),
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             schema={},
         )
-        if not bool(result.get("match_found")):
+        self._debug("response", {"provider": self.config.provider, "model": self.config.model, "response": result})
+        if not _should_soft_accept_match(result, request):
+            self._debug(
+                "match_not_found",
+                {
+                    "provider": self.config.provider,
+                    "model": self.config.model,
+                    "reason": result.get("reason", "not provided"),
+                    "request_home_team": getattr(request, "parsed_home_team", None) or getattr(request, "home_team", None),
+                    "request_away_team": getattr(request, "parsed_away_team", None) or getattr(request, "away_team", None),
+                    "request_match_date": getattr(request, "parsed_match_date", None) or getattr(request, "match_date", None),
+                },
+            )
             return None
+        if not bool(result.get("match_found")):
+            self._debug(
+                "soft_match_accept",
+                {
+                    "provider": self.config.provider,
+                    "model": self.config.model,
+                    "reason": "Accepted high-confidence team/date match despite match_found=false.",
+                    "request_match_date": _request_match_date(request),
+                    "request_teams": list(_request_team_names(request)),
+                    "response_teams": list(_response_team_names(result, request)),
+                },
+            )
         return self._map_fixture(result, request)
 
     @staticmethod
@@ -183,9 +306,10 @@ class LLMFixtureProvider:
         return (
             "You resolve soccer fixture metadata for a betting-analysis pipeline. "
             "Use current or live match information when your provider has access to it. "
+            "Determine the exact competition (league, cup, or friendly) these teams are playing on the requested date. "
             "Return exactly one JSON object. Do not include markdown or prose. "
-            "If the exact requested fixture cannot be verified, set match_found to false. "
-            "Never invent a fixture."
+            "If the teams or date are clearly implausible, set match_found to false. "
+            "Never invent a fixture — but if the teams and date are plausible, return your best assessment with appropriate confidence."
         )
 
     @staticmethod
@@ -213,8 +337,8 @@ class LLMFixtureProvider:
                     "match_id": "provider fixture id or stable generated id",
                     "competition": "competition name",
                     "competition_type": "league|cup",
-                    "is_elimination": False,
-                    "overtime_possible": False,
+                    "is_elimination": "true if knockout/cup match, false otherwise",
+                    "overtime_possible": "true if format allows extra time, false otherwise",
                     "kickoff_utc": "ISO-8601 UTC timestamp ending with Z, or null if unknown",
                     "venue": {"name": "stadium", "city": "city", "country": "country"},
                     "teams": {
@@ -225,7 +349,12 @@ class LLMFixtureProvider:
                     "sources": [{"title": "source title", "url": "https://..."}],
                 },
                 "rules": [
-                    "Return match_found false if the teams, competition, or date do not match.",
+                    "Return match_found false only if the teams or date are clearly implausible.",
+                    "Treat competition='League' as generic context; do not reject solely because the exact league name differs.",
+                    "When competition is 'League' (generic), determine the actual competition by checking what tournament these teams are scheduled to play on the given date.",
+                    "Consider all active competitions for the teams (league, domestic cup, continental cup, friendly) — do not default to league.",
+                    "If you cannot determine the specific competition with certainty, still return match_found=true with confidence='medium' and your best assessment of the competition type.",
+                    "Set is_elimination and overtime_possible based on the actual competition format, not the generic competition hint.",
                     "Prefer official home/away orientation over the order in the request.",
                     "Use null for unknown optional values instead of guessing.",
                     "Return JSON only.",
