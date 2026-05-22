@@ -388,6 +388,40 @@ def test_build_dependency_bundle_wires_llm_fixture_provider(monkeypatch: pytest.
     assert captured["config"].model == "fixture-model"
 
 
+def test_build_dependency_bundle_gemini_fixture_client_uses_sufficient_token_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+
+    captured: dict[str, object] = {}
+
+    class _FakeGeminiClient:
+        def __init__(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+    class _FakeFixtureProvider:
+        provider_label = "LLM"
+
+        def __init__(self, *, config, **kwargs):
+            captured["client"] = kwargs.get("client")
+
+    import dependency_bundle
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
+    monkeypatch.setenv("SOCCER_FIXTURE_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("SOCCER_FIXTURE_LLM_API_KEY", "fake-key")
+    monkeypatch.setattr(dependency_bundle, "GeminiLLMClient", _FakeGeminiClient)
+    monkeypatch.setattr(dependency_bundle, "LLMFixtureProvider", _FakeFixtureProvider)
+
+    pipeline.build_dependency_bundle(
+        use_llm=False,
+        llm_provider=None,
+        llm_model=None,
+        fixture_provider_name="llm",
+        fixture_llm_provider="gemini",
+    )
+
+    assert captured["kwargs"]["max_output_tokens"] >= 4000
+    assert captured["kwargs"]["search_grounding"] is True
+
+
 def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payloads_are_none_or_malformed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
