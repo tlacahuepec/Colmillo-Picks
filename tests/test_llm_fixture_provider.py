@@ -160,3 +160,178 @@ def test_llm_fixture_provider_uses_safe_defaults_for_partial_fixture_json() -> N
     assert fixture["teams"]["home"]["team_id"] == "ARS"
     assert fixture["teams"]["away"]["team_id"] == "LIV"
     assert fixture["venue"] == {"name": "Unknown Venue", "city": "Unknown", "country": "Unknown"}
+
+
+def test_llm_fixture_provider_debug_logs_request_and_response(monkeypatch, capsys) -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+    monkeypatch.setenv("COLMILLO_FIXTURE_LLM_DEBUG", "1")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {
+                "match_found": True,
+                "competition": "Bundesliga",
+                "teams": {
+                    "home": {"team_name": "Bayern Munich"},
+                    "away": {"team_name": "VfB Stuttgart"},
+                },
+                "venue": {},
+            }
+
+    provider = module.LLMFixtureProvider(config=_config(), client=_Client())
+    provider.lookup_fixture(
+        collector.MatchInputRequest(
+            home_team="Bayern Munich",
+            away_team="VfB Stuttgart",
+            match_date="2026-05-23",
+            competition="Bundesliga",
+        )
+    )
+
+    stderr = capsys.readouterr().err
+    assert "[fixture-llm-debug] request:" in stderr
+    assert "[fixture-llm-debug] response:" in stderr
+    assert "Bayern Munich" in stderr
+
+
+def test_llm_fixture_provider_debug_logs_reason_when_match_not_found(monkeypatch, capsys) -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+    monkeypatch.setenv("COLMILLO_FIXTURE_LLM_DEBUG", "1")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {
+                "match_found": False,
+                "reason": "Could not verify fixture for requested date.",
+            }
+
+    provider = module.LLMFixtureProvider(config=_config(), client=_Client())
+    fixture = provider.lookup_fixture(
+        collector.MatchInputRequest(
+            home_team="Bayern Munich",
+            away_team="VfB Stuttgart",
+            match_date="2026-05-23",
+            competition="Bundesliga",
+        )
+    )
+
+    assert fixture is None
+    stderr = capsys.readouterr().err
+    assert "[fixture-llm-debug] match_not_found:" in stderr
+    assert "Could not verify fixture for requested date." in stderr
+
+
+def test_llm_fixture_provider_soft_accepts_high_confidence_team_date_match() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {
+                "match_found": False,
+                "confidence": "high",
+                "match_id": "STUTTGART_BAYERN_2026-05-23",
+                "competition": "Bundesliga",
+                "competition_type": "league",
+                "kickoff_utc": None,
+                "teams": {
+                    "home": {"team_id": "BAYERN_MUNICH", "team_name": "Bayern Munich"},
+                    "away": {"team_id": "VfB_STUTTGART", "team_name": "VfB Stuttgart"},
+                },
+                "status": {"long": "Not Started", "short": "NS"},
+                "venue": {"name": None, "city": None, "country": None},
+            }
+
+    provider = module.LLMFixtureProvider(config=_config(), client=_Client())
+    fixture = provider.lookup_fixture(
+        collector.MatchInputRequest(
+            home_team="Bayern Munich",
+            away_team="Vfb Stuttgart",
+            match_date="2026-05-23",
+            competition="League",
+        )
+    )
+
+    assert fixture is not None
+    assert fixture["teams"]["home"]["team_name"] == "Bayern Munich"
+    assert fixture["teams"]["away"]["team_name"] == "VfB Stuttgart"
+    assert fixture["competition"] == "Bundesliga"
+
+
+def test_llm_fixture_provider_does_not_soft_accept_low_confidence_match() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {
+                "match_found": False,
+                "confidence": "low",
+                "match_id": "STUTTGART_BAYERN_2026-05-23",
+                "competition": "Bundesliga",
+                "teams": {
+                    "home": {"team_name": "Bayern Munich"},
+                    "away": {"team_name": "VfB Stuttgart"},
+                },
+            }
+
+    provider = module.LLMFixtureProvider(config=_config(), client=_Client())
+    fixture = provider.lookup_fixture(
+        collector.MatchInputRequest(
+            home_team="Bayern Munich",
+            away_team="Vfb Stuttgart",
+            match_date="2026-05-23",
+            competition="League",
+        )
+    )
+
+    assert fixture is None
+
+
+def test_user_prompt_json_shape_does_not_hardcode_false_for_elimination_fields() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    request = collector.MatchInputRequest(
+        home_team="Bayern Munich",
+        away_team="VfB Stuttgart",
+        match_date="2026-05-23",
+        competition="League",
+    )
+    prompt_json = json.loads(module.LLMFixtureProvider._build_user_prompt(request))
+    shape = prompt_json["required_json_shape"]
+
+    assert shape["is_elimination"] != False  # noqa: E712
+    assert shape["overtime_possible"] != False  # noqa: E712
+    assert isinstance(shape["is_elimination"], str)
+    assert isinstance(shape["overtime_possible"], str)
+
+
+def test_user_prompt_includes_competition_identification_rules() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    request = collector.MatchInputRequest(
+        home_team="Bayern Munich",
+        away_team="VfB Stuttgart",
+        match_date="2026-05-23",
+        competition="League",
+    )
+    prompt_json = json.loads(module.LLMFixtureProvider._build_user_prompt(request))
+    rules = prompt_json["rules"]
+    rules_text = " ".join(rules)
+
+    assert "actual competition" in rules_text.lower() or "determine" in rules_text.lower()
+    assert "cup" in rules_text.lower()
+    assert "do not default to league" in rules_text.lower() or "not default to league" in rules_text.lower()
+
+
+def test_system_prompt_mentions_determining_competition() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+
+    system_prompt = module.LLMFixtureProvider._build_system_prompt()
+
+    assert "competition" in system_prompt.lower()
+    assert "cup" in system_prompt.lower() or "determine" in system_prompt.lower()

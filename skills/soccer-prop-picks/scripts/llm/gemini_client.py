@@ -21,6 +21,7 @@ class GeminiLLMClient(LLMClient):
         timeout_seconds: float = 20.0,
         max_retries: int = 1,
         retry_delay_seconds: float = 0.5,
+        search_grounding: bool = False,
         sleep_fn: Callable[[float], None] = sleep,
         client_factory: Callable[..., Any] | None = None,
     ) -> None:
@@ -29,6 +30,7 @@ class GeminiLLMClient(LLMClient):
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
         self._retry_delay_seconds = retry_delay_seconds
+        self._search_grounding = search_grounding
         self._sleep = sleep_fn
 
         if client_factory is not None:
@@ -44,14 +46,18 @@ class GeminiLLMClient(LLMClient):
 
         for attempt in range(1, attempts + 1):
             try:
+                config: dict[str, Any] = {
+                    "max_output_tokens": self._max_output_tokens,
+                    "thinking_config": {"thinking_budget": 0},
+                }
+                if self._search_grounding:
+                    config["tools"] = [{"google_search": {}}]
+                else:
+                    config["response_mime_type"] = "application/json"
                 response = self._client.models.generate_content(
                     model=self._model,
                     contents=prompt,
-                    config={
-                        "max_output_tokens": self._max_output_tokens,
-                        "thinking_config": {"thinking_budget": 0},
-                        "response_mime_type": "application/json",
-                    },
+                    config=config,
                 )
                 text = response.text
                 if not text:
