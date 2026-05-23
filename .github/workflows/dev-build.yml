@@ -1,0 +1,114 @@
+name: Dev Build
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-publish:
+    name: Build and publish dev images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: colmillo-api
+            dockerfile: Dockerfile.api
+          - image: colmillo-ui
+            dockerfile: Dockerfile.ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Run lint
+        run: ruff check .
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate dev tags
+        id: tags
+        run: |
+          SHA="${{ github.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          IMAGE="${{ github.repository_owner }}/${{ matrix.image }}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          TAGS="${{ env.REGISTRY }}/${IMAGE}:dev"
+          TAGS="${TAGS},${{ env.REGISTRY }}/${IMAGE}:dev-${SHORT_SHA}"
+
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=0.0.0-dev
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            COLMILLO_VERSION=0.0.0-dev
+            COLMILLO_COMMIT=${{ github.sha }}
+            COLMILLO_CHANNEL=dev
+            COLMILLO_BRANCH=dev
+            COLMILLO_BUILD_TIME=${{ steps.tags.outputs.build_time }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test API
+        if: matrix.image == 'colmillo-api'
+        run: |
+          SHORT_SHA="${{ steps.tags.outputs.short_sha }}"
+          IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:dev-${SHORT_SHA}"
+          docker run -d --name dev-smoke \
+            -e COLMILLO_API_KEY=dev-smoke-key \
+            -e COLMILLO_VERSION=0.0.0-dev \
+            -e COLMILLO_CHANNEL=dev \
+            -p 8000:8000 "$IMAGE"
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/healthz > /dev/null; then
+              echo "Dev smoke test passed"
+              docker rm -f dev-smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Dev smoke test failed"
+          docker logs dev-smoke
+          docker rm -f dev-smoke
+          exit 1
