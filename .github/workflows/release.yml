@@ -146,3 +146,14 @@ jobs:
             --notes-file release_notes.md \
             $PRERELEASE \
             "dist/colmillo-picks-${VERSION}.tar.gz"
+
+  publish-docker:
+    name: Publish Docker images
+    needs: [validate, release]
+    uses: ./.github/workflows/publish-docker.yml
+    with:
+      version: ${{ needs.validate.outputs.version }}
+      channel: ${{ needs.validate.outputs.channel }}
+    permissions:
+      contents: read
+      packages: write

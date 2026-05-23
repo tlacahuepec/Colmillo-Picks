@@ -1,0 +1,103 @@
+name: Publish Docker Images
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    name: Build and push Docker images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: colmillo-api
+            dockerfile: Dockerfile.api
+          - image: colmillo-ui
+            dockerfile: Dockerfile.ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate tags
+        id: tags
+        run: |
+          VERSION="${{ inputs.version }}"
+          CHANNEL="${{ inputs.channel }}"
+          SHA="${{ github.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          IMAGE="${{ github.repository_owner }}/${{ matrix.image }}"
+
+          TAGS="${{ env.REGISTRY }}/${IMAGE}:${VERSION}"
+          TAGS="${TAGS},${{ env.REGISTRY }}/${IMAGE}:${SHORT_SHA}"
+
+          if [ "$CHANNEL" = "stable" ]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${IMAGE}:latest"
+            MAJOR_MINOR="$(echo "$VERSION" | cut -d. -f1-2)"
+            TAGS="${TAGS},${{ env.REGISTRY }}/${IMAGE}:${MAJOR_MINOR}"
+          fi
+
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            COLMILLO_VERSION=${{ inputs.version }}
+            COLMILLO_COMMIT=${{ github.sha }}
+            COLMILLO_CHANNEL=${{ inputs.channel }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test image
+        if: matrix.image == 'colmillo-api'
+        run: |
+          VERSION="${{ inputs.version }}"
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${SHORT_SHA}"
+          docker run -d --name smoke-test \
+            -e COLMILLO_API_KEY=smoke-test-key \
+            -p 8000:8000 "$IMAGE"
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/healthz > /dev/null; then
+              echo "Smoke test passed"
+              docker rm -f smoke-test
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Smoke test failed"
+          docker logs smoke-test
+          docker rm -f smoke-test
+          exit 1
