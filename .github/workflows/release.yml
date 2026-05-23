@@ -121,11 +121,22 @@ jobs:
           See [full changelog](https://github.com/${{ github.repository }}/compare/...${TAG})
           EOF
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Package CLI artifact
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          python scripts/package_cli.py "$VERSION" --output "dist/colmillo-picks-${VERSION}.tar.gz"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${{ needs.validate.outputs.version }}"
           PRERELEASE=""
           if [ "${{ needs.validate.outputs.channel }}" = "rc" ]; then
             PRERELEASE="--prerelease"
@@ -133,4 +144,5 @@ jobs:
           gh release create "$TAG" \
             --title "Colmillo-Picks $TAG" \
             --notes-file release_notes.md \
-            $PRERELEASE
+            $PRERELEASE \
+            "dist/colmillo-picks-${VERSION}.tar.gz"
