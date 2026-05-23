@@ -247,7 +247,12 @@ def main(argv: list[str] | None = None) -> None:
     for step in result.get("steps", []):
         ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
 
-    ledger.complete_run(run_ctx.id)
+    failed_steps = [s for s in result.get("steps", []) if s["status"] == "failed"]
+    if failed_steps:
+        reasons = [f"{s['name']} failed" for s in failed_steps]
+        ledger.partial_run(run_ctx.id, reasons=reasons)
+    else:
+        ledger.complete_run(run_ctx.id)
     print(result["report_markdown"])
 
 
