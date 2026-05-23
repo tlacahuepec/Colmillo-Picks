@@ -15,7 +15,7 @@ from dependency_bundle import (
 )
 from llm_fixture_provider import LLMFixtureProvider
 from llm.provider_adapter import build_enrich_with_llm
-from pipeline_service import PipelineServiceError, run_pipeline
+from pipeline_service import PipelineServiceError, run_pipeline, run_pipeline_with_payload
 from render_pick_report import render_report
 from provider_config import LLMFixtureProviderConfig
 from run_ledger import InMemoryRunLedger, SqliteRunLedger
@@ -237,15 +237,18 @@ def main(argv: list[str] | None = None) -> None:
         ledger.fail_run(run_ctx.id, error_summary=str(exc), error_stage="config")
         raise SystemExit(f"Error: {exc}") from exc
     try:
-        report = run_pipeline(request=request_dict, deps=deps)
+        result = run_pipeline_with_payload(request=request_dict, deps=deps)
     except PipelineServiceError as exc:
         cause = exc.__cause__
         message = str(cause) if cause else str(exc)
         ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage)
         raise SystemExit(f"Error: {message}") from exc
 
+    for step in result.get("steps", []):
+        ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
+
     ledger.complete_run(run_ctx.id)
-    print(report)
+    print(result["report_markdown"])
 
 
 if __name__ == "__main__":

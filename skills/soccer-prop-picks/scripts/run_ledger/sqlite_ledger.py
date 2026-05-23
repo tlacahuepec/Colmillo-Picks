@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from run_ledger.contract import RunContext
+from run_ledger.contract import RunContext, RunStep
 
 _DEFAULT_DB_PATH = os.path.join("data", "runs.db")
 
@@ -33,6 +33,17 @@ CREATE TABLE IF NOT EXISTS run_ledger (
 )
 """
 
+_CREATE_STEPS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS run_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id VARCHAR(36) NOT NULL,
+    step_name VARCHAR(64) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'success',
+    started_at TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL DEFAULT 0
+)
+"""
+
 
 class SqliteRunLedger:
     def __init__(self, db_path: str | None = None) -> None:
@@ -42,6 +53,7 @@ class SqliteRunLedger:
         self._conn = sqlite3.connect(resolved_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_CREATE_TABLE_SQL)
+        self._conn.execute(_CREATE_STEPS_TABLE_SQL)
         self._conn.commit()
 
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext:
@@ -98,6 +110,37 @@ class SqliteRunLedger:
 
     def get_run(self, run_id: str) -> RunContext | None:
         return self._load_run(run_id)
+
+    def record_step(self, run_id: str, step_name: str, *, status: str = "success", duration_ms: int = 0) -> RunStep:
+        now = datetime.now(timezone.utc)
+        self._conn.execute(
+            "INSERT INTO run_steps (run_id, step_name, status, started_at, duration_ms) VALUES (?, ?, ?, ?, ?)",
+            (run_id, step_name, status, now.isoformat(), duration_ms),
+        )
+        self._conn.commit()
+        return RunStep(
+            run_id=run_id,
+            step_name=step_name,
+            status=status,
+            started_at=now,
+            duration_ms=duration_ms,
+        )
+
+    def get_steps(self, run_id: str) -> list[RunStep]:
+        rows = self._conn.execute(
+            "SELECT run_id, step_name, status, started_at, duration_ms FROM run_steps WHERE run_id = ? ORDER BY id",
+            (run_id,),
+        ).fetchall()
+        return [
+            RunStep(
+                run_id=row["run_id"],
+                step_name=row["step_name"],
+                status=row["status"],
+                started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+                duration_ms=row["duration_ms"],
+            )
+            for row in rows
+        ]
 
     def _load_run(self, run_id: str) -> RunContext | None:
         row = self._conn.execute("SELECT * FROM run_ledger WHERE id = ?", (run_id,)).fetchone()
