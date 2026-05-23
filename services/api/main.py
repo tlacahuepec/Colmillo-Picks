@@ -167,6 +167,59 @@ class HitRateResponse(BaseModel):
     since: str | None = None
 
 
+class RunSummary(BaseModel):
+    """Lightweight row used by ``GET /runs`` listings."""
+
+    id: str
+    source: str
+    match_query: str
+    competition: str | None = None
+    status: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
+    error_stage: str | None = None
+
+
+class RunsListResponse(BaseModel):
+    items: list[RunSummary]
+    limit: int
+    offset: int
+
+
+class RunStepDetail(BaseModel):
+    step_name: str
+    status: str
+    duration_ms: int
+
+
+class RunPickDetail(BaseModel):
+    rank: int
+    player: str
+    team_id: str
+    market: str
+    direction: str
+    line: float
+    score: float
+    confidence: str
+    risk_notes: list[str]
+
+
+class RunDetailResponse(BaseModel):
+    id: str
+    source: str
+    match_query: str
+    competition: str | None = None
+    status: str
+    error_summary: str | None = None
+    error_stage: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
+    steps: list[RunStepDetail]
+    picks: list[RunPickDetail]
+
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
@@ -472,6 +525,66 @@ def create_app() -> FastAPI:
         # prefix ``/admin`` triggers the admin gate there.
         del request
         return db_module.operational_stats()
+
+    # ---- Run History (Story 12) ------------------------------------------ #
+    @app.get("/runs", response_model=RunsListResponse)
+    def list_runs(
+        limit: int = Query(20, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+    ) -> RunsListResponse:
+        ledger = _build_run_ledger()
+        runs = ledger.list_runs(limit=limit, offset=offset)
+        return RunsListResponse(
+            items=[
+                RunSummary(
+                    id=r.id,
+                    source=r.source,
+                    match_query=r.match_query,
+                    competition=r.competition,
+                    status=r.status,
+                    started_at=r.started_at,
+                    completed_at=r.completed_at,
+                    duration_ms=r.duration_ms,
+                    error_stage=r.error_stage,
+                )
+                for r in runs
+            ],
+            limit=limit,
+            offset=offset,
+        )
+
+    @app.get("/runs/{run_id}", response_model=RunDetailResponse)
+    def get_run(run_id: str) -> RunDetailResponse:
+        ledger = _build_run_ledger()
+        run = ledger.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found.")
+        steps = ledger.get_steps(run_id)
+        picks = ledger.get_picks(run_id)
+        return RunDetailResponse(
+            id=run.id,
+            source=run.source,
+            match_query=run.match_query,
+            competition=run.competition,
+            status=run.status,
+            error_summary=run.error_summary,
+            error_stage=run.error_stage,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            duration_ms=run.duration_ms,
+            steps=[
+                RunStepDetail(step_name=s.step_name, status=s.status, duration_ms=s.duration_ms)
+                for s in steps
+            ],
+            picks=[
+                RunPickDetail(
+                    rank=p.rank, player=p.player, team_id=p.team_id,
+                    market=p.market, direction=p.direction, line=p.line,
+                    score=p.score, confidence=p.confidence, risk_notes=p.risk_notes,
+                )
+                for p in picks
+            ],
+        )
 
     return app
 
