@@ -53,7 +53,7 @@ from services.api.sentry import init_sentry_if_configured  # noqa: E402
 
 
 class PicksRequest(BaseModel):
-    """Request body for ``POST /picks``."""
+    """Request body for ``POST /picks`` (legacy match_query format)."""
 
     match_query: str = Field(..., description="e.g. 'arsenal - liverpool 2026-05-03'")
     top_n: int = Field(5, ge=1, le=5)
@@ -72,6 +72,28 @@ class PicksRequest(BaseModel):
     availability_provider: str | None = Field(
         None, description="prizepicks | mock | none. Defaults to env COLMILLO_AVAILABILITY_PROVIDER."
     )
+
+
+class StructuredPicksRequest(BaseModel):
+    """Request body for ``POST /picks`` (sport-aware structured format)."""
+
+    sport: str = Field(..., description="Sport: soccer, basketball, baseball")
+    event_date: str = Field(..., description="YYYY-MM-DD")
+    home_team: str
+    away_team: str
+    markets: list[str] = Field(default_factory=list)
+    top_n: int = Field(5, ge=1, le=5)
+    league: str | None = None
+    platform: str | None = None
+    use_llm: bool = False
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    fixture_provider: str | None = None
+    fixture_llm_provider: str | None = None
+    fixture_llm_model: str | None = None
+    fixture_llm_base_url: str | None = None
+    allow_deterministic_fallback: bool = False
+    availability_provider: str | None = None
 
 
 class PickAcceptedResponse(BaseModel):
@@ -296,6 +318,139 @@ def _build_run_ledger():
         return InMemoryRunLedger()
 
 
+def _handle_legacy_picks(body: dict[str, Any], background_tasks: Any) -> PickAcceptedResponse:
+    from pydantic import ValidationError as PydanticValidationError
+
+    try:
+        payload = PicksRequest(**body)
+    except PydanticValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    if payload.use_llm and not payload.llm_provider:
+        raise HTTPException(
+            status_code=400,
+            detail="llm_provider is required when use_llm is true.",
+        )
+
+    bundle_kwargs = dict(
+        use_llm=payload.use_llm,
+        llm_provider=payload.llm_provider,
+        llm_model=payload.llm_model,
+        allow_deterministic_fallback=payload.allow_deterministic_fallback,
+        league=payload.league,
+        fixture_provider_name=payload.fixture_provider,
+        fixture_llm_provider=payload.fixture_llm_provider,
+        fixture_llm_model=payload.fixture_llm_model,
+        fixture_llm_base_url=payload.fixture_llm_base_url,
+        availability_provider=payload.availability_provider,
+    )
+    try:
+        build_dependency_bundle(**bundle_kwargs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    request_dict = _build_request_dict(payload)
+    row = db_module.create_pending_pick_run(request_payload=request_dict)
+    jobs_module.enqueue_pick_run(
+        pick_id=row.id,
+        request_dict=request_dict,
+        bundle_kwargs=bundle_kwargs,
+    )
+    if os.environ.get("COLMILLO_WORKER_MODE") != "external":
+        background_tasks.add_task(
+            _run_next_queued_job, row.id, request_dict, bundle_kwargs
+        )
+    return PickAcceptedResponse(
+        id=row.id,
+        status=db_module.PICK_STATUS_PENDING,
+        created_at=row.created_at,
+    )
+
+
+def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> PickAcceptedResponse:
+    from pydantic import ValidationError as PydanticValidationError
+
+    from pick_request import (
+        PickRequest,
+        PickRequestValidationError,
+        pick_request_to_legacy_dict,
+        validate_pick_request,
+        SPORT_MARKETS,
+    )
+
+    try:
+        payload = StructuredPicksRequest(**body)
+    except PydanticValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    markets = tuple(payload.markets) if payload.markets else tuple(SPORT_MARKETS.get(payload.sport, ()))
+
+    pick_req = PickRequest(
+        sport=payload.sport,
+        event_date=payload.event_date,
+        home_team=payload.home_team,
+        away_team=payload.away_team,
+        markets=markets,
+        top_n=payload.top_n,
+        league=payload.league,
+        platform=payload.platform,
+        use_llm=payload.use_llm,
+        llm_provider=payload.llm_provider,
+        llm_model=payload.llm_model,
+    )
+
+    try:
+        validate_pick_request(pick_req)
+    except PickRequestValidationError as exc:
+        raise HTTPException(status_code=400, detail="; ".join(exc.errors)) from exc
+
+    if pick_req.sport != "soccer":
+        raise HTTPException(
+            status_code=400,
+            detail="Only soccer is currently supported for execution.",
+        )
+
+    if payload.use_llm and not payload.llm_provider:
+        raise HTTPException(
+            status_code=400,
+            detail="llm_provider is required when use_llm is true.",
+        )
+
+    bundle_kwargs = dict(
+        use_llm=payload.use_llm,
+        llm_provider=payload.llm_provider,
+        llm_model=payload.llm_model,
+        allow_deterministic_fallback=payload.allow_deterministic_fallback,
+        league=payload.league,
+        fixture_provider_name=payload.fixture_provider,
+        fixture_llm_provider=payload.fixture_llm_provider,
+        fixture_llm_model=payload.fixture_llm_model,
+        fixture_llm_base_url=payload.fixture_llm_base_url,
+        availability_provider=payload.availability_provider,
+    )
+    try:
+        build_dependency_bundle(**bundle_kwargs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    request_dict = pick_request_to_legacy_dict(pick_req)
+    row = db_module.create_pending_pick_run(request_payload=request_dict)
+    jobs_module.enqueue_pick_run(
+        pick_id=row.id,
+        request_dict=request_dict,
+        bundle_kwargs=bundle_kwargs,
+    )
+    if os.environ.get("COLMILLO_WORKER_MODE") != "external":
+        background_tasks.add_task(
+            _run_next_queued_job, row.id, request_dict, bundle_kwargs
+        )
+    return PickAcceptedResponse(
+        id=row.id,
+        status=db_module.PICK_STATUS_PENDING,
+        created_at=row.created_at,
+    )
+
+
 def _execute_pipeline_job(
     *,
     pick_id: str,
@@ -398,48 +553,12 @@ def create_app() -> FastAPI:
 
     # ---- Picks (async) ---------------------------------------------------- #
     @app.post("/picks", response_model=PickAcceptedResponse, status_code=202)
-    def picks(payload: PicksRequest, background_tasks: BackgroundTasks) -> PickAcceptedResponse:
-        if payload.use_llm and not payload.llm_provider:
-            raise HTTPException(
-                status_code=400,
-                detail="llm_provider is required when use_llm is true.",
-            )
+    async def picks(request: Request, background_tasks: BackgroundTasks) -> PickAcceptedResponse:
+        body = await request.json()
 
-        bundle_kwargs = dict(
-            use_llm=payload.use_llm,
-            llm_provider=payload.llm_provider,
-            llm_model=payload.llm_model,
-            allow_deterministic_fallback=payload.allow_deterministic_fallback,
-            league=payload.league,
-            fixture_provider_name=payload.fixture_provider,
-            fixture_llm_provider=payload.fixture_llm_provider,
-            fixture_llm_model=payload.fixture_llm_model,
-            fixture_llm_base_url=payload.fixture_llm_base_url,
-            availability_provider=payload.availability_provider,
-        )
-        # Validate provider configuration synchronously so callers get a 400
-        # for missing credentials instead of an asynchronous "failed" row.
-        try:
-            build_dependency_bundle(**bundle_kwargs)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        request_dict = _build_request_dict(payload)
-        row = db_module.create_pending_pick_run(request_payload=request_dict)
-        jobs_module.enqueue_pick_run(
-            pick_id=row.id,
-            request_dict=request_dict,
-            bundle_kwargs=bundle_kwargs,
-        )
-        if os.environ.get("COLMILLO_WORKER_MODE") != "external":
-            background_tasks.add_task(
-                _run_next_queued_job, row.id, request_dict, bundle_kwargs
-            )
-        return PickAcceptedResponse(
-            id=row.id,
-            status=db_module.PICK_STATUS_PENDING,
-            created_at=row.created_at,
-        )
+        if "sport" in body:
+            return _handle_structured_picks(body, background_tasks)
+        return _handle_legacy_picks(body, background_tasks)
 
     @app.get("/picks", response_model=PicksListResponse)
     def list_picks(
