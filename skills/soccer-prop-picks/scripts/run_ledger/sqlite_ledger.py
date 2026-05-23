@@ -232,6 +232,43 @@ class SqliteRunLedger:
             ))
         return result
 
+    def list_runs(self, *, limit: int = 20, offset: int = 0) -> list[RunContext]:
+        rows = self._conn.execute(
+            "SELECT id, source, match_query, home_team, away_team, match_date, competition, status, "
+            "error_summary, error_stage, started_at, completed_at, duration_ms, partial_reasons_json "
+            "FROM run_ledger ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        result: list[RunContext] = []
+        for row in rows:
+            started_at = datetime.fromisoformat(row["started_at"]) if row["started_at"] else None
+            completed_at = datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
+            partial_reasons: list[str] = []
+            raw_reasons = row["partial_reasons_json"]
+            if raw_reasons:
+                try:
+                    partial_reasons = json.loads(raw_reasons)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            result.append(RunContext(
+                id=row["id"],
+                source=row["source"],
+                match_query=row["match_query"] or "",
+                home_team=row["home_team"],
+                away_team=row["away_team"],
+                match_date=row["match_date"],
+                competition=row["competition"],
+                request_snapshot={},
+                status=row["status"],
+                error_summary=row["error_summary"],
+                error_stage=row["error_stage"],
+                started_at=started_at,
+                completed_at=completed_at,
+                duration_ms=row["duration_ms"],
+                partial_reasons=partial_reasons,
+            ))
+        return result
+
     def _load_run(self, run_id: str) -> RunContext | None:
         row = self._conn.execute("SELECT * FROM run_ledger WHERE id = ?", (run_id,)).fetchone()
         if row is None:

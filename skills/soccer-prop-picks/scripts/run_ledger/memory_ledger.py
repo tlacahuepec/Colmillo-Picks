@@ -95,6 +95,30 @@ class InMemoryRunLedger:
     def get_picks(self, run_id: str) -> list[SavedPick]:
         return list(self._picks.get(run_id, []))
 
+    def list_runs(self, *, limit: int = 20, offset: int = 0) -> list[RunContext]:
+        all_runs = sorted(self._runs.values(), key=lambda r: r.started_at or datetime.min, reverse=True)
+        page = all_runs[offset:offset + limit]
+        return [
+            RunContext(
+                id=r.id,
+                source=r.source,
+                match_query=r.match_query,
+                home_team=r.home_team,
+                away_team=r.away_team,
+                match_date=r.match_date,
+                competition=r.competition,
+                request_snapshot={},
+                status=r.status,
+                error_summary=r.error_summary,
+                error_stage=r.error_stage,
+                started_at=r.started_at,
+                completed_at=r.completed_at,
+                duration_ms=r.duration_ms,
+                partial_reasons=list(r.partial_reasons),
+            )
+            for r in page
+        ]
+
     @property
     def runs(self) -> list[RunContext]:
         return list(self._runs.values())
