@@ -235,6 +235,14 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
     )
 
 
+def _build_run_ledger():
+    from run_ledger import InMemoryRunLedger, SqliteRunLedger
+    try:
+        return SqliteRunLedger()
+    except Exception:
+        return InMemoryRunLedger()
+
+
 def _execute_pipeline_job(
     *,
     pick_id: str,
@@ -242,6 +250,9 @@ def _execute_pipeline_job(
     bundle_kwargs: dict[str, Any],
 ) -> bool:
     """Background task body: run the pipeline and update the pending row."""
+    ledger = _build_run_ledger()
+    run_ctx = ledger.start_run(source="api", request=request_dict)
+
     started = time.perf_counter()
     try:
         deps = build_dependency_bundle(**bundle_kwargs)
@@ -253,15 +264,18 @@ def _execute_pipeline_job(
         db_module.mark_pick_failed(
             pick_id=pick_id, stage=exc.stage, message=message, latency_ms=latency_ms
         )
+        ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage)
         return False
     except Exception as exc:  # configuration / unexpected errors
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         db_module.mark_pick_failed(
             pick_id=pick_id, stage="unknown", message=str(exc), latency_ms=latency_ms
         )
+        ledger.fail_run(run_ctx.id, error_summary=str(exc), error_stage="unknown")
         return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
+    ledger.complete_run(run_ctx.id)
     return True
 
 
