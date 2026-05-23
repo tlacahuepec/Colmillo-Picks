@@ -18,7 +18,7 @@ from services.api.rate_limit import RateLimiter
 _API_KEY_HEADER = "X-API-Key"
 # Routes that bypass the API-key requirement. Healthcheck must stay open so
 # the platform (Render, docker-compose, etc.) can probe the service.
-_AUTH_EXEMPT_PATHS: frozenset[str] = frozenset({"/healthz", "/docs", "/openapi.json", "/redoc"})
+_AUTH_EXEMPT_PATHS: frozenset[str] = frozenset({"/healthz", "/version", "/docs", "/openapi.json", "/redoc"})
 
 
 def _expected_api_key() -> str | None:

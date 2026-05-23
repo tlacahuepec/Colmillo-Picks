@@ -154,6 +154,10 @@ class PickDetailResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     providers: dict[str, bool]
+    version: str = "0.0.0-dev"
+    commit: str = "unknown"
+    build_time: str = "unknown"
+    channel: str = "dev"
 
 
 class OutcomeEntry(BaseModel):
@@ -549,7 +553,28 @@ def create_app() -> FastAPI:
     # ---- Health ----------------------------------------------------------- #
     @app.get("/healthz", response_model=HealthResponse)
     def healthz() -> HealthResponse:
-        return HealthResponse(status="ok", providers=_provider_status())
+        from app_metadata import get_app_metadata
+        meta = get_app_metadata()
+        return HealthResponse(
+            status="ok",
+            providers=_provider_status(),
+            version=meta.version,
+            commit=meta.commit,
+            build_time=meta.build_time,
+            channel=meta.channel,
+        )
+
+    @app.get("/version")
+    def version() -> dict:
+        from app_metadata import get_app_metadata
+        meta = get_app_metadata()
+        return {
+            "version": meta.version,
+            "commit": meta.commit,
+            "build_time": meta.build_time,
+            "branch": meta.branch,
+            "channel": meta.channel,
+        }
 
     # ---- Picks (async) ---------------------------------------------------- #
     @app.post("/picks", response_model=PickAcceptedResponse, status_code=202)
