@@ -25,13 +25,16 @@ def _fmt_pct(value: Any) -> str:
         return "unknown"
 
 
-def _join_names(items: list[dict[str, Any]]) -> str:
+def _join_names(items: list[dict[str, Any] | str]) -> str:
     if not items:
         return "none"
-    return ", ".join(
-        f"{item.get('player_name', 'unknown')} ({item.get('status', 'unknown')})"
-        for item in items
-    )
+    parts: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            parts.append(item)
+        else:
+            parts.append(f"{item.get('player_name', 'unknown')} ({item.get('status', 'unknown')})")
+    return ", ".join(parts)
 
 
 def _standings_line(team: dict[str, Any]) -> dict[str, Any]:

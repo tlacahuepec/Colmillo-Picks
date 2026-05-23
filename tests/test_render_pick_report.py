@@ -5,6 +5,30 @@ import pytest
 from tests.conftest import load_script_module, sample_match_inputs
 
 
+class TestJoinNames:
+    def test_with_dict_items(self) -> None:
+        renderer = load_script_module("render_pick_report.py")
+        items = [
+            {"player_name": "Saka", "status": "doubtful"},
+            {"player_name": "Timber", "status": "out"},
+        ]
+        assert renderer._join_names(items) == "Saka (doubtful), Timber (out)"
+
+    def test_with_string_items(self) -> None:
+        renderer = load_script_module("render_pick_report.py")
+        items = ["Saka", "Timber"]
+        assert renderer._join_names(items) == "Saka, Timber"
+
+    def test_with_mixed_items(self) -> None:
+        renderer = load_script_module("render_pick_report.py")
+        items = [{"player_name": "Saka", "status": "doubtful"}, "Timber"]
+        assert renderer._join_names(items) == "Saka (doubtful), Timber"
+
+    def test_empty_list(self) -> None:
+        renderer = load_script_module("render_pick_report.py")
+        assert renderer._join_names([]) == "none"
+
+
 def test_render_report_includes_required_sections() -> None:
     scorer = load_script_module("score_player_props.py")
     renderer = load_script_module("render_pick_report.py")
