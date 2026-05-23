@@ -16,6 +16,8 @@ class InMemoryRunLedger:
         self._picks: dict[str, list[SavedPick]] = {}
 
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext:
+        markets_raw = request.get("markets", ())
+        markets = tuple(markets_raw) if markets_raw else ()
         ctx = RunContext(
             id=str(uuid.uuid4()),
             source=source,
@@ -24,6 +26,10 @@ class InMemoryRunLedger:
             request_snapshot=dict(request),
             status="running",
             started_at=datetime.now(timezone.utc),
+            sport=request.get("sport", ""),
+            league=request.get("league"),
+            markets=markets,
+            platform=request.get("platform"),
         )
         self._runs[ctx.id] = ctx
         return ctx
@@ -57,6 +63,11 @@ class InMemoryRunLedger:
 
     def get_run(self, run_id: str) -> RunContext | None:
         return self._runs.get(run_id)
+
+    def save_provider_status(self, run_id: str, status: dict[str, str]) -> RunContext:
+        ctx = self._runs[run_id]
+        ctx.provider_status = dict(status)
+        return ctx
 
     def record_step(self, run_id: str, step_name: str, *, status: str = "success", duration_ms: int = 0) -> RunStep:
         step = RunStep(
@@ -115,6 +126,11 @@ class InMemoryRunLedger:
                 completed_at=r.completed_at,
                 duration_ms=r.duration_ms,
                 partial_reasons=list(r.partial_reasons),
+                sport=r.sport,
+                league=r.league,
+                markets=r.markets,
+                platform=r.platform,
+                provider_status=dict(r.provider_status),
             )
             for r in page
         ]
