@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, "release/**"]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, "release/**"]
 
 jobs:
   lint:
@@ -100,7 +100,7 @@ jobs:
   release-readiness:
     name: Release readiness checks
     runs-on: ubuntu-latest
-    if: github.base_ref == 'main' || github.ref == 'refs/heads/main'
+    if: github.base_ref == 'main' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.base_ref, 'release/')
     needs: [lint, test, docker-build]
     steps:
       - uses: actions/checkout@v4
