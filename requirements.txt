@@ -17,6 +17,9 @@ jsonschema>=4.21,<5.0
 # LLM providers
 google-genai>=1.0.0,<2.0
 
+# Config
+python-dotenv>=1.0,<2.0
+
 # Optional observability — only loaded when SENTRY_DSN is set at runtime.
 # Keep installed in production so the integration is one env-var flip away.
 sentry-sdk>=2.0,<3.0

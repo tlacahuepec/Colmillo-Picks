@@ -14,7 +14,17 @@ Configure with environment variables:
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from typing import Any
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from dotenv import load_dotenv
+
+load_dotenv(_REPO_ROOT / ".env")
 
 import streamlit as st
 

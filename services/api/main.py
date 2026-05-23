@@ -16,15 +16,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-
-# Make the soccer-prop-picks scripts importable without packaging.
+# Make the repo root and soccer-prop-picks scripts importable without packaging.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 _SCRIPTS_DIR = _REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from dotenv import load_dotenv
+
+load_dotenv(_REPO_ROOT / ".env")
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from dependency_bundle import build_dependency_bundle  # noqa: E402
 from pipeline_service import (  # noqa: E402
