@@ -204,3 +204,8 @@ The repo includes `render.yaml` (Render Blueprint):
 2. Render > New > Blueprint > connect repo
 3. Set secrets in dashboard: `COLMILLO_API_KEY`, `GEMINI_API_KEY`
 4. Auto-deploys on push to `main`
+
+## Contributing
+
+See the [Contributor Playbook](docs/contributor-playbook.md) for branching strategy,
+release process, and agent development workflow.
