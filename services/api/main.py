@@ -275,6 +275,8 @@ def _execute_pipeline_job(
         return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
+    for step in result.get("steps", []):
+        ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
     ledger.complete_run(run_ctx.id)
     return True
 

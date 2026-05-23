@@ -25,8 +25,19 @@ class RunContext:
     duration_ms: int | None = None
 
 
+@dataclass
+class RunStep:
+    run_id: str
+    step_name: str
+    status: str = "success"
+    started_at: datetime | None = None
+    duration_ms: int = 0
+
+
 class RunLedger(Protocol):
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext: ...
     def complete_run(self, run_id: str) -> RunContext: ...
     def fail_run(self, run_id: str, *, error_summary: str, error_stage: str | None = None) -> RunContext: ...
     def get_run(self, run_id: str) -> RunContext | None: ...
+    def record_step(self, run_id: str, step_name: str, *, status: str = "success", duration_ms: int = 0) -> RunStep: ...
+    def get_steps(self, run_id: str) -> list[RunStep]: ...

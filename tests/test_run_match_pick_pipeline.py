@@ -296,17 +296,17 @@ def test_main_is_thin_adapter_between_cli_and_service(monkeypatch: pytest.Monkey
         }
         return deps_bundle
 
-    def fake_run_pipeline(*, request, deps):
+    def fake_run_pipeline_with_payload(*, request, deps):
         captured["request"] = request
         captured["deps"] = deps
-        return "mock report"
+        return {"report_markdown": "mock report", "scores": [], "trace": None, "match_inputs": {}, "steps": []}
 
     def fake_print(value: str):
         captured["printed"] = value
 
     monkeypatch.setattr(pipeline, "parse_cli_args", fake_parse_cli_args)
     monkeypatch.setattr(pipeline, "build_dependency_bundle", fake_build_dependency_bundle)
-    monkeypatch.setattr(pipeline, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(pipeline, "run_pipeline_with_payload", fake_run_pipeline_with_payload)
     monkeypatch.setattr("builtins.print", fake_print)
 
     pipeline.main()
@@ -663,7 +663,7 @@ def test_main_reports_pipeline_service_cause(monkeypatch: pytest.MonkeyPatch) ->
             },
         )()
 
-    def fake_run_pipeline(*, request, deps):
+    def fake_run_pipeline_with_payload(*, request, deps):
         try:
             raise ValueError("Fixture lookup failed: No fixture matched Juve vs Milan on 2026-05-03.")
         except ValueError as exc:
@@ -671,7 +671,7 @@ def test_main_reports_pipeline_service_cause(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(pipeline, "parse_cli_args", fake_parse_cli_args)
     monkeypatch.setattr(pipeline, "build_dependency_bundle", lambda **kwargs: {})
-    monkeypatch.setattr(pipeline, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(pipeline, "run_pipeline_with_payload", fake_run_pipeline_with_payload)
 
     with pytest.raises(SystemExit, match="Fixture lookup failed: No fixture matched"):
         pipeline.main()
