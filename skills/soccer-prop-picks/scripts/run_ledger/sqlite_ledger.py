@@ -76,6 +76,7 @@ class SqliteRunLedger:
         self._conn.execute(_CREATE_STEPS_TABLE_SQL)
         self._conn.execute(_CREATE_PICKS_TABLE_SQL)
         self._ensure_partial_reasons_column()
+        self._ensure_multi_sport_columns()
         self._conn.commit()
 
     def _ensure_partial_reasons_column(self) -> None:
@@ -84,17 +85,37 @@ class SqliteRunLedger:
         except sqlite3.OperationalError:
             pass  # column already exists
 
+    def _ensure_multi_sport_columns(self) -> None:
+        migrations = [
+            "ALTER TABLE run_ledger ADD COLUMN sport VARCHAR(32) NOT NULL DEFAULT ''",
+            "ALTER TABLE run_ledger ADD COLUMN league VARCHAR(128)",
+            "ALTER TABLE run_ledger ADD COLUMN markets_json TEXT",
+            "ALTER TABLE run_ledger ADD COLUMN platform VARCHAR(64)",
+            "ALTER TABLE run_ledger ADD COLUMN provider_status_json TEXT",
+        ]
+        for sql in migrations:
+            try:
+                self._conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass
+
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext:
         run_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         match_query = str(request.get("match_query", ""))
         competition = request.get("competition")
         request_json = json.dumps(request, default=str)
+        sport = request.get("sport", "")
+        league = request.get("league")
+        markets_raw = request.get("markets", ())
+        markets = tuple(markets_raw) if markets_raw else ()
+        markets_json = json.dumps(list(markets))
+        platform = request.get("platform")
 
         self._conn.execute(
-            """INSERT INTO run_ledger (id, source, match_query, competition, request_json, status, started_at)
-               VALUES (?, ?, ?, ?, ?, 'running', ?)""",
-            (run_id, source, match_query, competition, request_json, now.isoformat()),
+            """INSERT INTO run_ledger (id, source, match_query, competition, request_json, status, started_at, sport, league, markets_json, platform)
+               VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)""",
+            (run_id, source, match_query, competition, request_json, now.isoformat(), sport, league, markets_json, platform),
         )
         self._conn.commit()
 
@@ -106,6 +127,10 @@ class SqliteRunLedger:
             request_snapshot=request,
             status="running",
             started_at=now,
+            sport=sport,
+            league=league,
+            markets=markets,
+            platform=platform,
         )
 
     def complete_run(self, run_id: str) -> RunContext:
@@ -153,6 +178,17 @@ class SqliteRunLedger:
 
     def get_run(self, run_id: str) -> RunContext | None:
         return self._load_run(run_id)
+
+    def save_provider_status(self, run_id: str, status: dict[str, str]) -> RunContext:
+        status_json = json.dumps(status)
+        self._conn.execute(
+            "UPDATE run_ledger SET provider_status_json = ? WHERE id = ?",
+            (status_json, run_id),
+        )
+        self._conn.commit()
+        ctx = self._load_run(run_id)
+        assert ctx is not None
+        return ctx
 
     def record_step(self, run_id: str, step_name: str, *, status: str = "success", duration_ms: int = 0) -> RunStep:
         now = datetime.now(timezone.utc)
@@ -235,7 +271,8 @@ class SqliteRunLedger:
     def list_runs(self, *, limit: int = 20, offset: int = 0) -> list[RunContext]:
         rows = self._conn.execute(
             "SELECT id, source, match_query, home_team, away_team, match_date, competition, status, "
-            "error_summary, error_stage, started_at, completed_at, duration_ms, partial_reasons_json "
+            "error_summary, error_stage, started_at, completed_at, duration_ms, partial_reasons_json, "
+            "sport, league, markets_json, platform, provider_status_json "
             "FROM run_ledger ORDER BY started_at DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
@@ -248,6 +285,20 @@ class SqliteRunLedger:
             if raw_reasons:
                 try:
                     partial_reasons = json.loads(raw_reasons)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            markets: tuple[str, ...] = ()
+            raw_markets = row["markets_json"]
+            if raw_markets:
+                try:
+                    markets = tuple(json.loads(raw_markets))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            provider_status: dict[str, str] = {}
+            raw_provider = row["provider_status_json"]
+            if raw_provider:
+                try:
+                    provider_status = json.loads(raw_provider)
                 except (json.JSONDecodeError, TypeError):
                     pass
             result.append(RunContext(
@@ -266,6 +317,11 @@ class SqliteRunLedger:
                 completed_at=completed_at,
                 duration_ms=row["duration_ms"],
                 partial_reasons=partial_reasons,
+                sport=row["sport"] or "",
+                league=row["league"],
+                markets=markets,
+                platform=row["platform"],
+                provider_status=provider_status,
             ))
         return result
 
@@ -292,6 +348,22 @@ class SqliteRunLedger:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        markets: tuple[str, ...] = ()
+        raw_markets = row["markets_json"]
+        if raw_markets:
+            try:
+                markets = tuple(json.loads(raw_markets))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        provider_status: dict[str, str] = {}
+        raw_provider = row["provider_status_json"]
+        if raw_provider:
+            try:
+                provider_status = json.loads(raw_provider)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         return RunContext(
             id=row["id"],
             source=row["source"],
@@ -308,4 +380,9 @@ class SqliteRunLedger:
             completed_at=completed_at,
             duration_ms=row["duration_ms"],
             partial_reasons=partial_reasons,
+            sport=row["sport"] or "",
+            league=row["league"],
+            markets=markets,
+            platform=row["platform"],
+            provider_status=provider_status,
         )
