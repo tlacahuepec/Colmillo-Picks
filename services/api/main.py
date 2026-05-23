@@ -277,7 +277,12 @@ def _execute_pipeline_job(
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
     for step in result.get("steps", []):
         ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
-    ledger.complete_run(run_ctx.id)
+    failed_steps = [s for s in result.get("steps", []) if s["status"] == "failed"]
+    if failed_steps:
+        reasons = [f"{s['name']} failed" for s in failed_steps]
+        ledger.partial_run(run_ctx.id, reasons=reasons)
+    else:
+        ledger.complete_run(run_ctx.id)
     return True
 
 

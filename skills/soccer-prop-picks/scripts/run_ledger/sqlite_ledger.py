@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS run_steps (
 )
 """
 
+_ENSURE_PARTIAL_REASONS_COLUMN = """
+ALTER TABLE run_ledger ADD COLUMN partial_reasons_json TEXT
+"""
+
 
 class SqliteRunLedger:
     def __init__(self, db_path: str | None = None) -> None:
@@ -54,7 +58,14 @@ class SqliteRunLedger:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_CREATE_TABLE_SQL)
         self._conn.execute(_CREATE_STEPS_TABLE_SQL)
+        self._ensure_partial_reasons_column()
         self._conn.commit()
+
+    def _ensure_partial_reasons_column(self) -> None:
+        try:
+            self._conn.execute(_ENSURE_PARTIAL_REASONS_COLUMN)
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext:
         run_id = str(uuid.uuid4())
@@ -89,6 +100,21 @@ class SqliteRunLedger:
         self._conn.execute(
             "UPDATE run_ledger SET status = 'success', completed_at = ?, duration_ms = ? WHERE id = ?",
             (now.isoformat(), duration_ms, run_id),
+        )
+        self._conn.commit()
+
+        return self._load_run(run_id)
+
+    def partial_run(self, run_id: str, *, reasons: list[str]) -> RunContext:
+        now = datetime.now(timezone.utc)
+        row = self._conn.execute("SELECT started_at FROM run_ledger WHERE id = ?", (run_id,)).fetchone()
+        started_at = datetime.fromisoformat(row["started_at"])
+        duration_ms = max(0, round((now - started_at).total_seconds() * 1000))
+        reasons_json = json.dumps(reasons)
+
+        self._conn.execute(
+            "UPDATE run_ledger SET status = 'partial', partial_reasons_json = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
+            (reasons_json, now.isoformat(), duration_ms, run_id),
         )
         self._conn.commit()
 
@@ -157,6 +183,14 @@ class SqliteRunLedger:
         started_at = datetime.fromisoformat(row["started_at"]) if row["started_at"] else None
         completed_at = datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
 
+        partial_reasons: list[str] = []
+        raw_reasons = row["partial_reasons_json"]
+        if raw_reasons:
+            try:
+                partial_reasons = json.loads(raw_reasons)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         return RunContext(
             id=row["id"],
             source=row["source"],
@@ -172,4 +206,5 @@ class SqliteRunLedger:
             started_at=started_at,
             completed_at=completed_at,
             duration_ms=row["duration_ms"],
+            partial_reasons=partial_reasons,
         )

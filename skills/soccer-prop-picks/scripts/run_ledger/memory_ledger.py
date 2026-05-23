@@ -35,6 +35,15 @@ class InMemoryRunLedger:
         ctx.duration_ms = max(0, round((now - ctx.started_at).total_seconds() * 1000))
         return ctx
 
+    def partial_run(self, run_id: str, *, reasons: list[str]) -> RunContext:
+        ctx = self._runs[run_id]
+        now = datetime.now(timezone.utc)
+        ctx.status = "partial"
+        ctx.partial_reasons = list(reasons)
+        ctx.completed_at = now
+        ctx.duration_ms = max(0, round((now - ctx.started_at).total_seconds() * 1000))
+        return ctx
+
     def fail_run(self, run_id: str, *, error_summary: str, error_stage: str | None = None) -> RunContext:
         ctx = self._runs[run_id]
         now = datetime.now(timezone.utc)
