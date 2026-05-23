@@ -52,6 +52,9 @@ class SportModuleRegistry:
 
 
 class SoccerModule:
+    def __init__(self, *, allow_deterministic_fallback: bool = True) -> None:
+        self._allow_deterministic_fallback = allow_deterministic_fallback
+
     @property
     def sport_id(self) -> str:
         return "soccer"
@@ -70,20 +73,48 @@ class SoccerModule:
     def collect_inputs(
         self, *, home_team: str, away_team: str, match_date: str, league: str | None = None
     ) -> dict[str, Any]:
-        return {
-            "home_team": home_team,
-            "away_team": away_team,
-            "match_date": match_date,
-            "league": league,
-        }
+        from collect_match_inputs import MatchInputRequest
+        from dependency_bundle import build_dependency_bundle
+
+        deps = build_dependency_bundle(
+            use_llm=False,
+            llm_provider=None,
+            llm_model=None,
+            allow_deterministic_fallback=self._allow_deterministic_fallback,
+            league=league,
+        )
+
+        request = MatchInputRequest(
+            home_team=home_team,
+            away_team=away_team,
+            match_date=match_date,
+            competition=league or "League",
+        )
+        return deps["collect_inputs"](request)
 
     def score(
         self, match_inputs: dict[str, Any], *, markets: tuple[str, ...] = ()
     ) -> list[dict[str, Any]]:
-        raise NotImplementedError("Use the existing pipeline for soccer scoring")
+        from score_player_props import score_props
+
+        payload = score_props(match_inputs, include_trace=True)
+        scores = payload["scores"]
+
+        if markets:
+            scores = [s for s in scores if s.get("market") in markets]
+
+        return scores
 
     def explain(self, scored_pick: dict[str, Any]) -> str:
-        raise NotImplementedError("Use the existing pipeline for soccer explanation")
+        player = scored_pick.get("player", "Unknown")
+        market = scored_pick.get("market", "unknown")
+        direction = scored_pick.get("direction", "over")
+        line = scored_pick.get("line", 0)
+        confidence = scored_pick.get("confidence", "medium")
+        return (
+            f"{player}: {direction} {line} {market} "
+            f"(confidence: {confidence})"
+        )
 
 
 _DEFAULT_REGISTRY = SportModuleRegistry()
