@@ -63,8 +63,8 @@ def run_pipeline_with_payload(
     """
     top_n = int(request.get("top_n", 5))
     use_llm = bool(request.get("use_llm", False))
-    llm_provider = str(request.get("llm_provider") or "none")
-    llm_model = str(request.get("llm_model") or "none")
+    llm_provider = str(request.get("llm_provider") or ("gemini" if use_llm else "none"))
+    llm_model = str(request.get("llm_model") or ("gemini-2.5-flash" if use_llm else "none"))
 
     try:
         parsed = deps["parse_match_query"](request["match_query"])

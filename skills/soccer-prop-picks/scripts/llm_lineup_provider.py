@@ -40,6 +40,7 @@ class LLMLineupProvider:
                 print(f"[lineup-llm-debug] response: {json.dumps(result, default=str)[:2000]}", file=sys.stderr)
             return self._map_response(result, fixture)
         except Exception as exc:
+            print(f"[lineup-provider] WARNING: Lineup provider failed: {type(exc).__name__}: {exc}", file=sys.stderr)
             if debug:
                 print(f"[lineup-llm-debug] error: {type(exc).__name__}: {exc}", file=sys.stderr)
             return None

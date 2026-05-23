@@ -138,6 +138,21 @@ def test_llm_odds_provider_prompt_includes_team_names_and_date() -> None:
     assert "2026-05-23" in captured_prompts["user"]
 
 
+def test_llm_odds_provider_emits_warning_on_failure(capsys) -> None:
+    module = load_script_module("llm_odds_provider.py")
+
+    class _FailingClient:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            raise RuntimeError("LLM unavailable")
+
+    provider = module.LLMOddsProvider(client=_FailingClient())
+    provider.get_odds_snapshots(_fixture())
+
+    captured = capsys.readouterr()
+    assert "odds provider failed" in captured.err.lower()
+    assert "LLM unavailable" in captured.err
+
+
 def test_odds_provider_captures_last_sources_from_client() -> None:
     module = load_script_module("llm_odds_provider.py")
 

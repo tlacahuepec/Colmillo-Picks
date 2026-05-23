@@ -116,7 +116,7 @@ class GeminiLLMClient(LLMClient):
         web_queries = getattr(grounding_meta, "web_search_queries", None) or []
         if _DEBUG_GROUNDING and web_queries:
             import sys
-            print(f"[grounding-debug] Falling back to web_search_queries as source indicators", file=sys.stderr)
+            print("[grounding-debug] Falling back to web_search_queries as source indicators", file=sys.stderr)
         return sources
 
     def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:

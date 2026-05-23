@@ -553,9 +553,9 @@ def test_build_dependency_bundle_uses_conservative_default_llm_retries(monkeypat
     fixture_client = captured_clients[0]
     lineup_client = captured_clients[1]
     odds_client = captured_clients[2]
-    assert fixture_client["max_retries"] == 0
-    assert lineup_client["max_retries"] == 0
-    assert odds_client["max_retries"] == 0
+    assert fixture_client["max_retries"] == 1
+    assert lineup_client["max_retries"] == 1
+    assert odds_client["max_retries"] == 1
 
 
 def test_build_dependency_bundle_collect_inputs_falls_back_when_provider_payloads_are_none_or_malformed(

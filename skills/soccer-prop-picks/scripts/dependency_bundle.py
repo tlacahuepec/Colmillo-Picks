@@ -84,7 +84,7 @@ def _build_llm_fixture_provider(
             model=config.model or "gemini-2.5-flash",
             search_grounding=True,
             max_output_tokens=4000,
-            max_retries=_env_int("COLMILLO_FIXTURE_LLM_MAX_RETRIES", 0),
+            max_retries=_env_int("COLMILLO_FIXTURE_LLM_MAX_RETRIES", 1),
             retry_delay_seconds=_env_float("COLMILLO_FIXTURE_LLM_RETRY_DELAY_SECONDS", 3.0),
         )
         return LLMFixtureProvider(config=config, client=client)
@@ -93,7 +93,7 @@ def _build_llm_fixture_provider(
             api_key=config.api_key or "",
             base_url=config.base_url or "https://api.x.ai/v1",
             model=config.model or "grok-3",
-            max_retries=_env_int("COLMILLO_FIXTURE_LLM_MAX_RETRIES", 0),
+            max_retries=_env_int("COLMILLO_FIXTURE_LLM_MAX_RETRIES", 1),
             retry_delay_seconds=_env_float("COLMILLO_FIXTURE_LLM_RETRY_DELAY_SECONDS", 3.0),
         )
         return LLMFixtureProvider(config=config, client=client)
@@ -125,7 +125,7 @@ def _build_llm_lineup_provider(
             model=model,
             search_grounding=_supports_search_grounding(model),
             max_output_tokens=4000,
-            max_retries=_env_int("COLMILLO_LINEUP_LLM_MAX_RETRIES", 0),
+            max_retries=_env_int("COLMILLO_LINEUP_LLM_MAX_RETRIES", 1),
             retry_delay_seconds=_env_float("COLMILLO_LINEUP_LLM_RETRY_DELAY_SECONDS", 3.0),
         )
         return LLMLineupProvider(client=client)
@@ -150,7 +150,7 @@ def _build_llm_odds_provider(
             model=model,
             search_grounding=_supports_search_grounding(model),
             max_output_tokens=4000,
-            max_retries=_env_int("COLMILLO_ODDS_LLM_MAX_RETRIES", 0),
+            max_retries=_env_int("COLMILLO_ODDS_LLM_MAX_RETRIES", 1),
             retry_delay_seconds=_env_float("COLMILLO_ODDS_LLM_RETRY_DELAY_SECONDS", 3.0),
         )
         return LLMOddsProvider(client=client)

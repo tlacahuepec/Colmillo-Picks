@@ -35,6 +35,7 @@ class LLMOddsProvider:
                 print(f"[odds-llm-debug] response: {json.dumps(result, default=str)[:2000]}", file=sys.stderr)
             return self._map_response(result)
         except Exception as exc:
+            print(f"[odds-provider] WARNING: Odds provider failed: {type(exc).__name__}: {exc}", file=sys.stderr)
             if debug:
                 print(f"[odds-llm-debug] error: {type(exc).__name__}: {exc}", file=sys.stderr)
             return None
