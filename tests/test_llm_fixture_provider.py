@@ -454,3 +454,54 @@ def test_user_prompt_requests_standings_data() -> None:
     assert "last_5_results" in home_shape
     assert "table_position" in home_shape["standings_context"]
     assert "motivation_tag" in home_shape["standings_context"]
+
+
+def test_fixture_provider_captures_last_sources_from_client() -> None:
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+    provider_config = load_script_module("provider_config.py")
+
+    class _FakeGroundingSource:
+        def __init__(self, url, title):
+            self.url = url
+            self.title = title
+
+    class _ClientWithSources:
+        def __init__(self):
+            self.last_sources = [
+                _FakeGroundingSource("https://fixture.example.com", "Fixture Source"),
+            ]
+
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {
+                "match_found": True,
+                "confidence": "high",
+                "match_id": "test-123",
+                "competition": "DFB Pokal",
+                "competition_type": "cup",
+                "kickoff_utc": "2026-05-23T18:00:00Z",
+                "teams": {
+                    "home": {"team_id": "BAY", "team_name": "Bayern Munich"},
+                    "away": {"team_id": "VFB", "team_name": "VfB Stuttgart"},
+                },
+                "venue": {"name": "Olympiastadion", "city": "Berlin", "country": "Germany"},
+            }
+
+    config = provider_config.LLMFixtureProviderConfig(
+        provider="gemini",
+        api_key="fake-key",
+        base_url="https://generativelanguage.googleapis.com/v1",
+        model="gemini-2.5-flash",
+    )
+
+    provider = module.LLMFixtureProvider(config=config, client=_ClientWithSources())
+    request = collector.MatchInputRequest(
+        home_team="Bayern Munich",
+        away_team="VfB Stuttgart",
+        match_date="2026-05-23",
+    )
+    provider.lookup_fixture(request)
+
+    assert len(provider.last_sources) == 1
+    assert provider.last_sources[0].url == "https://fixture.example.com"
+    assert provider.last_sources[0].title == "Fixture Source"

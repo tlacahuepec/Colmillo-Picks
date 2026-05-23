@@ -5,9 +5,10 @@ import re
 from time import sleep
 from typing import Any, Callable
 
-from llm.client import LLMClient, LLMError
+from llm.client import GroundingSource, LLMClient, LLMError
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
+_DEBUG_GROUNDING = __import__("os").environ.get("COLMILLO_DEBUG_GROUNDING", "").strip().lower() in ("1", "true", "yes")
 
 _MARKDOWN_JSON_FENCE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
 
@@ -31,7 +32,13 @@ def _parse_first_json_object(text: str) -> dict:
             return obj
         raise json.JSONDecodeError("Expected dict", text, 0)
     except json.JSONDecodeError:
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            raise
 
 
 class GeminiLLMClient(LLMClient):
@@ -57,6 +64,7 @@ class GeminiLLMClient(LLMClient):
         self._retry_delay_seconds = retry_delay_seconds
         self._search_grounding = search_grounding
         self._sleep = sleep_fn
+        self._last_sources: list[GroundingSource] = []
 
         if client_factory is not None:
             self._client = client_factory(api_key=api_key)
@@ -64,6 +72,52 @@ class GeminiLLMClient(LLMClient):
             from google import genai
 
             self._client = genai.Client(api_key=api_key)
+
+    @property
+    def last_sources(self) -> list[GroundingSource]:
+        return list(self._last_sources)
+
+    def _extract_grounding_sources(self, response: Any) -> list[GroundingSource]:
+        if not self._search_grounding:
+            return []
+        if not hasattr(response, "candidates") or not response.candidates:
+            return []
+        candidate = response.candidates[0]
+        grounding_meta = getattr(candidate, "grounding_metadata", None)
+        if not grounding_meta:
+            return []
+        chunks = getattr(grounding_meta, "grounding_chunks", None) or []
+        sources: list[GroundingSource] = []
+        for chunk in chunks:
+            web = getattr(chunk, "web", None)
+            if not web:
+                continue
+            url = getattr(web, "uri", "") or ""
+            title = getattr(web, "title", "") or ""
+            if url:
+                sources.append(GroundingSource(url=url, title=title))
+        if sources:
+            return sources
+        search_entry_point = getattr(grounding_meta, "search_entry_point", None)
+        if search_entry_point:
+            rendered = getattr(search_entry_point, "rendered_content", "") or ""
+            if _DEBUG_GROUNDING:
+                import sys
+                print(f"[grounding-debug] search_entry_point rendered_content length: {len(rendered)}", file=sys.stderr)
+                if rendered:
+                    print(f"[grounding-debug] search_entry_point snippet: {rendered[:500]}", file=sys.stderr)
+            if rendered:
+                for match in re.finditer(r'href="(https?://[^"]+)"', rendered):
+                    url = match.group(1)
+                    if url not in {s.url for s in sources}:
+                        sources.append(GroundingSource(url=url, title=url.split("/")[2]))
+        if sources:
+            return sources
+        web_queries = getattr(grounding_meta, "web_search_queries", None) or []
+        if _DEBUG_GROUNDING and web_queries:
+            import sys
+            print(f"[grounding-debug] Falling back to web_search_queries as source indicators", file=sys.stderr)
+        return sources
 
     def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
         prompt = f"{system_prompt}\n\n{user_prompt}\n\nRespond with valid JSON only."
@@ -100,11 +154,18 @@ class GeminiLLMClient(LLMClient):
                 parsed = _parse_first_json_object(json_text)
                 if not isinstance(parsed, dict):
                     raise LLMError("Gemini returned non-dict JSON output")
+                self._last_sources = self._extract_grounding_sources(response)
                 return parsed
             except json.JSONDecodeError as exc:
-                raise LLMError(f"Gemini returned invalid JSON: {exc}") from exc
+                if attempt >= attempts:
+                    raise LLMError(f"Gemini returned invalid JSON: {exc}") from exc
+                self._sleep(self._retry_delay_seconds)
+                continue
             except LLMError:
-                raise
+                if attempt >= attempts:
+                    raise
+                self._sleep(self._retry_delay_seconds)
+                continue
             except TimeoutError as exc:
                 if attempt >= attempts:
                     raise LLMError(str(exc)) from exc

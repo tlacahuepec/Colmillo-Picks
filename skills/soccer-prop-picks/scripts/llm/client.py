@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
+
+
+@dataclass(frozen=True)
+class GroundingSource:
+    url: str
+    title: str
 
 
 class LLMClient(Protocol):

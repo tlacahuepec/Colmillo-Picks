@@ -306,7 +306,13 @@ def collect_inputs(
     default_kickoff_utc = f"{normalize_match_date(request.match_date)}T19:45:00Z"
     weather = normalize_weather(weather_payload, _utc_now_z())
 
-    return build_payload(
+    sources = {
+        "fixture": [{"url": s.url, "title": s.title} for s in getattr(fixture_provider, "last_sources", [])],
+        "lineup": [{"url": s.url, "title": s.title} for s in getattr(lineup_provider, "last_sources", [])],
+        "odds": [{"url": s.url, "title": s.title} for s in getattr(odds_provider, "last_sources", [])],
+    }
+
+    result = build_payload(
         request=request,
         fixture=fixture,
         teams_payload=teams_payload,
@@ -317,6 +323,8 @@ def collect_inputs(
         validation=validation,
         default_kickoff_utc=default_kickoff_utc,
     )
+    result["sources"] = sources
+    return result
 
 
 def main() -> None:

@@ -136,3 +136,28 @@ def test_llm_odds_provider_prompt_includes_team_names_and_date() -> None:
     assert "Bayern Munich" in captured_prompts["user"]
     assert "VfB Stuttgart" in captured_prompts["user"]
     assert "2026-05-23" in captured_prompts["user"]
+
+
+def test_odds_provider_captures_last_sources_from_client() -> None:
+    module = load_script_module("llm_odds_provider.py")
+
+    class _FakeGroundingSource:
+        def __init__(self, url, title):
+            self.url = url
+            self.title = title
+
+    class _ClientWithSources:
+        def __init__(self):
+            self.last_sources = [
+                _FakeGroundingSource("https://odds.example.com", "Odds Source"),
+            ]
+
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return _llm_response()
+
+    provider = module.LLMOddsProvider(client=_ClientWithSources())
+    provider.get_odds_snapshots(_fixture())
+
+    assert len(provider.last_sources) == 1
+    assert provider.last_sources[0].url == "https://odds.example.com"
+    assert provider.last_sources[0].title == "Odds Source"

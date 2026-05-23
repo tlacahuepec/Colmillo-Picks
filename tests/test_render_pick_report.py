@@ -259,3 +259,56 @@ def test_render_report_shows_blocked_state_when_prediction_rejected() -> None:
     assert "⚠️ Prediction rejected due to missing critical fields." in report
     assert "No actionable picks: prediction rejected due to missing critical fields" in report
     assert "| 1 | Arsenal CM | ARS | passes | Under | BET | High |" not in report
+
+
+class TestSourcesSection:
+    def test_render_report_includes_sources_section(self) -> None:
+        renderer = load_script_module("render_pick_report.py")
+        scorer = load_script_module("score_player_props.py")
+        match_inputs = sample_match_inputs()
+        match_inputs["sources"] = {
+            "fixture": [{"url": "https://fixture.example.com/page", "title": "Fixture Page"}],
+            "lineup": [{"url": "https://lineup.example.com/page", "title": "Lineup Page"}],
+            "odds": [],
+        }
+        scored = scorer.score_props(match_inputs)
+
+        report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=1)
+
+        assert "## Sources" in report
+        assert "### Fixture" in report
+        assert "[Fixture Page](https://fixture.example.com/page)" in report
+        assert "### Lineup" in report
+        assert "[Lineup Page](https://lineup.example.com/page)" in report
+
+    def test_render_report_sources_empty_graceful(self) -> None:
+        renderer = load_script_module("render_pick_report.py")
+        scorer = load_script_module("score_player_props.py")
+        match_inputs = sample_match_inputs()
+        scored = scorer.score_props(match_inputs)
+
+        report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=1)
+
+        assert "## Sources" in report
+        assert "No grounding sources available" in report
+
+    def test_render_report_sources_deduplicates(self) -> None:
+        renderer = load_script_module("render_pick_report.py")
+        scorer = load_script_module("score_player_props.py")
+        match_inputs = sample_match_inputs()
+        match_inputs["sources"] = {
+            "fixture": [
+                {"url": "https://example.com/dup", "title": "Dup Page"},
+                {"url": "https://example.com/dup", "title": "Dup Page"},
+                {"url": "https://example.com/unique", "title": "Unique"},
+            ],
+            "lineup": [],
+            "odds": [],
+        }
+        scored = scorer.score_props(match_inputs)
+
+        report = renderer.render_report(scored, match_inputs, availability_data={}, top_n=1)
+
+        fixture_section = report.split("### Fixture")[1].split("###")[0] if "### Fixture" in report else ""
+        assert fixture_section.count("https://example.com/dup") == 1
+        assert "https://example.com/unique" in report
