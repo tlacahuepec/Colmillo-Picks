@@ -4,6 +4,39 @@ All notable changes to Colmillo-Picks are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Basketball module skeleton with placeholder scoring
+- Basketball core prop scoring (points, assists, rebounds, threes)
+- Basketball data collection layer
+- Basketball report explanations
+- Baseball module skeleton with placeholder scoring
+- Baseball domain model foundation
+- Sport-aware market registry
+- Multi-sport run ledger fields
+- Provider-agnostic domain models
+- App version and channel metadata
+- API health version endpoint
+- Branch-aware CI workflow
+- GitHub release workflow
+- Changelog validation
+
+## [0.3.0] — 2026-05-20
+
+### Added
+- Multi-sport pipeline runner
+- Shared provider interfaces
+- Sport-aware pick request model
+- Generic SportModule interface with SoccerModule
+- Run ledger with steps, picks, and history endpoints
+- Gemini AI provider for enrichment
+- PrizePicks availability adapter
+
+### Changed
+- Removed API-Football provider (replaced with Gemini)
+- Simplified .env to require only GEMINI_API_KEY
+
 ## [0.2.0] — 2026-05-10
 
 The MVP iteration: the deterministic CLI pipeline is now wrapped in a
