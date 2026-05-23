@@ -6,13 +6,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from run_ledger.contract import RunContext, RunStep
+from run_ledger.contract import RunContext, RunStep, SavedPick
 
 
 class InMemoryRunLedger:
     def __init__(self) -> None:
         self._runs: dict[str, RunContext] = {}
         self._steps: dict[str, list[RunStep]] = {}
+        self._picks: dict[str, list[SavedPick]] = {}
 
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext:
         ctx = RunContext(
@@ -70,6 +71,29 @@ class InMemoryRunLedger:
 
     def get_steps(self, run_id: str) -> list[RunStep]:
         return list(self._steps.get(run_id, []))
+
+    def save_picks(self, run_id: str, scored_picks: list[dict[str, Any]]) -> list[SavedPick]:
+        saved: list[SavedPick] = []
+        for rank, pick in enumerate(scored_picks, start=1):
+            risk_flags = pick.get("explainability", {}).get("risk_flags", [])
+            sp = SavedPick(
+                run_id=run_id,
+                rank=rank,
+                player=pick.get("player", ""),
+                team_id=pick.get("team_id", ""),
+                market=pick.get("market", ""),
+                direction=pick.get("direction", ""),
+                line=float(pick.get("line", 0)),
+                score=float(pick.get("score", 0)),
+                confidence=pick.get("confidence", ""),
+                risk_notes=list(risk_flags),
+            )
+            saved.append(sp)
+        self._picks.setdefault(run_id, []).extend(saved)
+        return saved
+
+    def get_picks(self, run_id: str) -> list[SavedPick]:
+        return list(self._picks.get(run_id, []))
 
     @property
     def runs(self) -> list[RunContext]:

@@ -35,6 +35,20 @@ class RunStep:
     duration_ms: int = 0
 
 
+@dataclass
+class SavedPick:
+    run_id: str
+    rank: int
+    player: str
+    team_id: str
+    market: str
+    direction: str
+    line: float
+    score: float
+    confidence: str
+    risk_notes: list[str] = field(default_factory=list)
+
+
 class RunLedger(Protocol):
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext: ...
     def complete_run(self, run_id: str) -> RunContext: ...
@@ -43,3 +57,5 @@ class RunLedger(Protocol):
     def get_run(self, run_id: str) -> RunContext | None: ...
     def record_step(self, run_id: str, step_name: str, *, status: str = "success", duration_ms: int = 0) -> RunStep: ...
     def get_steps(self, run_id: str) -> list[RunStep]: ...
+    def save_picks(self, run_id: str, scored_picks: list[dict[str, Any]]) -> list[SavedPick]: ...
+    def get_picks(self, run_id: str) -> list[SavedPick]: ...
