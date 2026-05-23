@@ -78,6 +78,12 @@ jobs:
       - name: Run lint
         run: ruff check .
 
+      - name: Run CLI smoke test
+        run: python scripts/smoke_test.py --cli
+
+      - name: Run version smoke test
+        run: python scripts/smoke_test.py --version-check
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
