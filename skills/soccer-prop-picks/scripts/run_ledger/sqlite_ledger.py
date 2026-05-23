@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from run_ledger.contract import RunContext, RunStep
+from run_ledger.contract import RunContext, RunStep, SavedPick
 
 _DEFAULT_DB_PATH = os.path.join("data", "runs.db")
 
@@ -48,6 +48,22 @@ _ENSURE_PARTIAL_REASONS_COLUMN = """
 ALTER TABLE run_ledger ADD COLUMN partial_reasons_json TEXT
 """
 
+_CREATE_PICKS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS run_picks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id VARCHAR(36) NOT NULL,
+    rank INTEGER NOT NULL,
+    player VARCHAR(128) NOT NULL,
+    team_id VARCHAR(64) NOT NULL DEFAULT '',
+    market VARCHAR(64) NOT NULL,
+    direction VARCHAR(16) NOT NULL DEFAULT '',
+    line REAL NOT NULL DEFAULT 0,
+    score REAL NOT NULL DEFAULT 0,
+    confidence VARCHAR(16) NOT NULL DEFAULT '',
+    risk_notes_json TEXT
+)
+"""
+
 
 class SqliteRunLedger:
     def __init__(self, db_path: str | None = None) -> None:
@@ -58,6 +74,7 @@ class SqliteRunLedger:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_CREATE_TABLE_SQL)
         self._conn.execute(_CREATE_STEPS_TABLE_SQL)
+        self._conn.execute(_CREATE_PICKS_TABLE_SQL)
         self._ensure_partial_reasons_column()
         self._conn.commit()
 
@@ -167,6 +184,53 @@ class SqliteRunLedger:
             )
             for row in rows
         ]
+
+    def save_picks(self, run_id: str, scored_picks: list[dict[str, Any]]) -> list[SavedPick]:
+        saved: list[SavedPick] = []
+        for rank, pick in enumerate(scored_picks, start=1):
+            risk_flags = pick.get("explainability", {}).get("risk_flags", [])
+            risk_notes_json = json.dumps(risk_flags)
+            player = pick.get("player", "")
+            team_id = pick.get("team_id", "")
+            market = pick.get("market", "")
+            direction = pick.get("direction", "")
+            line = float(pick.get("line", 0))
+            score = float(pick.get("score", 0))
+            confidence = pick.get("confidence", "")
+
+            self._conn.execute(
+                """INSERT INTO run_picks (run_id, rank, player, team_id, market, direction, line, score, confidence, risk_notes_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (run_id, rank, player, team_id, market, direction, line, score, confidence, risk_notes_json),
+            )
+            saved.append(SavedPick(
+                run_id=run_id, rank=rank, player=player, team_id=team_id,
+                market=market, direction=direction, line=line, score=score,
+                confidence=confidence, risk_notes=list(risk_flags),
+            ))
+        self._conn.commit()
+        return saved
+
+    def get_picks(self, run_id: str) -> list[SavedPick]:
+        rows = self._conn.execute(
+            "SELECT run_id, rank, player, team_id, market, direction, line, score, confidence, risk_notes_json FROM run_picks WHERE run_id = ? ORDER BY rank",
+            (run_id,),
+        ).fetchall()
+        result: list[SavedPick] = []
+        for row in rows:
+            risk_notes: list[str] = []
+            if row["risk_notes_json"]:
+                try:
+                    risk_notes = json.loads(row["risk_notes_json"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            result.append(SavedPick(
+                run_id=row["run_id"], rank=row["rank"], player=row["player"],
+                team_id=row["team_id"], market=row["market"], direction=row["direction"],
+                line=row["line"], score=row["score"], confidence=row["confidence"],
+                risk_notes=risk_notes,
+            ))
+        return result
 
     def _load_run(self, run_id: str) -> RunContext | None:
         row = self._conn.execute("SELECT * FROM run_ledger WHERE id = ?", (run_id,)).fetchone()
