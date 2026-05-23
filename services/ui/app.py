@@ -14,15 +14,62 @@ Configure with environment variables:
 from __future__ import annotations
 
 import json
+import re
+import sys
+from pathlib import Path
 from typing import Any
 
-import streamlit as st
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(_REPO_ROOT / ".env")
+
+import streamlit as st  # noqa: E402
+
+from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient  # noqa: E402
 
 
 PAGES = ("Generate", "History")
-FIXTURE_PROVIDERS = ("auto", "llm")
+
+
+def _construct_match_query(home_team: str, away_team: str, date: str) -> str:
+    home = home_team.strip() if home_team else ""
+    away = away_team.strip() if away_team else ""
+    date_clean = date.strip() if date else ""
+
+    if not home:
+        raise ValueError("home team is required")
+    if not away:
+        raise ValueError("away team is required")
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_clean):
+        raise ValueError(f"date must be YYYY-MM-DD format, got: {date_clean!r}")
+
+    return f"{home} - {away} {date_clean}"
+
+
+def _build_pick_payload(
+    home_team: str,
+    away_team: str,
+    date: str,
+    top_n: int,
+    use_llm_enrichment: bool,
+    allow_fallback: bool,
+) -> dict[str, Any]:
+    match_query = _construct_match_query(home_team, away_team, date)
+
+    payload: dict[str, Any] = {
+        "match_query": match_query,
+        "top_n": int(top_n),
+        "allow_deterministic_fallback": bool(allow_fallback),
+    }
+
+    if use_llm_enrichment:
+        payload["use_llm"] = True
+
+    return payload
 
 
 @st.cache_resource(show_spinner=False)
@@ -63,47 +110,46 @@ def _render_pick_payload(payload: dict[str, Any]) -> None:
 
 def render_generate_page(client: PicksAPIClient) -> None:
     st.title("Generate Pick Report")
-    st.caption("Submit a match query to run the deterministic scoring pipeline.")
+    st.caption("Enter match details to generate prop pick recommendations.")
 
     with st.form("generate_pick"):
-        match_query = st.text_input(
-            "Match query",
-            value="juve - milan today",
-            help="Format: 'home - away today|tomorrow|YYYY-MM-DD'.",
-        )
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            league = st.text_input("League (optional)", value="")
-        with col_b:
-            top_n = st.slider("Top N", min_value=1, max_value=5, value=5)
-        with col_c:
-            fixture_provider = st.selectbox("Fixture provider", FIXTURE_PROVIDERS, index=0)
-            allow_fallback = st.checkbox("Allow deterministic fallback", value=False)
+        col_home, col_away, col_date = st.columns(3)
+        with col_home:
+            home_team = st.text_input("Home team", value="", help="e.g. Bayern Munich")
+        with col_away:
+            away_team = st.text_input("Away team", value="", help="e.g. Stuttgart")
+        with col_date:
+            date = st.text_input("Date", value="", help="YYYY-MM-DD")
 
-        with st.expander("LLM enrichment (optional)"):
-            use_llm = st.checkbox("Enable LLM enrichment", value=False)
-            llm_provider = st.text_input("LLM provider", value="", disabled=not use_llm)
-            llm_model = st.text_input("LLM model", value="", disabled=not use_llm)
+        col_n, col_explain, col_fallback = st.columns(3)
+        with col_n:
+            top_n = st.slider("Top N picks", min_value=1, max_value=5, value=5)
+        with col_explain:
+            add_explanations = st.checkbox(
+                "Add pick explanations", value=False, help="LLM adds rationale to each pick"
+            )
+        with col_fallback:
+            allow_fallback = st.checkbox(
+                "Allow fallback", value=False, help="Return deterministic picks if pipeline fails"
+            )
 
         submitted = st.form_submit_button("Generate", type="primary")
 
     if not submitted:
         return
 
-    payload: dict[str, Any] = {
-        "match_query": match_query.strip(),
-        "top_n": int(top_n),
-        "fixture_provider": fixture_provider,
-        "allow_deterministic_fallback": bool(allow_fallback),
-    }
-    if league.strip():
-        payload["league"] = league.strip()
-    if use_llm:
-        payload["use_llm"] = True
-        if llm_provider.strip():
-            payload["llm_provider"] = llm_provider.strip()
-        if llm_model.strip():
-            payload["llm_model"] = llm_model.strip()
+    try:
+        payload = _build_pick_payload(
+            home_team=home_team,
+            away_team=away_team,
+            date=date,
+            top_n=top_n,
+            use_llm_enrichment=add_explanations,
+            allow_fallback=allow_fallback,
+        )
+    except ValueError as exc:
+        st.error(str(exc), icon="⚠️")
+        return
 
     with st.spinner("Submitting pick request…"):
         try:
@@ -111,7 +157,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
         except APIError as exc:
             _render_pipeline_error(exc)
             return
-        except Exception as exc:  # network / connection errors
+        except Exception as exc:
             st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
             return
 

@@ -26,7 +26,8 @@
       "items": { "$ref": "#/$defs/player" }
     },
     "market": { "$ref": "#/$defs/market" },
-    "validation": { "$ref": "#/$defs/validation" }
+    "validation": { "$ref": "#/$defs/validation" },
+    "sources": { "$ref": "#/$defs/sources" }
   },
   "$defs": {
     "match": {
@@ -264,6 +265,25 @@
         "success": { "type": "boolean" },
         "fallback_used": { "type": "boolean" },
         "error_summary": { "type": "string" }
+      }
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture", "lineup", "odds"],
+      "properties": {
+        "fixture": { "type": "array", "items": { "$ref": "#/$defs/groundingSource" } },
+        "lineup": { "type": "array", "items": { "$ref": "#/$defs/groundingSource" } },
+        "odds": { "type": "array", "items": { "$ref": "#/$defs/groundingSource" } }
+      }
+    },
+    "groundingSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "title"],
+      "properties": {
+        "url": { "type": "string" },
+        "title": { "type": "string" }
       }
     }
   }

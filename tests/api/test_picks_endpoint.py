@@ -419,6 +419,38 @@ def test_picks_post_persists_failed_row_with_error_metadata(
     assert "missing fixture" in (stored.error_message or "")
 
 
+def test_picks_post_normalizes_structured_fixture_status_before_db_write(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    _patch_pipeline(
+        monkeypatch,
+        pipeline_result={
+            "report_markdown": "# Stored report",
+            "scores": [{"player": "A", "rank": 1}],
+            "trace": {"llm_status": "not_requested"},
+            "match_inputs": {
+                "match": {
+                    "id": "DFB-1",
+                    "fixture_status": {"long": "Not Started", "short": "NS"},
+                }
+            },
+        },
+    )
+
+    response = client.post(
+        "/picks",
+        json={"match_query": "bayern - stuttgart today", "league": "DFB Pokal", "top_n": 4},
+    )
+
+    assert response.status_code == 202
+    _run_next_job()
+    rows = db_module.list_pick_runs(limit=10, offset=0)
+    assert len(rows) == 1
+    stored = rows[0]
+    assert stored.status == "success"
+    assert stored.fixture_status == "NS"
+
+
 def test_list_picks_paginates_in_reverse_chronological_order(
     monkeypatch: pytest.MonkeyPatch, client: TestClient
 ) -> None:

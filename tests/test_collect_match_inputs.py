@@ -287,3 +287,93 @@ def test_collect_inputs_includes_provider_status_map() -> None:
     assert set(provider_status) == {"fixture", "lineup", "odds", "weather"}
     for provider in provider_status.values():
         assert set(provider) == {"attempted", "success", "fallback_used", "error_summary"}
+
+
+class _FakeGroundingSource:
+    def __init__(self, url, title):
+        self.url = url
+        self.title = title
+
+
+class _FixtureWithSources:
+    def __init__(self):
+        self.last_sources = [
+            _FakeGroundingSource("https://fixture.example.com", "Fixture Src"),
+        ]
+
+    def lookup_fixture(self, request):
+        return {
+            "match_id": "TEST-123",
+            "competition": "League",
+            "competition_type": "league",
+            "is_elimination": False,
+            "overtime_possible": False,
+            "kickoff_utc": "2026-05-03T19:45:00Z",
+            "venue": {"name": "Stadium", "city": "City", "country": "Country"},
+            "teams": {
+                "home": {
+                    "team_id": "ARS",
+                    "team_name": "Arsenal",
+                    "standings_context": {"table_position": 1, "points": 80, "games_played": 34, "motivation_tag": "title_race"},
+                    "last_5_results": ["W", "W", "D", "W", "W"],
+                },
+                "away": {
+                    "team_id": "LIV",
+                    "team_name": "Liverpool",
+                    "standings_context": {"table_position": 2, "points": 75, "games_played": 34, "motivation_tag": "title_race"},
+                    "last_5_results": ["W", "D", "W", "W", "L"],
+                },
+            },
+        }
+
+
+class _LineupWithSources:
+    def __init__(self):
+        self.last_sources = [
+            _FakeGroundingSource("https://lineup.example.com", "Lineup Src"),
+        ]
+
+    def get_lineups_and_availability(self, fixture):
+        return None
+
+
+class _OddsWithSources:
+    def __init__(self):
+        self.last_sources = [
+            _FakeGroundingSource("https://odds.example.com", "Odds Src"),
+        ]
+
+    def get_odds_snapshots(self, fixture):
+        return None
+
+
+def test_collect_inputs_includes_sources_from_providers() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Arsenal", away_team="Liverpool", match_date="2026-05-03"),
+        fixture_provider=_FixtureWithSources(),
+        lineup_provider=_LineupWithSources(),
+        odds_provider=_OddsWithSources(),
+    )
+
+    assert "sources" in payload
+    assert len(payload["sources"]["fixture"]) == 1
+    assert payload["sources"]["fixture"][0]["url"] == "https://fixture.example.com"
+    assert len(payload["sources"]["lineup"]) == 1
+    assert payload["sources"]["lineup"][0]["url"] == "https://lineup.example.com"
+    assert len(payload["sources"]["odds"]) == 1
+    assert payload["sources"]["odds"][0]["url"] == "https://odds.example.com"
+
+
+def test_collect_inputs_sources_empty_when_no_providers_have_sources() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    payload = collector.collect_inputs(
+        collector.MatchInputRequest(home_team="Arsenal", away_team="Liverpool", match_date="2026-05-03")
+    )
+
+    assert "sources" in payload
+    assert payload["sources"]["fixture"] == []
+    assert payload["sources"]["lineup"] == []
+    assert payload["sources"]["odds"] == []

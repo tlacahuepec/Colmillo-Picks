@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 
 from collect_match_inputs import MatchInputRequest, collect_inputs
@@ -17,6 +18,7 @@ from llm.provider_adapter import build_enrich_with_llm
 from pipeline_service import PipelineServiceError, run_pipeline
 from render_pick_report import render_report
 from provider_config import LLMFixtureProviderConfig
+from run_ledger import InMemoryRunLedger, SqliteRunLedger
 from score_player_props import score_props
 
 __all__ = [
@@ -197,8 +199,28 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _build_ledger():
+    try:
+        return SqliteRunLedger()
+    except Exception:
+        print("Warning: could not initialize run ledger, using in-memory fallback.", file=sys.stderr)
+        return InMemoryRunLedger()
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_cli_args(argv)
+    ledger = _build_ledger()
+
+    request_dict = {
+        "match_query": args.match_query,
+        "top_n": args.top_n,
+        "use_llm": args.use_llm,
+        "llm_provider": args.llm_provider,
+        "llm_model": args.llm_model,
+        "competition": args.league or "League",
+    }
+    run_ctx = ledger.start_run(source="cli", request=request_dict)
+
     try:
         deps = build_dependency_bundle(
             use_llm=args.use_llm,
@@ -212,23 +234,17 @@ def main(argv: list[str] | None = None) -> None:
             fixture_llm_base_url=getattr(args, "fixture_llm_base_url", None),
         )
     except ValueError as exc:
+        ledger.fail_run(run_ctx.id, error_summary=str(exc), error_stage="config")
         raise SystemExit(f"Error: {exc}") from exc
     try:
-        report = run_pipeline(
-            request={
-                "match_query": args.match_query,
-                "top_n": args.top_n,
-                "use_llm": args.use_llm,
-                "llm_provider": args.llm_provider,
-                "llm_model": args.llm_model,
-                "competition": args.league or "League",
-            },
-            deps=deps,
-        )
+        report = run_pipeline(request=request_dict, deps=deps)
     except PipelineServiceError as exc:
         cause = exc.__cause__
         message = str(cause) if cause else str(exc)
+        ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage)
         raise SystemExit(f"Error: {message}") from exc
+
+    ledger.complete_run(run_ctx.id)
     print(report)
 
 

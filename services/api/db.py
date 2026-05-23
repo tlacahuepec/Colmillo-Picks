@@ -184,6 +184,35 @@ def _safe_request_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in payload.items() if k.lower() not in sensitive_keys}
 
 
+def _normalize_status_value(value: Any, *, max_len: int = 64) -> str | None:
+    """Convert provider/status payloads to a compact DB-safe string.
+
+    Some providers return structured status objects (for example
+    ``{"short": "NS", "long": "Not Started"}``) while DB columns are
+    ``VARCHAR``. Normalize to a short scalar to avoid sqlite bind errors.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized[:max_len] if normalized else None
+    if isinstance(value, dict):
+        for key in ("short", "status", "state", "code", "long", "label", "name"):
+            candidate = value.get(key)
+            if candidate is None:
+                continue
+            normalized = _normalize_status_value(candidate, max_len=max_len)
+            if normalized:
+                return normalized
+        for candidate in value.values():
+            normalized = _normalize_status_value(candidate, max_len=max_len)
+            if normalized:
+                return normalized
+        return None
+    normalized = str(value).strip()
+    return normalized[:max_len] if normalized else None
+
+
 def create_pending_pick_run(*, request_payload: dict[str, Any]) -> PickRun:
     """Insert a ``pending`` row for an accepted async pick request."""
     competition_value = request_payload.get("league") or request_payload.get("competition")
@@ -296,7 +325,9 @@ def mark_pick_success(
     fixture_status = None
     match_meta = match_inputs.get("match") if isinstance(match_inputs, dict) else None
     if isinstance(match_meta, dict):
-        fixture_status = match_meta.get("fixture_status") or match_meta.get("status")
+        fixture_status = _normalize_status_value(
+            match_meta.get("fixture_status") or match_meta.get("status")
+        )
 
     with session_scope() as session:
         row = session.get(PickRun, pick_id)
@@ -307,7 +338,9 @@ def mark_pick_success(
         row.scores_json = json.dumps(result.get("scores", []), default=str)
         row.trace_json = json.dumps(trace, default=str) if trace else None
         row.fixture_status = fixture_status
-        row.llm_status = trace.get("llm_status") if isinstance(trace, dict) else None
+        row.llm_status = (
+            _normalize_status_value(trace.get("llm_status")) if isinstance(trace, dict) else None
+        )
         row.latency_ms = latency_ms
         row.error_stage = None
         row.error_message = None

@@ -25,13 +25,16 @@ def _fmt_pct(value: Any) -> str:
         return "unknown"
 
 
-def _join_names(items: list[dict[str, Any]]) -> str:
+def _join_names(items: list[dict[str, Any] | str]) -> str:
     if not items:
         return "none"
-    return ", ".join(
-        f"{item.get('player_name', 'unknown')} ({item.get('status', 'unknown')})"
-        for item in items
-    )
+    parts: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            parts.append(item)
+        else:
+            parts.append(f"{item.get('player_name', 'unknown')} ({item.get('status', 'unknown')})")
+    return ", ".join(parts)
 
 
 def _standings_line(team: dict[str, Any]) -> dict[str, Any]:
@@ -211,6 +214,37 @@ def _llm_status_line(trace: dict[str, Any] | None) -> str:
     )
 
 
+_MAX_SOURCES_PER_PROVIDER = 10
+_PROVIDER_LABELS = {"fixture": "Fixture", "lineup": "Lineup", "odds": "Odds"}
+
+
+def _sources_section(match_inputs: dict[str, Any]) -> str:
+    sources = match_inputs.get("sources", {})
+    if not sources or not any(sources.values()):
+        return "_No grounding sources available._"
+
+    lines: list[str] = []
+    for key, label in _PROVIDER_LABELS.items():
+        entries = sources.get(key, [])
+        if not entries:
+            continue
+        seen: set[str] = set()
+        deduped: list[dict[str, str]] = []
+        for entry in entries:
+            url = entry.get("url", "")
+            if url and url not in seen:
+                seen.add(url)
+                deduped.append(entry)
+        lines.append(f"### {label}")
+        for entry in deduped[:_MAX_SOURCES_PER_PROVIDER]:
+            title = entry.get("title") or entry.get("url", "source")
+            url = entry.get("url", "")
+            lines.append(f"- [{title}]({url})")
+        lines.append("")
+
+    return "\n".join(lines).strip() if lines else "_No grounding sources available._"
+
+
 def _provider_call_status_rows(match_inputs: dict[str, Any]) -> str:
     provider_status = match_inputs.get("validation", {}).get("provider_status", {})
     provider_order = ("fixture", "lineup", "odds", "weather")
@@ -337,6 +371,7 @@ def render_report(
         "should_reject_prediction": str(match_inputs.get("validation", {}).get("should_reject_prediction", False)).lower(),
         "llm_status_line": _llm_status_line(trace),
         "provider_call_status_rows": _provider_call_status_rows(match_inputs),
+        "sources_section": _sources_section(match_inputs),
     }
 
     report = template

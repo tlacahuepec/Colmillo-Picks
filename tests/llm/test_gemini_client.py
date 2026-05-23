@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm.client import LLMError
+from llm.client import LLMError, GroundingSource
 from llm.gemini_client import GeminiLLMClient
 from llm.provider_adapter import build_enrich_with_llm, validate_llm_runtime_config
 
@@ -261,6 +261,75 @@ def test_gemini_client_parses_first_json_object_when_extra_data_follows() -> Non
     assert result == {"teams": {"home": "Bayern"}}
 
 
+def test_gemini_client_retries_on_invalid_json_then_succeeds() -> None:
+    call_count = 0
+
+    class _BadThenGoodClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _FakeResponse("not json at all")
+            return _FakeResponse('{"ok": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_BadThenGoodClient,
+        max_retries=1,
+        sleep_fn=lambda _: None,
+    )
+
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert result == {"ok": True}
+    assert call_count == 2
+
+
+def test_gemini_client_retries_on_empty_response_then_succeeds() -> None:
+    call_count = 0
+
+    class _EmptyThenGoodClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _FakeResponse("")
+            return _FakeResponse('{"ok": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_EmptyThenGoodClient,
+        max_retries=1,
+        sleep_fn=lambda _: None,
+    )
+
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert result == {"ok": True}
+    assert call_count == 2
+
+
+def test_gemini_client_extracts_json_from_prose_response() -> None:
+    class _ProseWrappedClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponse('Here is the fixture data:\n{"match_found": true, "teams": {}}\nSources: ...')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_ProseWrappedClient,
+        search_grounding=True,
+    )
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert result == {"match_found": True, "teams": {}}
+
+
 def test_gemini_client_retries_on_rate_limit_429() -> None:
     call_count = 0
 
@@ -306,3 +375,154 @@ def test_gemini_client_raises_after_exhausting_rate_limit_retries() -> None:
 
     with pytest.raises(LLMError, match="429"):
         client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+
+class _FakeWeb:
+    def __init__(self, uri: str, title: str):
+        self.uri = uri
+        self.title = title
+
+
+class _FakeGroundingChunk:
+    def __init__(self, web: _FakeWeb):
+        self.web = web
+
+
+class _FakeGroundingMetadata:
+    def __init__(self, chunks: list[_FakeGroundingChunk], search_entry_point=None):
+        self.grounding_chunks = chunks
+        self.search_entry_point = search_entry_point
+        self.web_search_queries = None
+
+
+class _FakeCandidate:
+    def __init__(self, text: str, grounding_metadata=None):
+        self.content = type("C", (), {"parts": [type("P", (), {"text": text})()]})()
+        self.grounding_metadata = grounding_metadata
+
+
+class _FakeResponseWithGrounding:
+    def __init__(self, text: str, grounding_metadata=None):
+        self._text = text
+        self.candidates = [_FakeCandidate(text, grounding_metadata)]
+
+    @property
+    def text(self):
+        return self._text
+
+
+def test_gemini_client_exposes_grounding_sources() -> None:
+    metadata = _FakeGroundingMetadata([
+        _FakeGroundingChunk(_FakeWeb("https://example.com/page1", "Page One")),
+        _FakeGroundingChunk(_FakeWeb("https://example.com/page2", "Page Two")),
+    ])
+
+    class _GroundingClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponseWithGrounding('{"match_found": true}', metadata)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_GroundingClient,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert client.last_sources == [
+        GroundingSource(url="https://example.com/page1", title="Page One"),
+        GroundingSource(url="https://example.com/page2", title="Page Two"),
+    ]
+
+
+def test_gemini_client_last_sources_empty_without_grounding() -> None:
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_FakeClient,
+        search_grounding=False,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert client.last_sources == []
+
+
+def test_gemini_client_last_sources_empty_when_metadata_missing() -> None:
+    class _NoMetadataClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponseWithGrounding('{"ok": true}', None)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_NoMetadataClient,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert client.last_sources == []
+
+
+def test_gemini_client_last_sources_resets_between_calls() -> None:
+    call_count = 0
+    metadata = _FakeGroundingMetadata([
+        _FakeGroundingChunk(_FakeWeb("https://example.com/first", "First")),
+    ])
+
+    class _ResetClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _FakeResponseWithGrounding('{"a": 1}', metadata)
+            return _FakeResponseWithGrounding('{"b": 2}', None)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_ResetClient,
+        search_grounding=True,
+    )
+
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert len(client.last_sources) == 1
+
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert client.last_sources == []
+
+
+def test_gemini_client_extracts_sources_from_search_entry_point_fallback() -> None:
+    class _FakeSearchEntryPoint:
+        def __init__(self):
+            self.rendered_content = (
+                '<a href="https://www.bbc.com/sport/football">BBC Sport</a>'
+                '<a href="https://www.transfermarkt.com/bayern">Transfermarkt</a>'
+            )
+
+    metadata = _FakeGroundingMetadata(
+        chunks=[],
+        search_entry_point=_FakeSearchEntryPoint(),
+    )
+
+    class _EntryPointClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponseWithGrounding('{"match_found": true}', metadata)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_EntryPointClient,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert len(client.last_sources) == 2
+    assert client.last_sources[0].url == "https://www.bbc.com/sport/football"
+    assert client.last_sources[1].url == "https://www.transfermarkt.com/bayern"

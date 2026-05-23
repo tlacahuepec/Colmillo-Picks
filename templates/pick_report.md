@@ -86,3 +86,6 @@ Blocking warnings:
 | Provider | Final State | Deterministic Fallback Used | Error Summary |
 |---|---|---|---|
 {{provider_call_status_rows}}
+
+## Sources
+{{sources_section}}

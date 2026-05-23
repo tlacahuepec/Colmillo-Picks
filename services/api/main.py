@@ -16,15 +16,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-
-# Make the soccer-prop-picks scripts importable without packaging.
+# Make the repo root and soccer-prop-picks scripts importable without packaging.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 _SCRIPTS_DIR = _REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(_REPO_ROOT / ".env")
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 from dependency_bundle import build_dependency_bundle  # noqa: E402
 from pipeline_service import (  # noqa: E402
@@ -229,6 +235,14 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
     )
 
 
+def _build_run_ledger():
+    from run_ledger import InMemoryRunLedger, SqliteRunLedger
+    try:
+        return SqliteRunLedger()
+    except Exception:
+        return InMemoryRunLedger()
+
+
 def _execute_pipeline_job(
     *,
     pick_id: str,
@@ -236,6 +250,9 @@ def _execute_pipeline_job(
     bundle_kwargs: dict[str, Any],
 ) -> bool:
     """Background task body: run the pipeline and update the pending row."""
+    ledger = _build_run_ledger()
+    run_ctx = ledger.start_run(source="api", request=request_dict)
+
     started = time.perf_counter()
     try:
         deps = build_dependency_bundle(**bundle_kwargs)
@@ -247,15 +264,18 @@ def _execute_pipeline_job(
         db_module.mark_pick_failed(
             pick_id=pick_id, stage=exc.stage, message=message, latency_ms=latency_ms
         )
+        ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage)
         return False
     except Exception as exc:  # configuration / unexpected errors
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         db_module.mark_pick_failed(
             pick_id=pick_id, stage="unknown", message=str(exc), latency_ms=latency_ms
         )
+        ledger.fail_run(run_ctx.id, error_summary=str(exc), error_stage="unknown")
         return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
+    ledger.complete_run(run_ctx.id)
     return True
 
 

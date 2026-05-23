@@ -33,6 +33,26 @@ def _optional_value(raw_value: str | None) -> str | None:
     return value or None
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = _optional_value(os.getenv(name))
+    if raw is None:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = _optional_value(os.getenv(name))
+    if raw is None:
+        return default
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return default
+
+
 def _fixture_provider_source(raw_value: str | None) -> str:
     source = (
         _optional_value(raw_value)
@@ -59,13 +79,22 @@ def _build_llm_fixture_provider(
         base_url=fixture_llm_base_url,
     )
     if config.provider == "gemini":
-        client = GeminiLLMClient(api_key=config.api_key or "", model=config.model or "gemini-2.5-flash", search_grounding=True, max_output_tokens=4000)
+        client = GeminiLLMClient(
+            api_key=config.api_key or "",
+            model=config.model or "gemini-2.5-flash",
+            search_grounding=True,
+            max_output_tokens=4000,
+            max_retries=_env_int("COLMILLO_FIXTURE_LLM_MAX_RETRIES", 1),
+            retry_delay_seconds=_env_float("COLMILLO_FIXTURE_LLM_RETRY_DELAY_SECONDS", 3.0),
+        )
         return LLMFixtureProvider(config=config, client=client)
     if config.provider == "xai" or config.provider == "grok":
         client = GrokLLMClient(
             api_key=config.api_key or "",
             base_url=config.base_url or "https://api.x.ai/v1",
             model=config.model or "grok-3",
+            max_retries=_env_int("COLMILLO_FIXTURE_LLM_MAX_RETRIES", 1),
+            retry_delay_seconds=_env_float("COLMILLO_FIXTURE_LLM_RETRY_DELAY_SECONDS", 3.0),
         )
         return LLMFixtureProvider(config=config, client=client)
     return LLMFixtureProvider(config=config)
@@ -96,8 +125,8 @@ def _build_llm_lineup_provider(
             model=model,
             search_grounding=_supports_search_grounding(model),
             max_output_tokens=4000,
-            max_retries=2,
-            retry_delay_seconds=5.0,
+            max_retries=_env_int("COLMILLO_LINEUP_LLM_MAX_RETRIES", 1),
+            retry_delay_seconds=_env_float("COLMILLO_LINEUP_LLM_RETRY_DELAY_SECONDS", 3.0),
         )
         return LLMLineupProvider(client=client)
     return None
@@ -121,8 +150,8 @@ def _build_llm_odds_provider(
             model=model,
             search_grounding=_supports_search_grounding(model),
             max_output_tokens=4000,
-            max_retries=2,
-            retry_delay_seconds=5.0,
+            max_retries=_env_int("COLMILLO_ODDS_LLM_MAX_RETRIES", 1),
+            retry_delay_seconds=_env_float("COLMILLO_ODDS_LLM_RETRY_DELAY_SECONDS", 3.0),
         )
         return LLMOddsProvider(client=client)
     return None
