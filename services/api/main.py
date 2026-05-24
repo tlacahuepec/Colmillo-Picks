@@ -488,6 +488,7 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     """Execute non-soccer sports via PipelineRunner + SportModule."""
     from pick_request import PickRequest
     from pipeline_runner import PipelineRunner
+    from render_basketball_report import render_basketball_report
     from sport_module import get_sport_module
 
     sport = request_dict.get("sport", "basketball")
@@ -504,12 +505,23 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     )
     runner = PipelineRunner()
     pipeline_result = runner.run(request=pick_req, module=module)
+
+    used_fallback = not pipeline_result.match_inputs.get("game")
+    report_md = render_basketball_report(
+        pipeline_result.scores,
+        pipeline_result.match_inputs,
+        used_fallback=used_fallback,
+    )
+
     return {
         "scores": pipeline_result.scores,
         "match_inputs": pipeline_result.match_inputs,
         "steps": pipeline_result.steps,
-        "report_markdown": "",
-        "trace": {"llm_status": "not_requested"},
+        "report_markdown": report_md,
+        "trace": {
+            "llm_status": "fallback" if used_fallback else "completed",
+            "pipeline_steps": pipeline_result.steps,
+        },
     }
 
 
