@@ -5,15 +5,37 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 
-from api_football_provider import ApiFootballFixtureProvider, ApiFootballOddsSnapshotProvider
 from collect_match_inputs import MatchInputRequest, collect_inputs
+from dependency_bundle import (
+    _SUPPORTED_FIXTURE_PROVIDERS,
+    build_dependency_bundle,
+)
+from llm_fixture_provider import LLMFixtureProvider
 from llm.provider_adapter import build_enrich_with_llm
-from pipeline_service import PipelineServiceError, run_pipeline
+from pipeline_service import PipelineServiceError, run_pipeline, run_pipeline_with_payload
 from render_pick_report import render_report
-from provider_config import ApiFootballProviderConfig
+from provider_config import LLMFixtureProviderConfig
+from run_ledger import InMemoryRunLedger, SqliteRunLedger
 from score_player_props import score_props
+
+__all__ = [
+    "LLMFixtureProvider",
+    "LLMFixtureProviderConfig",
+    "MatchInputRequest",
+    "PipelineServiceError",
+    "build_dependency_bundle",
+    "build_enrich_with_llm",
+    "collect_inputs",
+    "main",
+    "parse_cli_args",
+    "parse_match_query",
+    "render_report",
+    "run_pipeline",
+    "score_props",
+]
 
 
 class ParsedMatchQuery(tuple):
@@ -108,17 +130,6 @@ def _optional_cli_value(raw_value: str | None) -> str | None:
     return value or None
 
 
-def _cli_season(raw_value: str) -> str:
-    value = raw_value.strip()
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("season must be a four-digit year") from exc
-    if parsed < 1900 or parsed > 2200:
-        raise argparse.ArgumentTypeError("season must be a four-digit year")
-    return str(parsed)
-
-
 def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run soccer prop pick pipeline for a match query.")
     parser.add_argument("match_query", help="Match query like 'juve - milan today'")
@@ -136,7 +147,7 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--llm-provider",
         default=None,
-        help="LLM provider to use when --use-llm is set (supported: openai).",
+        help="LLM provider to use when --use-llm is set (supported: gemini, openai, grok).",
     )
     parser.add_argument(
         "--llm-model",
@@ -149,82 +160,67 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional competition name hint/display value, e.g. 'Premier League'.",
     )
     parser.add_argument(
-        "--league-id",
-        default=None,
-        help="Optional API-Football league ID hint.",
-    )
-    parser.add_argument(
-        "--season",
-        type=_cli_season,
-        default=None,
-        help="Optional API-Football season hint, e.g. 2025.",
-    )
-    parser.add_argument(
         "--allow-deterministic-fallback",
         action="store_true",
-        help="Use deterministic fallback data when API-Football fixture lookup fails.",
+        help="Use deterministic fallback data when fixture lookup fails.",
+    )
+    parser.add_argument(
+        "--fixture-provider",
+        choices=sorted(_SUPPORTED_FIXTURE_PROVIDERS),
+        default=None,
+        help=(
+            "Fixture lookup source. Defaults to SOCCER_FIXTURE_PROVIDER or llm."
+        ),
+    )
+    parser.add_argument(
+        "--fixture-llm-provider",
+        default=None,
+        help="Fixture LLM provider hint (gemini, openai, xai).",
+    )
+    parser.add_argument(
+        "--fixture-llm-model",
+        default=None,
+        help="Fixture LLM model name. Can also be set with SOCCER_FIXTURE_LLM_MODEL.",
+    )
+    parser.add_argument(
+        "--fixture-llm-base-url",
+        default=None,
+        help="OpenAI-compatible fixture LLM base URL. Can also be set with SOCCER_FIXTURE_LLM_BASE_URL.",
     )
 
     args = parser.parse_args(argv)
     if args.use_llm and not args.llm_provider:
         parser.error("--llm-provider is required when --use-llm is set.")
     args.league = _optional_cli_value(args.league)
-    args.league_id = _optional_cli_value(args.league_id)
+    args.fixture_provider = _optional_cli_value(args.fixture_provider)
+    args.fixture_llm_provider = _optional_cli_value(args.fixture_llm_provider)
+    args.fixture_llm_model = _optional_cli_value(args.fixture_llm_model)
+    args.fixture_llm_base_url = _optional_cli_value(args.fixture_llm_base_url)
     return args
 
 
-
-
-def build_dependency_bundle(
-    *,
-    use_llm: bool,
-    llm_provider: str | None,
-    llm_model: str | None,
-    allow_deterministic_fallback: bool = False,
-    league: str | None = None,
-    league_id: str | None = None,
-    season: str | None = None,
-) -> dict[str, object]:
-    api_football_config = ApiFootballProviderConfig.from_env()
-    fixture_provider = None
-    odds_provider = None
-    if api_football_config.api_key:
-        fixture_provider = ApiFootballFixtureProvider(config=api_football_config)
-        odds_provider = ApiFootballOddsSnapshotProvider(config=api_football_config)
-    elif not allow_deterministic_fallback:
-        api_football_config.validate()
-
-    competition_hint = _optional_cli_value(league)
-
-    return {
-        "parse_match_query": parse_match_query,
-        "build_match_input_request": lambda *, parsed, competition: MatchInputRequest(
-            home_team=parsed.home_team,
-            away_team=parsed.away_team,
-            match_date=parsed.match_date,
-            competition=competition_hint or competition,
-            competition_hints=[competition_hint] if competition_hint else None,
-            league_id=league_id,
-            season=season,
-        ),
-        "collect_inputs": lambda request: collect_inputs(
-            request,
-            fixture_provider=fixture_provider,
-            odds_provider=odds_provider,
-            allow_fixture_fallback=allow_deterministic_fallback,
-        ),
-        "score_props": score_props,
-        "render_report": render_report,
-        "enrich_with_llm": build_enrich_with_llm(
-            use_llm=use_llm,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-        ),
-    }
+def _build_ledger():
+    try:
+        return SqliteRunLedger()
+    except Exception:
+        print("Warning: could not initialize run ledger, using in-memory fallback.", file=sys.stderr)
+        return InMemoryRunLedger()
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_cli_args(argv)
+    ledger = _build_ledger()
+
+    request_dict = {
+        "match_query": args.match_query,
+        "top_n": args.top_n,
+        "use_llm": args.use_llm,
+        "llm_provider": args.llm_provider,
+        "llm_model": args.llm_model,
+        "competition": args.league or "League",
+    }
+    run_ctx = ledger.start_run(source="cli", request=request_dict)
+
     try:
         deps = build_dependency_bundle(
             use_llm=args.use_llm,
@@ -232,28 +228,34 @@ def main(argv: list[str] | None = None) -> None:
             llm_model=args.llm_model,
             allow_deterministic_fallback=args.allow_deterministic_fallback,
             league=args.league,
-            league_id=args.league_id,
-            season=args.season,
+            fixture_provider_name=getattr(args, "fixture_provider", None),
+            fixture_llm_provider=getattr(args, "fixture_llm_provider", None),
+            fixture_llm_model=getattr(args, "fixture_llm_model", None),
+            fixture_llm_base_url=getattr(args, "fixture_llm_base_url", None),
         )
     except ValueError as exc:
+        ledger.fail_run(run_ctx.id, error_summary=str(exc), error_stage="config")
         raise SystemExit(f"Error: {exc}") from exc
     try:
-        report = run_pipeline(
-            request={
-                "match_query": args.match_query,
-                "top_n": args.top_n,
-                "use_llm": args.use_llm,
-                "llm_provider": args.llm_provider,
-                "llm_model": args.llm_model,
-                "competition": args.league or "League",
-            },
-            deps=deps,
-        )
+        result = run_pipeline_with_payload(request=request_dict, deps=deps)
     except PipelineServiceError as exc:
         cause = exc.__cause__
         message = str(cause) if cause else str(exc)
+        ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage)
         raise SystemExit(f"Error: {message}") from exc
-    print(report)
+
+    for step in result.get("steps", []):
+        ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
+
+    ledger.save_picks(run_ctx.id, result.get("scores", []))
+
+    failed_steps = [s for s in result.get("steps", []) if s["status"] == "failed"]
+    if failed_steps:
+        reasons = [f"{s['name']} failed" for s in failed_steps]
+        ledger.partial_run(run_ctx.id, reasons=reasons)
+    else:
+        ledger.complete_run(run_ctx.id)
+    print(result["report_markdown"])
 
 
 if __name__ == "__main__":

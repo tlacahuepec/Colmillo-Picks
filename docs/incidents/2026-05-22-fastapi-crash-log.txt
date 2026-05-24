@@ -1,0 +1,44 @@
+PS C:\Users\santi\Repos\Colmillo-Picks> uvicorn services.api.main:app --reload --port 8000
+INFO:     Will watch for changes in these directories: ['C:\\Users\\santi\\Repos\\Colmillo-Picks']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [19672] using StatReload
+INFO:     Started server process [25524]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+{"ts": "2026-05-22T23:50:36-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "e2e59a9194864324bf6a764777ef5375", "method": "POST", "path": "/picks", "status_code": 202, "latency_ms": 2526}
+INFO:     127.0.0.1:49979 - "POST /picks HTTP/1.1" 202 Accepted
+{"ts": "2026-05-22T23:50:38-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "89f498e5b7ae4cf1be18442d6c46079e", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 2}
+INFO:     127.0.0.1:54234 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:50:42-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "2d054b9ea1eb43cc860d6b2e87ca0b80", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:54237 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:50:46-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "2e58d4e430404ce79d18ee5f7d6f1b0e", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:54239 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:50:50-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "239ae23db4cc47d0b0e57bb98bdccf88", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:54241 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:50:53-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "081143e2d703408799f0f3b60305ad8b", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:54243 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:50:57-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "1bc59efa19874789ad96504e1d90d38b", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:49673 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:51:01-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "6942ffbfa53047a0950b9c48550a19f8", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:60825 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\santi\scoop\apps\python\current\Lib\site-packages\sqlalchemy\engine\base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "C:\Users\santi\scoop\apps\python\current\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+sqlite3.ProgrammingError: Error binding parameter 4: type 'dict' is not supported
+
+The above exception was the direct cause of the following exception:
+
+sqlalchemy.exc.ProgrammingError: (sqlite3.ProgrammingError) Error binding parameter 4: type 'dict' is not supported
+[SQL: UPDATE picks_history SET report_markdown=?, scores_json=?, trace_json=?, fixture_status=?, llm_status=?, latency_ms=?, status=? WHERE picks_history.id = ?]
+[parameters: (..., {'long': 'Not Started', 'short': 'NS'}, 'not_requested', 27851, 'success', 'a328eba9-b8dc-4922-be7d-149f000f177d')]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+{"ts": "2026-05-22T23:51:05-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "d4a4b5e7ffdf4f47844d78e919584a4d", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:60831 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:51:08-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "4b4a35f1f51e48c98c8439d95edaf451", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:60834 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:51:12-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "f300c1c8e4ff45d59fad4d55a194bb31", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}
+INFO:     127.0.0.1:60836 - "GET /picks/a328eba9-b8dc-4922-be7d-149f000f177d/status HTTP/1.1" 200 OK
+{"ts": "2026-05-22T23:51:16-0500", "level": "INFO", "logger": "colmillo", "message": "request", "request_id": "ac416dfbf9114c0981fe3fece1d184b8", "method": "GET", "path": "/picks/a328eba9-b8dc-4922-be7d-149f000f177d/status", "status_code": 200, "latency_ms": 1}

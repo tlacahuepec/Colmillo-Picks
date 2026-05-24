@@ -1,108 +1,211 @@
 # Colmillo-Picks
 
-Colmillo Picks is an AI-powered soccer assistant that generates smart picks with clear reasoning, confidence levels, and risk insights.
+AI-powered soccer prop pick assistant — generates ranked player prop picks with confidence levels, risk flags, grounding sources, and platform availability checks.
 
-## Current repo coverage against the core soccer principles
+## Quickstart (CLI)
 
-This repo now represents the key principles for soccer prop-pick analysis:
+```bash
+git clone https://github.com/tlacahuepec/Colmillo-Picks.git && cd Colmillo-Picks
+pip install -r requirements.txt
+cp .env.example .env       # add your GEMINI_API_KEY
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "arsenal - liverpool today"
+```
 
-- Lineups, injuries/suspensions, home/away context, standings, weather, and match format are all represented in the structured input schema and reporting template.
-- Possession style and opponent style are explicitly modeled in scoring to support passes projections.
-- Player reliability (expected minutes, substitution risk, role, lone striker context) is included for passes/shots recommendations.
-- Odds consensus logic supports multi-book agreement checks.
-- Guardrails enforce freshness timestamps and flag unconfirmed lineups or stale odds.
-- Output includes top 5 picks with confidence, risk flags, and availability checks for PrizePicks + alternatives.
+PowerShell:
 
-## Core implementation
+```powershell
+$env:GEMINI_API_KEY = "your-gemini-key"
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "arsenal - liverpool today"
+```
 
-- `skills/soccer-prop-picks/scripts/score_player_props.py`: deterministic, weighted scoring engine for passes/shots picks.
-- `skills/soccer-prop-picks/scripts/render_pick_report.py`: final report renderer with match summary, evidence table, picks table, and availability section.
-- `templates/pick_report.md`: required output contract template.
+## How it works
 
-## Testing
+1. **Parse** — Extracts teams, date, and competition from a natural-language match query
+2. **Fixture lookup** — Resolves the real match via Gemini with search grounding
+3. **Collect inputs** — Gathers lineups, odds, weather into a schema-validated payload
+4. **Score** — Deterministic weighted scoring of player props (passes, shots)
+5. **LLM enrich** (optional) — Gemini adds rationale, tactical fit, risk narratives
+6. **Report** — Renders a markdown report with top picks, evidence, sources, and risk flags
 
-This repository includes both unit tests and an integration test:
+## Local development (UI + API)
 
-- Unit tests: scoring behavior and report rendering.
-- Integration test: end-to-end flow from scoring to report generation.
-- CLI integration test: runs the scoring and rendering scripts as a user would from the terminal.
+Both services auto-load `.env` from the project root via `python-dotenv`. No manual env exporting needed.
 
-Run tests:
+### Setup
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env: add your GEMINI_API_KEY and set COLMILLO_API_KEY to any string
+```
+
+### Run
+
+Open two terminals from the project root:
+
+**Terminal 1 — API (port 8000):**
+
+```bash
+uvicorn services.api.main:app --reload --port 8000
+```
+
+```powershell
+uvicorn services.api.main:app --reload --port 8000
+```
+
+**Terminal 2 — UI (port 8501):**
+
+```bash
+streamlit run services/ui/app.py --server.port 8501
+```
+
+```powershell
+streamlit run services/ui/app.py --server.port 8501
+```
+
+Then open:
+- **UI:** http://localhost:8501
+- **API docs (Swagger):** http://localhost:8000/docs
+
+## Project structure
+
+```
+skills/soccer-prop-picks/
+  scripts/
+    run_match_pick_pipeline.py   CLI entry point
+    collect_match_inputs.py      Schema-validated input assembly
+    score_player_props.py        Deterministic scoring engine
+    render_pick_report.py        Markdown report renderer
+    dependency_bundle.py         Provider wiring (shared by CLI + API)
+    llm/                         LLM client adapters (Gemini, Grok, OpenAI)
+    llm_fixture_provider.py      LLM-based fixture resolution
+    llm_lineup_provider.py       LLM-based lineup resolution
+    llm_odds_provider.py         LLM-based odds resolution
+services/
+  api/                           FastAPI REST service (port 8000)
+  ui/                            Streamlit web UI (port 8501)
+  worker/                        Optional background job processor
+templates/
+  pick_report.md                 Report output template
+tests/                           pytest suite (~250 tests)
+```
+
+## Configuration
+
+All config is via environment variables. Copy `.env.example` to `.env` and fill in your keys.
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `GEMINI_API_KEY` | **Yes** | — | Gemini LLM (fixture lookup, enrichment, grounding) |
+| `COLMILLO_API_KEY` | For services | — | API authentication (`X-API-Key` header) |
+| `COLMILLO_DB_PATH` | For services | `./colmillo.db` | SQLite database path |
+| `COLMILLO_API_URL` | For UI | `http://localhost:8000` | Where UI sends requests |
+| `COLMILLO_UI_ORIGIN` | For API | `http://localhost:8501` | CORS allowlist |
+| `OPENAI_API_KEY` | No | — | Alternative LLM provider |
+| `XAI_API_KEY` | No | — | Grok/xAI LLM provider |
+| `COLMILLO_RATE_LIMIT_PER_HOUR` | No | `30` | Per-key request quota |
+
+See `.env.example` for the full list.
+
+## CLI usage
+
+```bash
+# Basic (requires GEMINI_API_KEY in .env or environment)
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today"
+
+# With options
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "arsenal - liverpool 2026-05-03" \
+  --league "Premier League" \
+  --top-n 3
+
+# Offline/demo mode (no API key needed)
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "juve - milan today" --allow-deterministic-fallback
+
+# Full LLM pipeline (fixture + enrichment + search grounding)
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
+  "bayern munich - vfb stuttgart 2026-05-23" \
+  --fixture-provider llm --fixture-llm-provider gemini \
+  --use-llm --llm-provider gemini
+```
+
+Match query format: `"home - away today|tomorrow|YYYY-MM-DD"`
+
+`--top-n` controls how many top picks to return in the report (1–5, default 5).
+
+### Smart run modes
+
+| Intent | Flags |
+|--------|-------|
+| Fast demo (no API key) | `--allow-deterministic-fallback` |
+| LLM fixture lookup only | `--fixture-provider llm --fixture-llm-provider gemini` |
+| Full LLM (fixture + enrichment) | `--fixture-provider llm --fixture-llm-provider gemini --use-llm --llm-provider gemini` |
+
+Verify LLM enrichment ran by checking the report includes:
+
+- `LLM status: success`
+- `provider=gemini`
+- `latency_ms=` with a value greater than `0`
+
+If you see `LLM status: not_requested`, the run included only deterministic scoring. Add `--use-llm --llm-provider gemini` to enable LLM enrichment.
+
+### Debug fixture LLM
+
+```powershell
+$env:COLMILLO_FIXTURE_LLM_DEBUG = "1"
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "..." 2> fixture-debug.log
+```
+
+### Debug grounding sources
+
+```powershell
+$env:COLMILLO_DEBUG_GROUNDING = "1"
+python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "..." 2> grounding-debug.log
+```
+
+## API surface
+
+All routes except `/healthz` require `X-API-Key`. `POST /picks` is async (returns 202, poll for completion).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/healthz` | Health check + configured providers |
+| POST | `/picks` | Enqueue a pick run (returns `202 {id, status}`) |
+| GET | `/picks` | Paginated history |
+| GET | `/picks/{id}` | Full payload + report |
+| GET | `/picks/{id}/status` | Lightweight polling |
+| POST | `/picks/{id}/outcomes` | Record outcomes (win/loss/push/void) |
+| GET | `/stats/hit-rate` | Aggregate hit rate |
+| GET | `/admin/stats` | Operational stats (requires `X-Admin-API-Key`) |
+
+## Running tests
 
 ```bash
 pytest -q
 ```
 
-## Run the program from the CLI
+## Docker
 
-Use the single-command pipeline script as the primary path:
-
-```bash
-export API_FOOTBALL_API_KEY="your-api-football-key"
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --top-n 5
-```
-
-The script parses the match query, retrieves fixture metadata from API-Football, collects schema-compatible inputs, scores props, renders the markdown report, and prints it to stdout.
-
-`--top-n` controls how many top picks to return in the report output.
-
-Match query format guidance: use `"home - away today"`, `"home - away tomorrow"`, or `"home - away YYYY-MM-DD"`.
-
-Fixture retrieval is strict by default: if API-Football cannot resolve the requested match, the CLI exits with a clear error instead of generating a synthetic report. For local demos or tests, opt into the deterministic fallback path explicitly:
+Docker Compose packages both services for deployment. Useful for CI or if you don't want to manage Python locally.
 
 ```bash
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "juve - milan today" --allow-deterministic-fallback
+cp .env.example .env   # fill in keys
+docker compose up --build
 ```
 
-Use API-Football hints when team names or competitions are ambiguous:
+The compose file overrides `COLMILLO_DB_PATH` and `COLMILLO_API_URL` to use container-internal paths and networking.
 
-```bash
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py \
-  "arsenal - liverpool 2026-05-03" \
-  --league "Premier League" \
-  --league-id 39 \
-  --season 2025
-```
+## Deployment (Render)
 
-### CLI arguments (`run_match_pick_pipeline.py`)
+The repo includes `render.yaml` (Render Blueprint):
 
-Detailed CLI argument syntax, examples, and parser-aligned error cases now live in:
+1. Push to GitHub
+2. Render > New > Blueprint > connect repo
+3. Set secrets in dashboard: `COLMILLO_API_KEY`, `GEMINI_API_KEY`
+4. Auto-deploys on push to `main`
 
-- [`docs/run_match_pick_pipeline_cli.md`](docs/run_match_pick_pipeline_cli.md)
+## Contributing
 
-Keeping this guide in a dedicated file reduces README merge conflicts and makes parser/docs updates easier to review.
-
-### Advanced / debug flow (manual JSON steps)
-
-If you want to inspect each phase manually, use the step-by-step JSON workflow below.
-
-1) Build an input payload JSON file (matching `docs/schemas/soccer_pick_input.schema.json`):
-
-```bash
-python -c 'import json; from tests.conftest import sample_match_inputs; print(json.dumps(sample_match_inputs()))' \
-  > /tmp/match-input.json
-```
-
-2) Score props from the input payload:
-
-```bash
-python skills/soccer-prop-picks/scripts/score_player_props.py \
-  --input-json "$(cat /tmp/match-input.json)" \
-  --emit-trace > /tmp/scored-with-trace.json
-```
-
-3) Render the markdown report:
-
-```bash
-python skills/soccer-prop-picks/scripts/render_pick_report.py \
-  --input-json "$(python -c 'import json; print(json.dumps(json.load(open("/tmp/scored-with-trace.json"))["scores"]))')" \
-  --match-input-json "$(cat /tmp/match-input.json)" \
-  --trace-json "$(python -c 'import json; print(json.dumps(json.load(open("/tmp/scored-with-trace.json"))["trace"]))')" \
-  > /tmp/pick-report.md
-```
-
-4) Open the report:
-
-```bash
-cat /tmp/pick-report.md
-```
+See the [Contributor Playbook](docs/contributor-playbook.md) for branching strategy,
+release process, and agent development workflow.

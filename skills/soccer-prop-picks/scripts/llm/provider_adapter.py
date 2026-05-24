@@ -7,8 +7,13 @@ from llm.langchain_enricher import LangChainEnricher, default_prompt_builder, de
 from llm.langgraph_flow import SimpleLangGraphFlow
 from llm.mock_client import DeterministicMockLLMClient
 from llm.openai_client import OpenAILLMClient
+from llm.gemini_client import GeminiLLMClient
+from llm.grok_client import GrokLLMClient
 
 _DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+_DEFAULT_GROK_MODEL = "grok-3"
+_DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1"
 
 
 def _as_chat_model(client: object) -> Callable[[dict[str, str]], dict]:
@@ -18,19 +23,33 @@ def _as_chat_model(client: object) -> Callable[[dict[str, str]], dict]:
     return chat_model
 
 
+def _resolve_llm_provider(llm_provider: str | None, getenv: Callable[[str], str | None]) -> str | None:
+    if llm_provider:
+        return llm_provider
+    return getenv("COLMILLO_LLM_PROVIDER")
+
+
 def validate_llm_runtime_config(*, use_llm: bool, llm_provider: str | None, getenv: Callable[[str], str | None] = os.getenv) -> None:
     if not use_llm:
         return
 
-    if not llm_provider:
-        raise ValueError("--llm-provider is required when --use-llm is set.")
+    resolved = _resolve_llm_provider(llm_provider, getenv)
+    if not resolved:
+        raise ValueError(
+            "--llm-provider is required when --use-llm is set. "
+            "Pass it as a flag or set COLMILLO_LLM_PROVIDER in your environment."
+        )
 
-    provider = llm_provider.lower().strip()
-    if provider != "openai":
-        raise ValueError(f"Unsupported --llm-provider '{llm_provider}'. Supported values: openai.")
+    provider = resolved.lower().strip()
+    if provider not in {"openai", "gemini", "grok"}:
+        raise ValueError(f"Unsupported --llm-provider '{resolved}'. Supported values: openai, gemini, grok.")
 
-    if not getenv("OPENAI_API_KEY"):
+    if provider == "openai" and not getenv("OPENAI_API_KEY"):
         raise ValueError("Missing credentials for provider 'openai'. Set OPENAI_API_KEY.")
+    if provider == "gemini" and not getenv("GEMINI_API_KEY"):
+        raise ValueError("Missing credentials for provider 'gemini'. Set GEMINI_API_KEY.")
+    if provider == "grok" and not getenv("XAI_API_KEY"):
+        raise ValueError("Missing credentials for provider 'grok'. Set XAI_API_KEY.")
 
 
 def build_enrich_with_llm(
@@ -45,18 +64,30 @@ def build_enrich_with_llm(
     if not use_llm:
         client = DeterministicMockLLMClient()
     else:
-        validate_llm_runtime_config(use_llm=use_llm, llm_provider=llm_provider, getenv=getenv)
-        provider = str(llm_provider).lower().strip()
-        if provider != "openai":
-            raise ValueError(f"Unsupported --llm-provider '{llm_provider}'. Supported values: openai.")
+        resolved_provider = _resolve_llm_provider(llm_provider, getenv)
+        validate_llm_runtime_config(use_llm=use_llm, llm_provider=resolved_provider, getenv=getenv)
+        provider = str(resolved_provider).lower().strip()
+        if provider == "gemini":
+            client = GeminiLLMClient(
+                api_key=getenv("GEMINI_API_KEY"),
+                model=(llm_model or _DEFAULT_GEMINI_MODEL),
+            )
+        elif provider == "openai":
+            if openai_client_factory is None:
+                from openai import OpenAI
 
-        if openai_client_factory is None:
-            from openai import OpenAI
+                openai_client_factory = OpenAI
 
-            openai_client_factory = OpenAI
-
-        sdk_client = openai_client_factory(api_key=getenv("OPENAI_API_KEY"))
-        client = OpenAILLMClient(sdk_client=sdk_client, model=(llm_model or _DEFAULT_OPENAI_MODEL))
+            sdk_client = openai_client_factory(api_key=getenv("OPENAI_API_KEY"))
+            client = OpenAILLMClient(sdk_client=sdk_client, model=(llm_model or _DEFAULT_OPENAI_MODEL))
+        elif provider == "grok":
+            client = GrokLLMClient(
+                api_key=getenv("XAI_API_KEY") or "",
+                base_url=getenv("XAI_BASE_URL") or _DEFAULT_XAI_BASE_URL,
+                model=(llm_model or getenv("XAI_MODEL") or _DEFAULT_GROK_MODEL),
+            )
+        else:
+            raise ValueError(f"Unsupported --llm-provider '{resolved_provider}'. Supported values: openai, gemini.")
 
     chat_model = _as_chat_model(client)
 

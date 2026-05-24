@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from availability.base import AdapterRuntimeConfig, Pick
 from availability.contract import resolve_final_availability, standardize_availability_entry
 from availability.mock_adapter import DeterministicMockAvailabilityAdapter
 
@@ -50,3 +51,17 @@ def test_deterministic_mock_adapter_returns_standardized_fields() -> None:
     assert entry["retrieved_at_utc"] == "2026-04-27T12:00:00Z"
     assert entry["fallback_reason"] == "mock_seed"
     assert entry["final_status"] == "available"
+
+
+def test_deterministic_mock_adapter_supports_new_batch_interface() -> None:
+    adapter = DeterministicMockAvailabilityAdapter(
+        seed_data={"ars-8:passes": {"alternatives": {"Underdog": "available"}}},
+        config=AdapterRuntimeConfig(rate_limit_per_second=5.0, max_retries=4, retry_backoff_seconds=0.1),
+    )
+
+    results = adapter.check_batch([Pick(player="ars-8", market="passes", line=52.5)])
+
+    assert len(results) == 1
+    assert results[0].available is True
+    assert results[0].platform == "mock"
+    assert adapter.config.max_retries == 4

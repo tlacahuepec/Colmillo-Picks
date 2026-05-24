@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://colmillo-picks/schemas/daily_briefing.schema.json",
+  "title": "GrokDailyBriefing",
+  "description": "Daily soccer intelligence briefing produced by GrokDailyIntelligenceClient.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "date_utc", "generated_at_utc", "provider", "model", "top_matches"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$" },
+    "date_utc": { "type": "string", "format": "date" },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "provider": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "top_matches": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/dailyMatch" }
+    }
+  },
+  "$defs": {
+    "dailyMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rank", "match_importance", "competition", "kickoff_utc", "venue", "teams", "injuries", "projected_lineups", "odds"],
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1 },
+        "match_importance": { "type": "string", "enum": ["high", "medium", "low"] },
+        "competition": { "type": "string", "minLength": 1 },
+        "kickoff_utc": { "type": ["string", "null"] },
+        "venue": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "city", "country"],
+          "properties": {
+            "name": { "type": "string" },
+            "city": { "type": "string" },
+            "country": { "type": "string" }
+          }
+        },
+        "teams": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["home", "away"],
+          "properties": {
+            "home": { "$ref": "#/$defs/briefingTeam" },
+            "away": { "$ref": "#/$defs/briefingTeam" }
+          }
+        },
+        "injuries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/briefingInjury" }
+        },
+        "projected_lineups": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["home", "away"],
+          "properties": {
+            "home": { "$ref": "#/$defs/briefingLineup" },
+            "away": { "$ref": "#/$defs/briefingLineup" }
+          }
+        },
+        "odds": {
+          "oneOf": [
+            { "$ref": "#/$defs/briefingOdds" },
+            { "type": "null" }
+          ]
+        },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "briefingTeam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "team_id": { "type": ["string", "null"] }
+      }
+    },
+    "briefingInjury": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["team", "player", "status"],
+      "properties": {
+        "team": { "type": "string", "minLength": 1 },
+        "player": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["out", "doubtful", "questionable", "suspended"]
+        },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
+    "briefingLineup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formation", "starters", "status"],
+      "properties": {
+        "formation": { "type": ["string", "null"] },
+        "starters": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "status": { "type": "string", "enum": ["confirmed", "projected", "unknown"] }
+      }
+    },
+    "briefingOdds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["home_win", "draw", "away_win"],
+      "properties": {
+        "home_win": { "type": ["number", "null"] },
+        "draw": { "type": ["number", "null"] },
+        "away_win": { "type": ["number", "null"] },
+        "source": { "type": ["string", "null"] },
+        "captured_at_utc": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

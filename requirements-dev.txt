@@ -1,0 +1,5 @@
+# Test/dev-only dependencies. Install on top of requirements.txt.
+-r requirements.txt
+
+pytest>=8.0,<10.0
+ruff>=0.11.0,<1.0

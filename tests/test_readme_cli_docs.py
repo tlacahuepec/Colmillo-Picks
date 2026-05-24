@@ -42,3 +42,13 @@ def test_readme_includes_match_query_format_guidance() -> None:
 
     assert "match query" in normalized
     assert any(token in normalized for token in ("today", "tomorrow", "yyyy-mm-dd"))
+
+
+def test_readme_includes_llm_run_mode_and_troubleshooting_guidance() -> None:
+    readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    normalized = _normalize_readme(readme_text)
+
+    assert "smart run modes" in normalized
+    assert "llm status: success" in normalized
+    assert "llm status: not_requested" in normalized
+    assert "--use-llm --llm-provider gemini" in normalized

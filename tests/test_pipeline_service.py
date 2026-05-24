@@ -253,3 +253,34 @@ def test_run_pipeline_falls_back_when_llm_enrichment_fails() -> None:
     assert captured["trace"]["notes"] == ["LLM enrichment failed; using deterministic results."]
     assert captured["trace"]["llm_status"] == "failed"
     assert captured["trace"]["llm_fallback_used"] is True
+
+
+def test_run_pipeline_trace_shows_default_model_when_llm_requested_without_explicit_model() -> None:
+    pipeline_service = load_script_module("pipeline_service.py")
+    captured: dict[str, object] = {}
+    scored_payload = {"scores": [{"player": "A"}], "trace": {"picks": []}}
+
+    def render_report(*, scored_props, match_inputs, availability_data, top_n: int, trace):
+        captured["trace"] = trace
+        return "rendered"
+
+    pipeline_service.run_pipeline(
+        request={
+            "match_query": "juve - milan today",
+            "top_n": 1,
+            "use_llm": True,
+        },
+        deps={
+            "parse_match_query": lambda _: SimpleNamespace(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            "build_match_input_request": lambda **_: {"request": True},
+            "collect_inputs": lambda _: {"match": {"id": "x"}},
+            "score_props": lambda **_: scored_payload,
+            "enrich_with_llm": lambda **_: {"scores": [{"player": "A+"}], "trace": {"picks": []}},
+            "render_report": render_report,
+        },
+    )
+
+    trace = captured["trace"]
+    assert trace["llm_provider"] == "gemini"
+    assert trace["llm_model"] == "gemini-2.5-flash"
+    assert trace["llm_status"] == "success"

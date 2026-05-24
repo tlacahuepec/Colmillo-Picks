@@ -172,3 +172,9 @@ def parsed_query_fixture() -> str:
 @pytest.fixture
 def resolved_match_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
+
+
+@pytest.fixture
+def default_llm_provider() -> str:
+    """Default LLM provider name for tests."""
+    return "gemini"

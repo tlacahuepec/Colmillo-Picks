@@ -47,30 +47,56 @@ def _set_llm_trace_fields(
 
 def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -> str:
     """Run parse → collect → score → [optional llm] → render and return a markdown report."""
+    return run_pipeline_with_payload(request, deps)["report_markdown"]
+
+
+def run_pipeline_with_payload(
+    request: dict[str, Any], deps: dict[str, Callable[..., Any]]
+) -> dict[str, Any]:
+    """Same orchestration as ``run_pipeline`` but returns the structured payload.
+
+    Returned dict contains:
+      - ``report_markdown``: the rendered markdown report.
+      - ``scores``: scored picks list as produced by ``score_props``.
+      - ``trace``: scoring/LLM trace including ``llm_status`` and latency.
+      - ``match_inputs``: the collected match-input payload.
+      - ``steps``: list of stage timing dicts with name, status, and duration_ms.
+    """
     top_n = int(request.get("top_n", 5))
     use_llm = bool(request.get("use_llm", False))
-    llm_provider = str(request.get("llm_provider") or "none")
-    llm_model = str(request.get("llm_model") or "none")
+    llm_provider = str(request.get("llm_provider") or ("gemini" if use_llm else "none"))
+    llm_model = str(request.get("llm_model") or ("gemini-2.5-flash" if use_llm else "none"))
 
+    steps: list[dict[str, Any]] = []
+
+    t0 = perf_counter()
     try:
         parsed = deps["parse_match_query"](request["match_query"])
     except Exception as exc:  # pragma: no cover - intentionally broad boundary
+        steps.append({"name": "parse", "status": "failed", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
         _raise_stage_error("parse", exc)
+    steps.append({"name": "parse", "status": "success", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
 
     match_input_request = deps["build_match_input_request"](
         parsed=parsed,
         competition=str(request.get("competition", "League")),
     )
 
+    t0 = perf_counter()
     try:
         match_inputs = deps["collect_inputs"](match_input_request)
     except Exception as exc:  # pragma: no cover - intentionally broad boundary
+        steps.append({"name": "collect", "status": "failed", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
         _raise_stage_error("collect", exc)
+    steps.append({"name": "collect", "status": "success", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
 
+    t0 = perf_counter()
     try:
         scored_payload = deps["score_props"](match_inputs=match_inputs, include_trace=True)
     except Exception as exc:  # pragma: no cover - intentionally broad boundary
+        steps.append({"name": "score", "status": "failed", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
         _raise_stage_error("score", exc)
+    steps.append({"name": "score", "status": "success", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
 
     if use_llm:
         llm_started_at = perf_counter()
@@ -89,6 +115,7 @@ def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -
                 status="success",
                 fallback_used=False,
             )
+            steps.append({"name": "llm_enrichment", "status": "success", "duration_ms": llm_latency_ms})
         except Exception:
             llm_latency_ms = max(0, round((perf_counter() - llm_started_at) * 1000))
             scored_payload = dict(scored_payload)
@@ -104,6 +131,7 @@ def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -
                 status="failed",
                 fallback_used=True,
             )
+            steps.append({"name": "llm_enrichment", "status": "failed", "duration_ms": llm_latency_ms})
     else:
         scored_payload = dict(scored_payload)
         scored_payload["trace"] = _set_llm_trace_fields(
@@ -115,10 +143,34 @@ def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -
             fallback_used=False,
         )
 
-    return deps["render_report"](
+    t0 = perf_counter()
+    availability_data: dict[str, Any] = {}
+    check_availability = deps.get("check_availability")
+    if check_availability is not None:
+        try:
+            pick_list = [
+                {"player_id": p.get("player_id", ""), "market": p.get("market", "")}
+                for p in scored_payload["scores"][:top_n]
+            ]
+            availability_data = check_availability(pick_list)
+            steps.append({"name": "availability", "status": "success", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
+        except Exception:
+            steps.append({"name": "availability", "status": "failed", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
+
+    t0 = perf_counter()
+    report_markdown = deps["render_report"](
         scored_props=scored_payload["scores"],
         match_inputs=match_inputs,
-        availability_data=request.get("availability_data", {}),
+        availability_data=availability_data,
         top_n=top_n,
         trace=scored_payload.get("trace"),
     )
+    steps.append({"name": "render", "status": "success", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
+
+    return {
+        "report_markdown": report_markdown,
+        "scores": scored_payload["scores"],
+        "trace": scored_payload.get("trace"),
+        "match_inputs": match_inputs,
+        "steps": steps,
+    }
