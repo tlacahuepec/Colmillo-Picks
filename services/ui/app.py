@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from datetime import date as _date
 from pathlib import Path
 from typing import Any
 
@@ -51,17 +52,27 @@ def _construct_match_query(home_team: str, away_team: str, date: str) -> str:
 
 
 def _build_pick_payload(
+    sport: str,
     home_team: str,
     away_team: str,
-    date: str,
+    date: _date,
     top_n: int,
     use_llm_enrichment: bool,
     allow_fallback: bool,
 ) -> dict[str, Any]:
-    match_query = _construct_match_query(home_team, away_team, date)
+    home = home_team.strip() if home_team else ""
+    away = away_team.strip() if away_team else ""
+
+    if not home:
+        raise ValueError("home team is required")
+    if not away:
+        raise ValueError("away team is required")
 
     payload: dict[str, Any] = {
-        "match_query": match_query,
+        "sport": sport,
+        "event_date": date.isoformat(),
+        "home_team": home,
+        "away_team": away,
         "top_n": int(top_n),
         "allow_deterministic_fallback": bool(allow_fallback),
     }
@@ -113,13 +124,22 @@ def render_generate_page(client: PicksAPIClient) -> None:
     st.caption("Enter match details to generate prop pick recommendations.")
 
     with st.form("generate_pick"):
-        col_home, col_away, col_date = st.columns(3)
+        col_sport, col_date = st.columns(2)
+        with col_sport:
+            sport = st.selectbox(
+                "Sport",
+                options=["Soccer"],
+                index=0,
+                help="More sports coming soon.",
+            )
+        with col_date:
+            date = st.date_input("Match date", value=_date.today())
+
+        col_home, col_away = st.columns(2)
         with col_home:
             home_team = st.text_input("Home team", value="", help="e.g. Bayern Munich")
         with col_away:
             away_team = st.text_input("Away team", value="", help="e.g. Stuttgart")
-        with col_date:
-            date = st.text_input("Date", value="", help="YYYY-MM-DD")
 
         col_n, col_explain, col_fallback = st.columns(3)
         with col_n:
@@ -140,6 +160,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
 
     try:
         payload = _build_pick_payload(
+            sport=sport.lower(),
             home_team=home_team,
             away_team=away_team,
             date=date,
