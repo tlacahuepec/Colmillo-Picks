@@ -128,9 +128,9 @@ def render_generate_page(client: PicksAPIClient) -> None:
         with col_sport:
             sport = st.selectbox(
                 "Sport",
-                options=["Soccer"],
+                options=["Soccer", "Basketball"],
                 index=0,
-                help="More sports coming soon.",
+                help="Select the sport for prop analysis.",
             )
         with col_date:
             date = st.date_input("Match date", value=_date.today())
