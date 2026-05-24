@@ -120,9 +120,72 @@ class SoccerModule:
 _DEFAULT_REGISTRY = SportModuleRegistry()
 _DEFAULT_REGISTRY.register(SoccerModule())
 
-from basketball_module import BasketballModule  # noqa: E402
 
-_DEFAULT_REGISTRY.register(BasketballModule())
+def _build_basketball_module():
+    """Construct BasketballModule with real LLM providers when API keys are available."""
+    import os
+
+    from basketball_module import BasketballModule
+    from provider_config import LLMFixtureProviderConfig
+
+    config = LLMFixtureProviderConfig.from_env()
+    if not config.is_configured():
+        return BasketballModule()
+
+    game_provider = None
+    stats_provider = None
+    props_provider = None
+
+    try:
+        if config.provider == "gemini" and config.api_key:
+            from llm.gemini_client import GeminiLLMClient
+
+            model = os.getenv("COLMILLO_BASKETBALL_LLM_MODEL") or config.model or "gemini-2.5-flash"
+            client = GeminiLLMClient(
+                api_key=config.api_key,
+                model=model,
+                search_grounding=True,
+                max_output_tokens=4000,
+                max_retries=1,
+                retry_delay_seconds=2.0,
+            )
+
+            from llm_game_provider import LLMGameProvider
+            from llm_player_stats_provider import LLMPlayerStatsProvider
+            from llm_props_provider import LLMPropsProvider
+
+            game_provider = LLMGameProvider(config=config, client=client)
+            stats_provider = LLMPlayerStatsProvider(client=client)
+            props_provider = LLMPropsProvider(client=client)
+        elif config.provider in ("xai", "grok") and config.api_key:
+            from llm.grok_client import GrokLLMClient
+
+            client = GrokLLMClient(
+                api_key=config.api_key,
+                base_url=config.base_url or "https://api.x.ai/v1",
+                model=config.model or "grok-3",
+                max_retries=1,
+                retry_delay_seconds=2.0,
+            )
+
+            from llm_game_provider import LLMGameProvider
+            from llm_player_stats_provider import LLMPlayerStatsProvider
+            from llm_props_provider import LLMPropsProvider
+
+            game_provider = LLMGameProvider(config=config, client=client)
+            stats_provider = LLMPlayerStatsProvider(client=client)
+            props_provider = LLMPropsProvider(client=client)
+    except Exception:
+        pass
+
+    return BasketballModule(
+        game_provider=game_provider,
+        stats_provider=stats_provider,
+        props_provider=props_provider,
+    )
+
+
+_DEFAULT_REGISTRY.register(_build_basketball_module())
 
 
 def get_sport_module(sport: str) -> SportModule:
