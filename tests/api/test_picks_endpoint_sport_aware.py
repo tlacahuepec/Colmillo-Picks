@@ -71,7 +71,7 @@ class TestStructuredPicksRequest:
         assert resp.status_code == 400
         assert "passes" in resp.json()["detail"]
 
-    def test_non_soccer_sport_returns_400_not_supported(self, client: TestClient) -> None:
+    def test_basketball_sport_returns_202_accepted(self, client: TestClient) -> None:
         resp = client.post("/picks", json={
             "sport": "basketball",
             "event_date": "2026-06-01",
@@ -79,8 +79,10 @@ class TestStructuredPicksRequest:
             "away_team": "Celtics",
             "markets": ["points", "rebounds"],
         })
-        assert resp.status_code == 400
-        assert "soccer" in resp.json()["detail"].lower()
+        assert resp.status_code == 202
+        data = resp.json()
+        assert "id" in data
+        assert data["status"] == "pending"
 
 
 class TestLegacyPicksRequestRegression:

@@ -34,10 +34,19 @@ class BasketballPlayerContext:
     rebound_last5: float | None = None
     threes_avg: float | None = None
     threes_last5: float | None = None
+    three_point_attempts: float | None = None
     pace_factor: float | None = None
     opp_rebound_rank: int | None = None
+    opp_points_rank: int | None = None
+    opp_assist_rank: int | None = None
+    opp_three_rank: int | None = None
     is_starter: bool | None = None
     injury_status: str | None = None
+    rotation_risk: str | None = None
+    rest_days: int | None = None
+    home_away: str | None = None
+    usage_boost: float | None = None
+    market_agreement: float | None = None
     line_points: float = 0.0
     line_assists: float = 0.0
     line_rebounds: float = 0.0
@@ -45,30 +54,21 @@ class BasketballPlayerContext:
 
     def to_scoring_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"player_name": self.player_name, "position": self.position}
-        if self.minutes_proj is not None:
-            d["minutes_proj"] = self.minutes_proj
-        if self.usage_rate is not None:
-            d["usage_rate"] = self.usage_rate
-        if self.points_avg is not None:
-            d["points_avg"] = self.points_avg
-        if self.points_last5 is not None:
-            d["points_last5"] = self.points_last5
-        if self.assist_avg is not None:
-            d["assist_avg"] = self.assist_avg
-        if self.assist_last5 is not None:
-            d["assist_last5"] = self.assist_last5
-        if self.rebound_avg is not None:
-            d["rebound_avg"] = self.rebound_avg
-        if self.rebound_last5 is not None:
-            d["rebound_last5"] = self.rebound_last5
-        if self.threes_avg is not None:
-            d["threes_avg"] = self.threes_avg
-        if self.threes_last5 is not None:
-            d["threes_last5"] = self.threes_last5
-        if self.pace_factor is not None:
-            d["pace_factor"] = self.pace_factor
-        if self.opp_rebound_rank is not None:
-            d["opp_rebound_rank"] = self.opp_rebound_rank
+        optional_fields = (
+            "minutes_proj", "usage_rate",
+            "points_avg", "points_last5",
+            "assist_avg", "assist_last5",
+            "rebound_avg", "rebound_last5",
+            "threes_avg", "threes_last5",
+            "three_point_attempts", "pace_factor",
+            "opp_rebound_rank", "opp_points_rank", "opp_assist_rank", "opp_three_rank",
+            "rotation_risk", "rest_days", "home_away",
+            "usage_boost", "market_agreement",
+        )
+        for f in optional_fields:
+            val = getattr(self, f)
+            if val is not None:
+                d[f] = val
         d["line_points"] = self.line_points
         d["line_assists"] = self.line_assists
         d["line_rebounds"] = self.line_rebounds
@@ -85,6 +85,29 @@ class BasketballContext:
     provider_status: ProviderStatus = field(default_factory=ProviderStatus)
     league: str = "nba"
     pace: float | None = None
+
+
+@dataclass
+class BasketballGameContext:
+    home_team: str
+    away_team: str
+    match_date: str
+    league: str = "nba"
+    tipoff_utc: str | None = None
+    home_pace: float | None = None
+    away_pace: float | None = None
+    projected_game_pace: float | None = None
+    home_defensive_rating: float | None = None
+    away_defensive_rating: float | None = None
+    home_win_prob: float | None = None
+    away_win_prob: float | None = None
+    over_under_total: float | None = None
+    spread: float | None = None
+    home_rest_days: int | None = None
+    away_rest_days: int | None = None
+    is_playoff: bool = False
+    series_game_number: int | None = None
+    venue: str | None = None
 
 
 _FAKE_PLAYERS = [
@@ -167,8 +190,14 @@ def _copy_player(p: BasketballPlayerContext) -> BasketballPlayerContext:
         assist_avg=p.assist_avg, assist_last5=p.assist_last5,
         rebound_avg=p.rebound_avg, rebound_last5=p.rebound_last5,
         threes_avg=p.threes_avg, threes_last5=p.threes_last5,
+        three_point_attempts=p.three_point_attempts,
         pace_factor=p.pace_factor, opp_rebound_rank=p.opp_rebound_rank,
+        opp_points_rank=p.opp_points_rank, opp_assist_rank=p.opp_assist_rank,
+        opp_three_rank=p.opp_three_rank,
         is_starter=p.is_starter, injury_status=p.injury_status,
+        rotation_risk=p.rotation_risk, rest_days=p.rest_days,
+        home_away=p.home_away, usage_boost=p.usage_boost,
+        market_agreement=p.market_agreement,
         line_points=p.line_points, line_assists=p.line_assists,
         line_rebounds=p.line_rebounds, line_threes=p.line_threes,
     )

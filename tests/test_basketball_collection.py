@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from basketball_collection import (
     BasketballContext,
+    BasketballGameContext,
     BasketballPlayerContext,
     ProviderStatus,
     collect_basketball_inputs,
@@ -129,3 +130,90 @@ class TestScorerConsumesCollectedData:
         player_dicts = [p.to_scoring_dict() for p in ctx.players]
         scores = score_basketball_props(player_dicts, markets=("points",))
         assert len(scores) > 0
+
+
+class TestBasketballGameContext:
+    def test_game_context_defaults(self) -> None:
+        ctx = BasketballGameContext(
+            home_team="Lakers",
+            away_team="Celtics",
+            match_date="2026-06-01",
+        )
+        assert ctx.league == "nba"
+        assert ctx.is_playoff is False
+        assert ctx.tipoff_utc is None
+        assert ctx.home_pace is None
+        assert ctx.spread is None
+
+    def test_game_context_with_full_data(self) -> None:
+        ctx = BasketballGameContext(
+            home_team="Lakers",
+            away_team="Celtics",
+            match_date="2026-06-01",
+            tipoff_utc="2026-06-01T19:30:00Z",
+            home_pace=100.5,
+            away_pace=98.2,
+            projected_game_pace=99.3,
+            home_defensive_rating=112.0,
+            away_defensive_rating=108.5,
+            home_win_prob=0.55,
+            away_win_prob=0.45,
+            over_under_total=224.5,
+            spread=-3.5,
+            home_rest_days=2,
+            away_rest_days=1,
+            is_playoff=True,
+            series_game_number=3,
+            venue="Crypto.com Arena",
+        )
+        assert ctx.projected_game_pace == 99.3
+        assert ctx.is_playoff is True
+        assert ctx.series_game_number == 3
+        assert ctx.venue == "Crypto.com Arena"
+
+
+class TestExpandedPlayerContext:
+    def test_new_fields_default_to_none(self) -> None:
+        player = BasketballPlayerContext(
+            player_name="Test", position="PG", team="TST",
+        )
+        assert player.rotation_risk is None
+        assert player.rest_days is None
+        assert player.home_away is None
+        assert player.usage_boost is None
+        assert player.opp_points_rank is None
+        assert player.opp_assist_rank is None
+        assert player.opp_three_rank is None
+        assert player.three_point_attempts is None
+        assert player.market_agreement is None
+
+    def test_to_scoring_dict_includes_new_fields(self) -> None:
+        player = BasketballPlayerContext(
+            player_name="Luka Doncic", position="PG", team="DAL",
+            minutes_proj=36.0, usage_rate=0.33,
+            rest_days=2, home_away="home", rotation_risk="locked_in",
+            opp_points_rank=25, opp_assist_rank=20, opp_three_rank=18,
+            usage_boost=0.05, market_agreement=0.85,
+            three_point_attempts=8.5,
+        )
+        d = player.to_scoring_dict()
+        assert d["rest_days"] == 2
+        assert d["home_away"] == "home"
+        assert d["rotation_risk"] == "locked_in"
+        assert d["opp_points_rank"] == 25
+        assert d["opp_assist_rank"] == 20
+        assert d["opp_three_rank"] == 18
+        assert d["usage_boost"] == 0.05
+        assert d["market_agreement"] == 0.85
+        assert d["three_point_attempts"] == 8.5
+
+    def test_to_scoring_dict_omits_none_fields(self) -> None:
+        player = BasketballPlayerContext(
+            player_name="Test", position="SF", team="TST",
+            minutes_proj=30.0,
+        )
+        d = player.to_scoring_dict()
+        assert "rest_days" not in d
+        assert "home_away" not in d
+        assert "rotation_risk" not in d
+        assert "minutes_proj" in d
