@@ -1,0 +1,51 @@
+{
+  "copyright": "Copyright 2026 MLB Advanced Media",
+  "totalItems": 1,
+  "dates": [
+    {
+      "date": "2026-06-15",
+      "games": [
+        {
+          "gamePk": 717465,
+          "gameDate": "2026-06-15T23:05:00Z",
+          "status": {
+            "abstractGameState": "Preview",
+            "codedGameState": "S",
+            "detailedState": "Scheduled",
+            "statusCode": "S"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 111,
+                "name": "Boston Red Sox"
+              },
+              "probablePitcher": {
+                "id": 543037,
+                "fullName": "Chris Sale",
+                "link": "/api/v1/people/543037"
+              }
+            },
+            "home": {
+              "team": {
+                "id": 147,
+                "name": "New York Yankees"
+              },
+              "probablePitcher": {
+                "id": 543037,
+                "fullName": "Gerrit Cole",
+                "link": "/api/v1/people/543037"
+              }
+            }
+          },
+          "venue": {
+            "id": 3313,
+            "name": "Yankee Stadium"
+          },
+          "doubleHeader": "N",
+          "gameNumber": 1
+        }
+      ]
+    }
+  ]
+}

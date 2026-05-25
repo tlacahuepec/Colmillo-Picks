@@ -1,0 +1,28 @@
+{
+  "copyright": "Copyright 2026 MLB Advanced Media",
+  "venues": [
+    {
+      "id": 3313,
+      "name": "Yankee Stadium",
+      "location": {
+        "city": "Bronx",
+        "stateProvince": "NY",
+        "defaultCoordinates": {
+          "latitude": 40.829167,
+          "longitude": -73.926389
+        }
+      },
+      "fieldInfo": {
+        "capacity": 46537,
+        "roofType": "Open",
+        "turfType": "Grass",
+        "leftLine": 318,
+        "leftCenter": 399,
+        "center": 408,
+        "rightCenter": 385,
+        "rightLine": 314
+      },
+      "active": true
+    }
+  ]
+}

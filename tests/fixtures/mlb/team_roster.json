@@ -1,0 +1,43 @@
+{
+  "copyright": "Copyright 2026 MLB Advanced Media",
+  "roster_type": "active",
+  "roster": [
+    {
+      "person": {"id": 543037, "fullName": "Gerrit Cole"},
+      "jerseyNumber": "45",
+      "position": {"code": "1", "name": "Pitcher", "type": "Pitcher", "abbreviation": "P"},
+      "status": {"code": "A", "description": "Active"}
+    },
+    {
+      "person": {"id": 622491, "fullName": "Clay Holmes"},
+      "jerseyNumber": "35",
+      "position": {"code": "1", "name": "Pitcher", "type": "Pitcher", "abbreviation": "P"},
+      "status": {"code": "A", "description": "Active"}
+    },
+    {
+      "person": {"id": 642585, "fullName": "Jonathan Loaisiga"},
+      "jerseyNumber": "43",
+      "position": {"code": "1", "name": "Pitcher", "type": "Pitcher", "abbreviation": "P"},
+      "status": {"code": "A", "description": "Active"}
+    },
+    {
+      "person": {"id": 666200, "fullName": "Michael King"},
+      "jerseyNumber": "34",
+      "position": {"code": "1", "name": "Pitcher", "type": "Pitcher", "abbreviation": "P"},
+      "status": {"code": "A", "description": "Active"}
+    },
+    {
+      "person": {"id": 665487, "fullName": "Aaron Judge"},
+      "jerseyNumber": "99",
+      "position": {"code": "9", "name": "Outfielder", "type": "Outfielder", "abbreviation": "RF"},
+      "status": {"code": "A", "description": "Active"}
+    },
+    {
+      "person": {"id": 665742, "fullName": "Juan Soto"},
+      "jerseyNumber": "22",
+      "position": {"code": "7", "name": "Outfielder", "type": "Outfielder", "abbreviation": "LF"},
+      "status": {"code": "A", "description": "Active"}
+    }
+  ],
+  "teamId": 147
+}
