@@ -12,7 +12,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -197,6 +197,29 @@ class HitRateResponse(BaseModel):
     since: str | None = None
 
 
+class AvailabilityCheckRequest(BaseModel):
+    platforms: list[str] = Field(default_factory=lambda: ["prizepicks"])
+
+
+class AvailabilityBadge(BaseModel):
+    player: str
+    market: str
+    line: float
+    status: str
+    platform: str
+    platform_line: float | None = None
+    url: str | None = None
+    last_checked: str
+
+
+class AvailabilityCheckResponse(BaseModel):
+    pick_id: str
+    badges: list[AvailabilityBadge]
+    fallback_mode: bool
+    fallback_reason: str
+    checked_at: str
+
+
 class RunSummary(BaseModel):
     """Lightweight row used by ``GET /runs`` listings."""
 
@@ -253,6 +276,41 @@ class RunDetailResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
+
+
+def _check_availability_for_picks(
+    scores: list[dict[str, Any]], platforms: list[str]
+) -> list[AvailabilityBadge]:
+    from availability.mock_adapter import DeterministicMockAvailabilityAdapter
+
+    adapter = DeterministicMockAvailabilityAdapter()
+    platform_name = platforms[0] if platforms else "mock"
+
+    badges: list[AvailabilityBadge] = []
+    for pick in scores:
+        player = pick.get("player", "")
+        market = pick.get("market", "")
+        line = pick.get("line", 0.0)
+        if not player or not market:
+            continue
+        result = adapter.check_availability(player, market, line)
+        if result.available:
+            status = "available"
+        else:
+            status = "unavailable"
+        badges.append(
+            AvailabilityBadge(
+                player=player,
+                market=market,
+                line=line,
+                status=status,
+                platform=platform_name,
+                platform_line=None,
+                url=result.url,
+                last_checked=result.last_checked.isoformat(),
+            )
+        )
+    return badges
 
 
 def _provider_status() -> dict[str, bool]:
@@ -743,6 +801,46 @@ def create_app() -> FastAPI:
     def get_hit_rate(since: datetime | None = Query(None)) -> HitRateResponse:
         summary = db_module.hit_rate_summary(since=since)
         return HitRateResponse(**summary)
+
+    # ---- Availability (Issue #62) ---------------------------------------- #
+
+    @app.post(
+        "/picks/{pick_id}/availability",
+        response_model=AvailabilityCheckResponse,
+    )
+    def check_availability(pick_id: str, payload: AvailabilityCheckRequest) -> AvailabilityCheckResponse:
+        pick_run = db_module.get_pick_run(pick_id)
+        if pick_run is None:
+            raise HTTPException(status_code=404, detail="Pick not found.")
+
+        scores = json.loads(pick_run.scores_json) if pick_run.scores_json else []
+        if not scores:
+            return AvailabilityCheckResponse(
+                pick_id=pick_id,
+                badges=[],
+                fallback_mode=True,
+                fallback_reason="No scores available for this pick.",
+                checked_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+        try:
+            badges = _check_availability_for_picks(scores, payload.platforms)
+        except Exception as exc:
+            return AvailabilityCheckResponse(
+                pick_id=pick_id,
+                badges=[],
+                fallback_mode=True,
+                fallback_reason=f"Adapter error: {exc}",
+                checked_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+        return AvailabilityCheckResponse(
+            pick_id=pick_id,
+            badges=badges,
+            fallback_mode=False,
+            fallback_reason="",
+            checked_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     # ---- Admin (Story 10) ------------------------------------------------ #
     @app.get("/admin/stats")

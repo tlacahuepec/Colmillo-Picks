@@ -119,6 +119,68 @@ def _render_pick_payload(payload: dict[str, Any]) -> None:
             st.json(payload["match_inputs"])
 
 
+def _render_availability_section(client: PicksAPIClient, pick_id: str) -> None:
+    from services.ui.availability_badges import BadgeStatus, classify_badge
+
+    st.subheader("Availability Check")
+
+    platforms = st.multiselect(
+        "Platforms",
+        options=["prizepicks"],
+        default=["prizepicks"],
+        key=f"platforms_{pick_id}",
+    )
+
+    col_refresh, col_status = st.columns([1, 3])
+    with col_refresh:
+        refresh = st.button("Refresh Availability", key=f"refresh_{pick_id}")
+
+    cache_key = f"availability_{pick_id}"
+    if refresh or cache_key not in st.session_state:
+        try:
+            result = client.check_availability(pick_id, platforms=platforms or None)
+            st.session_state[cache_key] = result
+        except Exception as exc:
+            st.warning(f"Availability check failed: {exc}", icon="\u26a0\ufe0f")
+            return
+
+    avail_data = st.session_state.get(cache_key)
+    if not avail_data:
+        return
+
+    if avail_data.get("fallback_mode"):
+        st.info(f"Fallback mode: {avail_data.get('fallback_reason', 'unknown')}", icon="\u2753")
+        return
+
+    badges = avail_data.get("badges", [])
+    if not badges:
+        st.info("No availability data for this pick.", icon="\u2753")
+        return
+
+    for badge in badges:
+        status = classify_badge(
+            platform_status=badge.get("status", "unknown"),
+            platform_line=badge.get("platform_line"),
+            recommended_line=badge.get("line", 0),
+        )
+        player = badge.get("player", "")
+        market = badge.get("market", "")
+        platform = badge.get("platform", "")
+
+        if status == BadgeStatus.AVAILABLE:
+            url = badge.get("url")
+            link_text = f" [Open]({url})" if url else ""
+            st.success(f"{status.icon} **{player}** ({market}) — Available on {platform}{link_text}")
+        elif status == BadgeStatus.LINE_DIFFERS:
+            plat_line = badge.get("platform_line", "?")
+            rec_line = badge.get("line", "?")
+            st.warning(f"{status.icon} **{player}** ({market}) — Line differs: {plat_line} vs recommended {rec_line}")
+        elif status == BadgeStatus.UNAVAILABLE:
+            st.error(f"{status.icon} **{player}** ({market}) — Not available on {platform}")
+        else:
+            st.info(f"{status.icon} **{player}** ({market}) — Could not check {platform}")
+
+
 def render_generate_page(client: PicksAPIClient) -> None:
     st.title("Generate Pick Report")
     st.caption("Enter match details to generate prop pick recommendations.")
@@ -215,6 +277,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
 
     st.success(f"Pick saved as id `{pick_id}`.", icon="\u2705")
     _render_pick_payload(detail)
+    _render_availability_section(client, pick_id)
 
 
 def _format_history_row(item: dict[str, Any]) -> str:
