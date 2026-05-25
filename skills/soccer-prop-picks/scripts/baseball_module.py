@@ -57,37 +57,28 @@ class BaseballModule:
     def score(
         self, match_inputs: dict[str, Any], *, markets: tuple[str, ...] = ()
     ) -> list[dict[str, Any]]:
-        target_markets = set(markets) if markets else _BASEBALL_MARKETS
+        from baseball_scoring import score_baseball_props
+
+        target_markets = tuple(markets) if markets else tuple(_BASEBALL_MARKETS)
         players = match_inputs.get("players", [])
         lines = match_inputs.get("lines", _PLACEHOLDER_LINES)
 
-        scores: list[dict[str, Any]] = []
+        scoring_input = []
         for player in players:
-            name = player["player_name"]
-            player_lines = lines.get(name, {})
-            for market in target_markets:
-                if market not in player_lines:
-                    continue
-                line = player_lines[market]
-                scores.append({
-                    "player": name,
-                    "market": market,
-                    "line": line,
-                    "direction": "over",
-                    "score": 0.55,
-                    "confidence": "medium",
-                    "explainability": {"risk_flags": ["placeholder_scoring"]},
-                })
+            if isinstance(player, dict) and "player_name" in player:
+                entry = dict(player)
+                name = entry["player_name"]
+                player_lines = lines.get(name, {})
+                for market, line_val in player_lines.items():
+                    entry[f"line_{market}"] = line_val
+                scoring_input.append(entry)
 
-        return scores
+        if scoring_input:
+            return score_baseball_props(scoring_input, markets=target_markets)
+
+        return []
 
     def explain(self, scored_pick: dict[str, Any]) -> str:
-        player = scored_pick.get("player", "Unknown")
-        market = scored_pick.get("market", "unknown")
-        direction = scored_pick.get("direction", "over")
-        line = scored_pick.get("line", 0)
-        confidence = scored_pick.get("confidence", "medium")
-        return (
-            f"{player}: {direction} {line} {market} "
-            f"(confidence: {confidence})"
-        )
+        from baseball_explainer import build_deterministic_explanation
+
+        return build_deterministic_explanation(scored_pick)
