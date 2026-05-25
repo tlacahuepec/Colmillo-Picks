@@ -59,6 +59,8 @@ def _build_pick_payload(
     top_n: int,
     use_llm_enrichment: bool,
     allow_fallback: bool,
+    markets: list[str] | None = None,
+    league: str | None = None,
 ) -> dict[str, Any]:
     home = home_team.strip() if home_team else ""
     away = away_team.strip() if away_team else ""
@@ -79,6 +81,10 @@ def _build_pick_payload(
 
     if use_llm_enrichment:
         payload["use_llm"] = True
+    if markets:
+        payload["markets"] = markets
+    if league:
+        payload["league"] = league
 
     return payload
 
@@ -128,18 +134,45 @@ def render_generate_page(client: PicksAPIClient) -> None:
         with col_sport:
             sport = st.selectbox(
                 "Sport",
-                options=["Soccer", "Basketball"],
+                options=["Soccer", "Basketball", "Baseball"],
                 index=0,
                 help="Select the sport for prop analysis.",
             )
         with col_date:
             date = st.date_input("Match date", value=_date.today())
 
+        _TEAM_HINTS: dict[str, tuple[str, str]] = {
+            "soccer": ("e.g. Bayern Munich", "e.g. Stuttgart"),
+            "basketball": ("e.g. Boston Celtics", "e.g. Los Angeles Lakers"),
+            "baseball": ("e.g. New York Yankees", "e.g. Boston Red Sox"),
+        }
+        home_hint, away_hint = _TEAM_HINTS.get(sport.lower(), ("", ""))
+
         col_home, col_away = st.columns(2)
         with col_home:
-            home_team = st.text_input("Home team", value="", help="e.g. Bayern Munich")
+            home_team = st.text_input("Home team", value="", help=home_hint)
         with col_away:
-            away_team = st.text_input("Away team", value="", help="e.g. Stuttgart")
+            away_team = st.text_input("Away team", value="", help=away_hint)
+
+        _BASEBALL_MARKETS = [
+            "hits", "total_bases", "runs", "rbi",
+            "home_runs", "strikeouts", "walks", "pitcher_outs",
+        ]
+        selected_markets: list[str] = []
+        selected_league: str | None = None
+
+        if sport.lower() == "baseball":
+            col_league, col_markets = st.columns(2)
+            with col_league:
+                st.selectbox("League", options=["MLB"], index=0, disabled=True)
+                selected_league = "mlb"
+            with col_markets:
+                selected_markets = st.multiselect(
+                    "Markets",
+                    options=_BASEBALL_MARKETS,
+                    default=_BASEBALL_MARKETS,
+                    help="Select MLB prop markets to analyze",
+                )
 
         col_n, col_explain, col_fallback = st.columns(3)
         with col_n:
@@ -167,6 +200,8 @@ def render_generate_page(client: PicksAPIClient) -> None:
             top_n=top_n,
             use_llm_enrichment=add_explanations,
             allow_fallback=allow_fallback,
+            markets=selected_markets or None,
+            league=selected_league,
         )
     except ValueError as exc:
         st.error(str(exc), icon="⚠️")
@@ -219,6 +254,9 @@ def render_generate_page(client: PicksAPIClient) -> None:
 
 def _format_history_row(item: dict[str, Any]) -> str:
     parts = [item.get("created_at", ""), item.get("match_query", "")]
+    sport = item.get("sport")
+    if sport:
+        parts.append(f"[{sport}]")
     competition = item.get("competition")
     if competition:
         parts.append(f"[{competition}]")
@@ -235,6 +273,11 @@ def render_history_page(client: PicksAPIClient) -> None:
     st.title("Pick History")
     st.caption("Recent pipeline runs persisted in the API database.")
 
+    sport_filter = st.sidebar.selectbox(
+        "Filter by sport",
+        options=["All", "Soccer", "Basketball", "Baseball"],
+        index=0,
+    )
     limit = st.sidebar.slider("Page size", min_value=5, max_value=50, value=20, step=5)
     page = st.session_state.get("history_page", 0)
     nav_prev, nav_next = st.sidebar.columns(2)
@@ -246,8 +289,9 @@ def render_history_page(client: PicksAPIClient) -> None:
         st.rerun()
 
     offset = page * limit
+    sport_param = sport_filter.lower() if sport_filter != "All" else None
     try:
-        listing = client.list_picks(limit=limit, offset=offset)
+        listing = client.list_picks(limit=limit, offset=offset, sport=sport_param)
     except APIError as exc:
         _render_pipeline_error(exc)
         return

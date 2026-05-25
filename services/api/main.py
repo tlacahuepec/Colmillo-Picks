@@ -496,7 +496,6 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     """Execute non-soccer sports via PipelineRunner + SportModule."""
     from pick_request import PickRequest
     from pipeline_runner import PipelineRunner
-    from render_basketball_report import render_basketball_report
     from sport_module import get_sport_module
 
     sport = request_dict.get("sport", "basketball")
@@ -514,11 +513,16 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     runner = PipelineRunner()
     pipeline_result = runner.run(request=pick_req, module=module)
 
-    used_fallback = not pipeline_result.match_inputs.get("game")
-    report_md = render_basketball_report(
-        pipeline_result.scores,
-        pipeline_result.match_inputs,
-        used_fallback=used_fallback,
+    report_md = _render_report_for_sport(
+        sport=sport,
+        scores=pipeline_result.scores,
+        match_inputs=pipeline_result.match_inputs,
+    )
+    trace = _build_trace_for_sport(
+        sport=sport,
+        scores=pipeline_result.scores,
+        match_inputs=pipeline_result.match_inputs,
+        steps=pipeline_result.steps,
     )
 
     return {
@@ -526,10 +530,66 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
         "match_inputs": pipeline_result.match_inputs,
         "steps": pipeline_result.steps,
         "report_markdown": report_md,
-        "trace": {
-            "llm_status": "fallback" if used_fallback else "completed",
-            "pipeline_steps": pipeline_result.steps,
-        },
+        "trace": trace,
+    }
+
+
+def _render_report_for_sport(
+    sport: str, scores: list[dict[str, Any]], match_inputs: dict[str, Any]
+) -> str:
+    if sport == "baseball":
+        from render_baseball_report import render_baseball_report
+
+        return render_baseball_report(
+            match_context=match_inputs,
+            picks=scores,
+            no_bet_picks=match_inputs.get("no_bet_picks"),
+            provider_statuses=match_inputs.get("provider_statuses"),
+        )
+
+    from render_basketball_report import render_basketball_report
+
+    used_fallback = not match_inputs.get("game")
+    return render_basketball_report(
+        scores,
+        match_inputs,
+        used_fallback=used_fallback,
+    )
+
+
+def _build_trace_for_sport(
+    sport: str,
+    scores: list[dict[str, Any]],
+    match_inputs: dict[str, Any],
+    steps: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if sport == "baseball":
+        from baseball_trace import MLBTraceRecord, PickTrace, compute_input_hash
+
+        picks = [
+            PickTrace(
+                player=s.get("player", "Unknown"),
+                market=s.get("market", "unknown"),
+                direction=s.get("direction", "over"),
+                line=s.get("line", 0),
+                score=s.get("score", 0),
+                confidence=s.get("confidence", "medium"),
+                risk_flags=s.get("explainability", {}).get("risk_flags", []),
+                top_factors=s.get("explainability", {}).get("top_contributing_factors", []),
+            )
+            for s in scores
+        ]
+        record = MLBTraceRecord(
+            run_id=match_inputs.get("run_id", ""),
+            input_hash=compute_input_hash(match_inputs),
+            picks=picks,
+        )
+        return record.model_dump()
+
+    used_fallback = not match_inputs.get("game")
+    return {
+        "llm_status": "fallback" if used_fallback else "completed",
+        "pipeline_steps": steps,
     }
 
 
