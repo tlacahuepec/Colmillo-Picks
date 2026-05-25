@@ -1,0 +1,167 @@
+{
+  "copyright": "Copyright 2026 MLB Advanced Media",
+  "gamePk": 717465,
+  "gameData": {
+    "game": {
+      "pk": 717465,
+      "type": "R"
+    },
+    "status": {
+      "abstractGameState": "Live",
+      "codedGameState": "I",
+      "detailedState": "In Progress"
+    },
+    "teams": {
+      "away": {
+        "id": 111,
+        "name": "Boston Red Sox"
+      },
+      "home": {
+        "id": 147,
+        "name": "New York Yankees"
+      }
+    },
+    "venue": {
+      "id": 3313,
+      "name": "Yankee Stadium",
+      "location": {
+        "city": "Bronx",
+        "state": "New York"
+      },
+      "fieldInfo": {
+        "roofType": "Open"
+      }
+    },
+    "weather": {
+      "condition": "Partly Cloudy",
+      "temp": "78",
+      "wind": "12 mph, Out To RF"
+    }
+  },
+  "liveData": {
+    "boxscore": {
+      "teams": {
+        "away": {
+          "battingOrder": [
+            660670,
+            596019,
+            646240,
+            680776,
+            592885,
+            543685,
+            657136,
+            666152,
+            677551
+          ],
+          "players": {
+            "ID660670": {
+              "person": {"id": 660670, "fullName": "Jarren Duran"},
+              "position": {"abbreviation": "CF"},
+              "battingOrder": "100"
+            },
+            "ID596019": {
+              "person": {"id": 596019, "fullName": "Rafael Devers"},
+              "position": {"abbreviation": "3B"},
+              "battingOrder": "200"
+            },
+            "ID646240": {
+              "person": {"id": 646240, "fullName": "Masataka Yoshida"},
+              "position": {"abbreviation": "LF"},
+              "battingOrder": "300"
+            },
+            "ID680776": {
+              "person": {"id": 680776, "fullName": "Triston Casas"},
+              "position": {"abbreviation": "1B"},
+              "battingOrder": "400"
+            },
+            "ID592885": {
+              "person": {"id": 592885, "fullName": "Connor Wong"},
+              "position": {"abbreviation": "C"},
+              "battingOrder": "500"
+            },
+            "ID543685": {
+              "person": {"id": 543685, "fullName": "Tyler O'Neill"},
+              "position": {"abbreviation": "RF"},
+              "battingOrder": "600"
+            },
+            "ID657136": {
+              "person": {"id": 657136, "fullName": "Ceddanne Rafaela"},
+              "position": {"abbreviation": "SS"},
+              "battingOrder": "700"
+            },
+            "ID666152": {
+              "person": {"id": 666152, "fullName": "Enmanuel Valdez"},
+              "position": {"abbreviation": "2B"},
+              "battingOrder": "800"
+            },
+            "ID677551": {
+              "person": {"id": 677551, "fullName": "Wilyer Abreu"},
+              "position": {"abbreviation": "DH"},
+              "battingOrder": "900"
+            }
+          }
+        },
+        "home": {
+          "battingOrder": [
+            665742,
+            665487,
+            592450,
+            650489,
+            666176,
+            543829,
+            678882,
+            683002,
+            624413
+          ],
+          "players": {
+            "ID665742": {
+              "person": {"id": 665742, "fullName": "Juan Soto"},
+              "position": {"abbreviation": "LF"},
+              "battingOrder": "100"
+            },
+            "ID665487": {
+              "person": {"id": 665487, "fullName": "Aaron Judge"},
+              "position": {"abbreviation": "RF"},
+              "battingOrder": "200"
+            },
+            "ID592450": {
+              "person": {"id": 592450, "fullName": "Aaron Judge"},
+              "position": {"abbreviation": "DH"},
+              "battingOrder": "300"
+            },
+            "ID650489": {
+              "person": {"id": 650489, "fullName": "Anthony Rizzo"},
+              "position": {"abbreviation": "1B"},
+              "battingOrder": "400"
+            },
+            "ID666176": {
+              "person": {"id": 666176, "fullName": "Gleyber Torres"},
+              "position": {"abbreviation": "2B"},
+              "battingOrder": "500"
+            },
+            "ID543829": {
+              "person": {"id": 543829, "fullName": "Alex Verdugo"},
+              "position": {"abbreviation": "CF"},
+              "battingOrder": "600"
+            },
+            "ID678882": {
+              "person": {"id": 678882, "fullName": "Anthony Volpe"},
+              "position": {"abbreviation": "SS"},
+              "battingOrder": "700"
+            },
+            "ID683002": {
+              "person": {"id": 683002, "fullName": "Austin Wells"},
+              "position": {"abbreviation": "C"},
+              "battingOrder": "800"
+            },
+            "ID624413": {
+              "person": {"id": 624413, "fullName": "Jose Trevino"},
+              "position": {"abbreviation": "DH"},
+              "battingOrder": "900"
+            }
+          }
+        }
+      }
+    }
+  }
+}

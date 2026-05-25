@@ -1,0 +1,71 @@
+{
+  "copyright": "Copyright 2026 MLB Advanced Media",
+  "people": [
+    {
+      "id": 543037,
+      "fullName": "Gerrit Cole",
+      "primaryPosition": {"abbreviation": "P"},
+      "batSide": {"code": "R"},
+      "pitchHand": {"code": "R"},
+      "stats": [
+        {
+          "type": {"displayName": "season"},
+          "group": {"displayName": "pitching"},
+          "splits": [
+            {
+              "season": "2026",
+              "stat": {
+                "gamesPlayed": 15,
+                "gamesStarted": 15,
+                "wins": 9,
+                "losses": 3,
+                "era": "2.85",
+                "whip": "1.02",
+                "inningsPitched": "98.1",
+                "strikeOuts": 115,
+                "baseOnBalls": 22,
+                "hits": 72,
+                "homeRuns": 10,
+                "strikeoutsPer9Inn": "10.52",
+                "walksPer9Inn": "2.01",
+                "hitsPer9Inn": "6.59"
+              }
+            }
+          ]
+        },
+        {
+          "type": {"displayName": "gameLog"},
+          "group": {"displayName": "pitching"},
+          "splits": [
+            {
+              "date": "2026-06-10",
+              "stat": {
+                "inningsPitched": "7.0",
+                "strikeOuts": 9,
+                "baseOnBalls": 1,
+                "hits": 4,
+                "runs": 1,
+                "homeRuns": 0,
+                "pitchesThrown": 98,
+                "numberOfPitches": 98
+              }
+            },
+            {
+              "date": "2026-06-04",
+              "stat": {
+                "inningsPitched": "6.2",
+                "strikeOuts": 8,
+                "baseOnBalls": 3,
+                "hits": 5,
+                "runs": 2,
+                "homeRuns": 1,
+                "pitchesThrown": 105,
+                "numberOfPitches": 105
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
