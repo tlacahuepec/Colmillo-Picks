@@ -191,6 +191,10 @@ def render_generate_page(client: PicksAPIClient) -> None:
     if not submitted:
         return
 
+    for key in list(st.session_state.keys()):
+        if key.startswith("availability_badges_"):
+            del st.session_state[key]
+
     try:
         payload = _build_pick_payload(
             sport=sport.lower(),
