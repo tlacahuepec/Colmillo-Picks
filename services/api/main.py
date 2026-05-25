@@ -125,6 +125,7 @@ class PickSummary(BaseModel):
     llm_status: str | None = None
     latency_ms: int | None = None
     error_stage: str | None = None
+    sport: str | None = None
 
 
 class PicksListResponse(BaseModel):
@@ -149,6 +150,9 @@ class PickDetailResponse(BaseModel):
     report_markdown: str
     scores: list[dict[str, Any]]
     trace: dict[str, Any] | None = None
+    sport: str | None = None
+    league: str | None = None
+    markets: list[str] | None = None
 
 
 class HealthResponse(BaseModel):
@@ -291,6 +295,7 @@ def _row_to_summary(row: db_module.PickRun) -> PickSummary:
         llm_status=row.llm_status,
         latency_ms=row.latency_ms,
         error_stage=row.error_stage,
+        sport=getattr(row, "sport", None),
     )
 
 
@@ -311,6 +316,9 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
         report_markdown=row.report_markdown or "",
         scores=json.loads(row.scores_json) if row.scores_json else [],
         trace=json.loads(row.trace_json) if row.trace_json else None,
+        sport=getattr(row, "sport", None),
+        league=getattr(row, "league", None),
+        markets=json.loads(row.markets_json) if getattr(row, "markets_json", None) else None,
     )
 
 
@@ -662,8 +670,9 @@ def create_app() -> FastAPI:
     def list_picks(
         limit: int = Query(20, ge=1, le=100),
         offset: int = Query(0, ge=0),
+        sport: str | None = Query(None),
     ) -> PicksListResponse:
-        rows = db_module.list_pick_runs(limit=limit, offset=offset)
+        rows = db_module.list_pick_runs(limit=limit, offset=offset, sport=sport)
         return PicksListResponse(
             items=[_row_to_summary(row) for row in rows], limit=limit, offset=offset
         )
