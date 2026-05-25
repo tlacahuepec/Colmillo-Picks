@@ -57,6 +57,9 @@ class PickRun(Base):
     status = Column(String(16), nullable=False, default=PICK_STATUS_PENDING)
     error_stage = Column(String(64), nullable=True)
     error_message = Column(Text, nullable=True)
+    sport = Column(String(32), nullable=True)
+    league = Column(String(64), nullable=True)
+    markets_json = Column(Text, nullable=True)
 
 
 class PickOutcome(Base):
@@ -124,6 +127,9 @@ def _ensure_added_columns(engine: Engine) -> None:
         ("status", f"VARCHAR(16) NOT NULL DEFAULT '{PICK_STATUS_PENDING}'"),
         ("error_stage", "VARCHAR(64)"),
         ("error_message", "TEXT"),
+        ("sport", "VARCHAR(32)"),
+        ("league", "VARCHAR(64)"),
+        ("markets_json", "TEXT"),
     ]
     with engine.begin() as conn:
         for col_name, col_def in additive:
@@ -231,6 +237,9 @@ def create_pending_pick_run(*, request_payload: dict[str, Any]) -> PickRun:
         llm_status=None,
         latency_ms=None,
         status=PICK_STATUS_PENDING,
+        sport=str(request_payload.get("sport", "soccer"))[:32] if request_payload.get("sport") else None,
+        league=str(request_payload.get("league", ""))[:64] or None,
+        markets_json=json.dumps(request_payload.get("markets")) if request_payload.get("markets") else None,
     )
     with session_scope() as session:
         session.add(row)
@@ -372,15 +381,12 @@ def mark_pick_failed(
         return row
 
 
-def list_pick_runs(*, limit: int, offset: int) -> list[PickRun]:
+def list_pick_runs(*, limit: int, offset: int, sport: str | None = None) -> list[PickRun]:
     with session_scope() as session:
-        return list(
-            session.query(PickRun)
-            .order_by(PickRun.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-            .all()
-        )
+        query = session.query(PickRun).order_by(PickRun.created_at.desc())
+        if sport is not None:
+            query = query.filter(PickRun.sport == sport)
+        return list(query.limit(limit).offset(offset).all())
 
 
 def get_pick_run(pick_id: str) -> PickRun | None:

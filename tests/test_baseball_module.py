@@ -24,7 +24,12 @@ class TestBaseballModuleProtocol:
 
     def test_supported_leagues(self) -> None:
         module = BaseballModule()
-        assert "mlb" in module.supported_leagues
+        assert module.supported_leagues == {"mlb"}
+
+    def test_npb_kbo_not_in_supported_leagues(self) -> None:
+        module = BaseballModule()
+        assert "npb" not in module.supported_leagues
+        assert "kbo" not in module.supported_leagues
 
 
 class TestBaseballModuleRegistry:
@@ -33,6 +38,12 @@ class TestBaseballModuleRegistry:
         module = BaseballModule()
         registry.register(module)
         assert registry.get("baseball") is module
+
+    def test_baseball_in_default_registry(self) -> None:
+        from sport_module import get_sport_module
+
+        module = get_sport_module("baseball")
+        assert module.sport_id == "baseball"
 
     def test_baseball_does_not_conflict_with_other_sports(self) -> None:
         from basketball_module import BasketballModule

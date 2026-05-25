@@ -36,7 +36,7 @@ class BaseballModule:
 
     @property
     def supported_leagues(self) -> set[str]:
-        return {"mlb", "npb", "kbo"}
+        return {"mlb"}
 
     @property
     def supported_markets(self) -> set[str]:
