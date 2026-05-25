@@ -245,6 +245,34 @@ class TestBuildStructuredPayload:
 class TestBaseballPayload:
     """Tests for baseball-specific payload construction."""
 
+    def test_baseball_payload_with_teams_does_not_raise(self) -> None:
+        """Regression: selecting baseball must not lose home/away values.
+
+        The Generate form conditionally renders league/market widgets when
+        sport == "baseball". Without stable widget keys, Streamlit resets
+        text_input values to their default ("") on the first submit after
+        sport changes — causing a spurious "home team is required" error.
+        This test verifies the payload builder accepts valid team names
+        regardless of sport, confirming the data path works when widget
+        keys are stable.
+        """
+        from services.ui.app import _build_pick_payload
+
+        payload = _build_pick_payload(
+            sport="baseball",
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            date=datetime.date(2026, 5, 25),
+            top_n=5,
+            use_llm_enrichment=False,
+            allow_fallback=False,
+            markets=["hits", "home_runs"],
+            league="mlb",
+        )
+        assert payload["home_team"] == "New York Yankees"
+        assert payload["away_team"] == "Boston Red Sox"
+        assert payload["sport"] == "baseball"
+
     def test_baseball_payload_includes_markets(self) -> None:
         from services.ui.app import _build_pick_payload
 

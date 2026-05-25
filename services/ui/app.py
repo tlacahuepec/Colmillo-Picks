@@ -129,6 +129,8 @@ def render_generate_page(client: PicksAPIClient) -> None:
     st.title("Generate Pick Report")
     st.caption("Enter match details to generate prop pick recommendations.")
 
+    # Explicit widget keys prevent Streamlit from resetting values when
+    # the baseball conditional block adds/removes widgets between reruns.
     with st.form("generate_pick"):
         col_sport, col_date = st.columns(2)
         with col_sport:
@@ -137,9 +139,10 @@ def render_generate_page(client: PicksAPIClient) -> None:
                 options=["Soccer", "Basketball", "Baseball"],
                 index=0,
                 help="Select the sport for prop analysis.",
+                key="gen_sport",
             )
         with col_date:
-            date = st.date_input("Match date", value=_date.today())
+            date = st.date_input("Match date", value=_date.today(), key="gen_date")
 
         _TEAM_HINTS: dict[str, tuple[str, str]] = {
             "soccer": ("e.g. Bayern Munich", "e.g. Stuttgart"),
@@ -150,9 +153,9 @@ def render_generate_page(client: PicksAPIClient) -> None:
 
         col_home, col_away = st.columns(2)
         with col_home:
-            home_team = st.text_input("Home team", value="", help=home_hint)
+            home_team = st.text_input("Home team", value="", help=home_hint, key="gen_home")
         with col_away:
-            away_team = st.text_input("Away team", value="", help=away_hint)
+            away_team = st.text_input("Away team", value="", help=away_hint, key="gen_away")
 
         _BASEBALL_MARKETS = [
             "hits", "total_bases", "runs", "rbi",
@@ -164,7 +167,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
         if sport.lower() == "baseball":
             col_league, col_markets = st.columns(2)
             with col_league:
-                st.selectbox("League", options=["MLB"], index=0, disabled=True)
+                st.selectbox("League", options=["MLB"], index=0, disabled=True, key="gen_league")
                 selected_league = "mlb"
             with col_markets:
                 selected_markets = st.multiselect(
@@ -172,18 +175,21 @@ def render_generate_page(client: PicksAPIClient) -> None:
                     options=_BASEBALL_MARKETS,
                     default=_BASEBALL_MARKETS,
                     help="Select MLB prop markets to analyze",
+                    key="gen_markets",
                 )
 
         col_n, col_explain, col_fallback = st.columns(3)
         with col_n:
-            top_n = st.slider("Top N picks", min_value=1, max_value=5, value=5)
+            top_n = st.slider("Top N picks", min_value=1, max_value=5, value=5, key="gen_top_n")
         with col_explain:
             add_explanations = st.checkbox(
-                "Add pick explanations", value=False, help="LLM adds rationale to each pick"
+                "Add pick explanations", value=False, help="LLM adds rationale to each pick",
+                key="gen_explain",
             )
         with col_fallback:
             allow_fallback = st.checkbox(
-                "Allow fallback", value=False, help="Return deterministic picks if pipeline fails"
+                "Allow fallback", value=False, help="Return deterministic picks if pipeline fails",
+                key="gen_fallback",
             )
 
         submitted = st.form_submit_button("Generate", type="primary")
