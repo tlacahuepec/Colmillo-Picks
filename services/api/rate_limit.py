@@ -24,7 +24,7 @@ class RateLimiter:
 
     @classmethod
     def from_env(cls) -> "RateLimiter":
-        max_requests = int(os.getenv("COLMILLO_RATE_LIMIT_PER_HOUR", "30"))
+        max_requests = int(os.getenv("COLMILLO_RATE_LIMIT_PER_HOUR", "300"))
         return cls(max_requests=max_requests, window_seconds=3600)
 
     def check(self, key: str) -> tuple[bool, int]:
