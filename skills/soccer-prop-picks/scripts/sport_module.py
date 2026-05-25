@@ -187,6 +187,10 @@ def _build_basketball_module():
 
 _DEFAULT_REGISTRY.register(_build_basketball_module())
 
+from baseball_module import BaseballModule  # noqa: E402
+
+_DEFAULT_REGISTRY.register(BaseballModule())
+
 
 def get_sport_module(sport: str) -> SportModule:
     return _DEFAULT_REGISTRY.get(sport)

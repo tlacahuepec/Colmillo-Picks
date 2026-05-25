@@ -12,13 +12,13 @@ SUPPORTED_SPORTS: set[str] = {"soccer", "basketball", "baseball"}
 SPORT_MARKETS: dict[str, set[str]] = {
     "soccer": {"passes", "shots"},
     "basketball": {"points", "rebounds", "assists", "threes"},
-    "baseball": {"strikeouts", "hits", "total_bases"},
+    "baseball": {"hits", "total_bases", "runs", "rbi", "home_runs", "strikeouts", "walks", "pitcher_outs"},
 }
 
 SPORT_LEAGUES: dict[str, set[str]] = {
     "soccer": {"premier_league", "la_liga", "serie_a", "bundesliga", "ligue_1", "mls", "champions_league"},
     "basketball": {"nba", "euroleague", "ncaab"},
-    "baseball": {"mlb", "npb"},
+    "baseball": {"mlb"},
 }
 
 SUPPORTED_PLATFORMS: set[str] = {"prizepicks", "underdog", "draftkings"}
