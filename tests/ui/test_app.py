@@ -240,3 +240,82 @@ class TestBuildStructuredPayload:
             allow_fallback=False,
         )
         assert payload.get("use_llm") is not True
+
+
+class TestBaseballPayload:
+    """Tests for baseball-specific payload construction."""
+
+    def test_baseball_payload_includes_markets(self) -> None:
+        from services.ui.app import _build_pick_payload
+
+        payload = _build_pick_payload(
+            sport="baseball",
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            date=datetime.date(2026, 5, 25),
+            top_n=5,
+            use_llm_enrichment=False,
+            allow_fallback=False,
+            markets=["hits", "home_runs", "strikeouts"],
+        )
+        assert payload["sport"] == "baseball"
+        assert payload["markets"] == ["hits", "home_runs", "strikeouts"]
+
+    def test_baseball_payload_includes_league(self) -> None:
+        from services.ui.app import _build_pick_payload
+
+        payload = _build_pick_payload(
+            sport="baseball",
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            date=datetime.date(2026, 5, 25),
+            top_n=5,
+            use_llm_enrichment=False,
+            allow_fallback=False,
+            league="mlb",
+        )
+        assert payload["league"] == "mlb"
+
+    def test_baseball_payload_omits_markets_when_none(self) -> None:
+        from services.ui.app import _build_pick_payload
+
+        payload = _build_pick_payload(
+            sport="baseball",
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            date=datetime.date(2026, 5, 25),
+            top_n=5,
+            use_llm_enrichment=False,
+            allow_fallback=False,
+        )
+        assert "markets" not in payload
+
+    def test_baseball_payload_omits_league_when_none(self) -> None:
+        from services.ui.app import _build_pick_payload
+
+        payload = _build_pick_payload(
+            sport="baseball",
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            date=datetime.date(2026, 5, 25),
+            top_n=5,
+            use_llm_enrichment=False,
+            allow_fallback=False,
+        )
+        assert "league" not in payload
+
+    def test_soccer_payload_unaffected_by_new_params(self) -> None:
+        from services.ui.app import _build_pick_payload
+
+        payload = _build_pick_payload(
+            sport="soccer",
+            home_team="Bayern Munich",
+            away_team="Stuttgart",
+            date=datetime.date(2026, 5, 23),
+            top_n=3,
+            use_llm_enrichment=False,
+            allow_fallback=False,
+        )
+        assert "markets" not in payload
+        assert "league" not in payload
+        assert payload["sport"] == "soccer"
