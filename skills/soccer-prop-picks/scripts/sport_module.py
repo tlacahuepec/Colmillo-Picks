@@ -120,6 +120,10 @@ class SoccerModule:
 _DEFAULT_REGISTRY = SportModuleRegistry()
 _DEFAULT_REGISTRY.register(SoccerModule())
 
+from basketball_module import BasketballModule  # noqa: E402
+
+_DEFAULT_REGISTRY.register(BasketballModule())
+
 
 def get_sport_module(sport: str) -> SportModule:
     return _DEFAULT_REGISTRY.get(sport)

@@ -409,9 +409,38 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
         raise HTTPException(status_code=400, detail="; ".join(exc.errors)) from exc
 
     if pick_req.sport != "soccer":
-        raise HTTPException(
-            status_code=400,
-            detail="Only soccer is currently supported for execution.",
+        from sport_module import get_sport_module, UnsupportedSportError
+
+        try:
+            get_sport_module(pick_req.sport)
+        except UnsupportedSportError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        request_dict = {
+            "_sport_module_path": True,
+            "sport": pick_req.sport,
+            "home_team": pick_req.home_team,
+            "away_team": pick_req.away_team,
+            "event_date": pick_req.event_date,
+            "markets": list(pick_req.markets),
+            "top_n": pick_req.top_n,
+            "league": pick_req.league,
+        }
+        row = db_module.create_pending_pick_run(request_payload=request_dict)
+        bundle_kwargs: dict[str, Any] = {}
+        jobs_module.enqueue_pick_run(
+            pick_id=row.id,
+            request_dict=request_dict,
+            bundle_kwargs=bundle_kwargs,
+        )
+        if os.environ.get("COLMILLO_WORKER_MODE") != "external":
+            background_tasks.add_task(
+                _run_next_queued_job, row.id, request_dict, bundle_kwargs
+            )
+        return PickAcceptedResponse(
+            id=row.id,
+            status=db_module.PICK_STATUS_PENDING,
+            created_at=row.created_at,
         )
 
     if payload.use_llm and not payload.llm_provider:
@@ -455,6 +484,35 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
     )
 
 
+def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
+    """Execute non-soccer sports via PipelineRunner + SportModule."""
+    from pick_request import PickRequest
+    from pipeline_runner import PipelineRunner
+    from sport_module import get_sport_module
+
+    sport = request_dict.get("sport", "basketball")
+    module = get_sport_module(sport)
+    markets = tuple(request_dict.get("markets", ()))
+    pick_req = PickRequest(
+        sport=sport,
+        event_date=request_dict.get("event_date", ""),
+        home_team=request_dict.get("home_team", ""),
+        away_team=request_dict.get("away_team", ""),
+        markets=markets if markets else tuple(module.supported_markets),
+        top_n=request_dict.get("top_n", 5),
+        league=request_dict.get("league"),
+    )
+    runner = PipelineRunner()
+    pipeline_result = runner.run(request=pick_req, module=module)
+    return {
+        "scores": pipeline_result.scores,
+        "match_inputs": pipeline_result.match_inputs,
+        "steps": pipeline_result.steps,
+        "report_markdown": "",
+        "trace": {"llm_status": "not_requested"},
+    }
+
+
 def _execute_pipeline_job(
     *,
     pick_id: str,
@@ -467,8 +525,11 @@ def _execute_pipeline_job(
 
     started = time.perf_counter()
     try:
-        deps = build_dependency_bundle(**bundle_kwargs)
-        result = run_pipeline_with_payload(request=request_dict, deps=deps)
+        if request_dict.get("_sport_module_path"):
+            result = _run_sport_module_pipeline(request_dict)
+        else:
+            deps = build_dependency_bundle(**bundle_kwargs)
+            result = run_pipeline_with_payload(request=request_dict, deps=deps)
     except PipelineServiceError as exc:
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         cause = exc.__cause__
