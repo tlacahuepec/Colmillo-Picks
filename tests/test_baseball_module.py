@@ -11,7 +11,7 @@ from baseball_domain import (
     MLBGameContext,
     MLBProbablePitcher,
 )
-from baseball_module import BaseballModule
+from baseball_module import BaseballModule, _find_game
 from pick_request import PickRequest
 from pipeline_runner import PipelineRunner, PipelineResult
 from sport_module import SportModule, SportModuleRegistry
@@ -280,4 +280,54 @@ class TestBaseballModuleWithService:
 
         assert len(scores) > 0
         assert all(s["market"] == "hits" for s in scores)
+
+
+class TestFindGame:
+    """Tests for _find_game team name matching with abbreviations."""
+
+    _GAMES = [
+        {
+            "gamePk": 717001,
+            "teams": {
+                "home": {"team": {"id": 119, "name": "Los Angeles Dodgers"}},
+                "away": {"team": {"id": 115, "name": "Colorado Rockies"}},
+            },
+        },
+        {
+            "gamePk": 717002,
+            "teams": {
+                "home": {"team": {"id": 147, "name": "New York Yankees"}},
+                "away": {"team": {"id": 111, "name": "Boston Red Sox"}},
+            },
+        },
+    ]
+
+    def test_full_name_match(self):
+        result = _find_game(self._GAMES, "Los Angeles Dodgers", "Colorado Rockies")
+        assert result is not None
+        assert result["gamePk"] == 717001
+
+    def test_abbreviation_lad(self):
+        result = _find_game(self._GAMES, "lad", "col")
+        assert result is not None
+        assert result["gamePk"] == 717001
+
+    def test_abbreviation_nyy(self):
+        result = _find_game(self._GAMES, "nyy", "bos")
+        assert result is not None
+        assert result["gamePk"] == 717002
+
+    def test_partial_name_dodgers(self):
+        result = _find_game(self._GAMES, "dodgers", "rockies")
+        assert result is not None
+        assert result["gamePk"] == 717001
+
+    def test_partial_name_yankees(self):
+        result = _find_game(self._GAMES, "yankees", "red sox")
+        assert result is not None
+        assert result["gamePk"] == 717002
+
+    def test_no_match_returns_none(self):
+        result = _find_game(self._GAMES, "cubs", "mets")
+        assert result is None
 
