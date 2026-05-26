@@ -1,5 +1,7 @@
 # Colmillo-Picks
 
+This project follows the [Engineering Constitution](https://github.com/tlacahuepec/Constitution).
+
 Multi-sport AI prop pick assistant — generates ranked player prop picks with confidence levels, risk flags, grounding sources, and platform availability checks. Supports soccer, basketball, and baseball (MLB).
 
 ## Supported Sports
