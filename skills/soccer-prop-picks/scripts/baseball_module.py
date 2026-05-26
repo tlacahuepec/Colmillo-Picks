@@ -35,18 +35,55 @@ _PLACEHOLDER_LINES: dict[str, dict[str, float]] = {
     "Gerrit Cole": {"pitcher_outs": 17.5, "strikeouts": 7.5, "hits": 5.5, "walks": 2.5},
 }
 
+_MLB_TEAM_ALIASES: dict[str, str] = {
+    "ari": "arizona diamondbacks", "dbacks": "arizona diamondbacks", "diamondbacks": "arizona diamondbacks",
+    "atl": "atlanta braves", "braves": "atlanta braves",
+    "bal": "baltimore orioles", "orioles": "baltimore orioles",
+    "bos": "boston red sox", "red sox": "boston red sox",
+    "chc": "chicago cubs", "cubs": "chicago cubs",
+    "chw": "chicago white sox", "white sox": "chicago white sox",
+    "cin": "cincinnati reds", "reds": "cincinnati reds",
+    "cle": "cleveland guardians", "guardians": "cleveland guardians",
+    "col": "colorado rockies", "rockies": "colorado rockies",
+    "det": "detroit tigers", "tigers": "detroit tigers",
+    "hou": "houston astros", "astros": "houston astros",
+    "kc": "kansas city royals", "royals": "kansas city royals",
+    "laa": "los angeles angels", "angels": "los angeles angels",
+    "lad": "los angeles dodgers", "dodgers": "los angeles dodgers",
+    "mia": "miami marlins", "marlins": "miami marlins",
+    "mil": "milwaukee brewers", "brewers": "milwaukee brewers",
+    "min": "minnesota twins", "twins": "minnesota twins",
+    "nym": "new york mets", "mets": "new york mets",
+    "nyy": "new york yankees", "yankees": "new york yankees",
+    "oak": "oakland athletics", "athletics": "oakland athletics",
+    "phi": "philadelphia phillies", "phillies": "philadelphia phillies",
+    "pit": "pittsburgh pirates", "pirates": "pittsburgh pirates",
+    "sd": "san diego padres", "padres": "san diego padres",
+    "sf": "san francisco giants", "giants": "san francisco giants",
+    "sea": "seattle mariners", "mariners": "seattle mariners",
+    "stl": "st. louis cardinals", "cardinals": "st. louis cardinals",
+    "tb": "tampa bay rays", "rays": "tampa bay rays",
+    "tex": "texas rangers", "rangers": "texas rangers",
+    "tor": "toronto blue jays", "blue jays": "toronto blue jays",
+    "wsh": "washington nationals", "nationals": "washington nationals",
+}
+
+
+def _resolve_team(name: str) -> str:
+    lower = name.strip().lower()
+    return _MLB_TEAM_ALIASES.get(lower, lower)
+
 
 def _find_game(games: list[dict[str, Any]], home_team: str, away_team: str) -> dict[str, Any] | None:
-    home_lower = home_team.lower()
-    away_lower = away_team.lower()
+    home_resolved = _resolve_team(home_team)
+    away_resolved = _resolve_team(away_team)
     for game in games:
         teams = game.get("teams", {})
         game_home = teams.get("home", {}).get("team", {}).get("name", "").lower()
         game_away = teams.get("away", {}).get("team", {}).get("name", "").lower()
-        if home_lower in game_home and away_lower in game_away:
-            return game
-        if game_home in home_lower and game_away in away_lower:
-            return game
+        if home_resolved in game_home or game_home in home_resolved:
+            if away_resolved in game_away or game_away in away_resolved:
+                return game
     return None
 
 
