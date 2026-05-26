@@ -1,13 +1,20 @@
-"""Baseball sport module with placeholder scoring.
+"""Baseball sport module with MLB StatsAPI provider support.
 
-Implements the SportModule protocol for baseball. Uses demo/placeholder
-data until real MLB providers are wired in.
+Implements the SportModule protocol for baseball. When an MLBCollectionService
+is provided, fetches real lineup/pitcher/stats data from the MLB StatsAPI.
+Falls back to placeholder data when no service is configured or when the
+requested game cannot be found.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from mlb_collection import MLBCollectionService
+
+logger = logging.getLogger(__name__)
 
 _BASEBALL_MARKETS = {
     "hits", "total_bases", "runs", "rbi",
@@ -29,7 +36,59 @@ _PLACEHOLDER_LINES: dict[str, dict[str, float]] = {
 }
 
 
+def _find_game(games: list[dict[str, Any]], home_team: str, away_team: str) -> dict[str, Any] | None:
+    home_lower = home_team.lower()
+    away_lower = away_team.lower()
+    for game in games:
+        teams = game.get("teams", {})
+        game_home = teams.get("home", {}).get("team", {}).get("name", "").lower()
+        game_away = teams.get("away", {}).get("team", {}).get("name", "").lower()
+        if home_lower in game_home and away_lower in game_away:
+            return game
+        if game_home in home_lower and game_away in away_lower:
+            return game
+    return None
+
+
+def _context_to_scoring_input(ctx: Any) -> tuple[list[dict[str, Any]], dict[str, dict[str, float]]]:
+    players: list[dict[str, Any]] = []
+    lines: dict[str, dict[str, float]] = {}
+
+    for order in [ctx.home_batting_order, ctx.away_batting_order]:
+        if order is None:
+            continue
+        for slot in order.slots:
+            players.append({
+                "player_name": slot.player_name,
+                "team": order.team,
+                "position": slot.field_position or "?",
+                "type": "batter",
+                "batting_order": slot.position,
+                "player_id": slot.player_id,
+            })
+            lines[slot.player_name] = {}
+
+    for pitcher, team in [
+        (ctx.home_probable_pitcher, ctx.game.home_team),
+        (ctx.away_probable_pitcher, ctx.game.away_team),
+    ]:
+        if pitcher:
+            players.append({
+                "player_name": pitcher.player_name,
+                "team": team,
+                "position": "SP",
+                "type": "pitcher",
+                "player_id": pitcher.player_id,
+            })
+            lines[pitcher.player_name] = {}
+
+    return players, lines
+
+
 class BaseballModule:
+    def __init__(self, *, collection_service: "MLBCollectionService | None" = None) -> None:
+        self._collection_service = collection_service
+
     @property
     def sport_id(self) -> str:
         return "baseball"
@@ -44,6 +103,60 @@ class BaseballModule:
 
     def collect_inputs(
         self, *, home_team: str, away_team: str, match_date: str, league: str | None = None
+    ) -> dict[str, Any]:
+        if self._collection_service is not None:
+            try:
+                return self._collect_live(home_team, away_team, match_date, league)
+            except Exception as exc:
+                logger.warning("MLB live collection failed, using fallback: %s", exc)
+
+        return self._collect_placeholder(home_team, away_team, match_date, league)
+
+    def _collect_live(
+        self, home_team: str, away_team: str, match_date: str, league: str | None
+    ) -> dict[str, Any]:
+        from baseball_domain import MLBGame
+
+        schedule_result = self._collection_service._schedule.get_schedule(date=match_date)
+
+        if not schedule_result.meta.available or not schedule_result.games:
+            return self._collect_placeholder(home_team, away_team, match_date, league)
+
+        game_data = _find_game(schedule_result.games, home_team, away_team)
+        if game_data is None:
+            logger.info("Game not found in schedule for %s vs %s on %s", home_team, away_team, match_date)
+            return self._collect_placeholder(home_team, away_team, match_date, league)
+
+        game_pk = game_data["gamePk"]
+        teams = game_data.get("teams", {})
+        game = MLBGame(
+            event_id=str(game_pk),
+            home_team=teams.get("home", {}).get("team", {}).get("name", home_team),
+            away_team=teams.get("away", {}).get("team", {}).get("name", away_team),
+            venue=game_data.get("venue", {}).get("name", ""),
+            game_time_utc=game_data.get("gameDate", ""),
+            home_team_id=teams.get("home", {}).get("team", {}).get("id"),
+            away_team_id=teams.get("away", {}).get("team", {}).get("id"),
+            venue_id=game_data.get("venue", {}).get("id"),
+        )
+
+        ctx = self._collection_service.collect(game_pk=game_pk, game=game)
+        players, lines = _context_to_scoring_input(ctx)
+
+        if not players:
+            return self._collect_placeholder(home_team, away_team, match_date, league)
+
+        return {
+            "home_team": home_team,
+            "away_team": away_team,
+            "match_date": match_date,
+            "league": league or "mlb",
+            "players": players,
+            "lines": lines,
+        }
+
+    def _collect_placeholder(
+        self, home_team: str, away_team: str, match_date: str, league: str | None
     ) -> dict[str, Any]:
         return {
             "home_team": home_team,
@@ -82,3 +195,4 @@ class BaseballModule:
         from baseball_explainer import build_deterministic_explanation
 
         return build_deterministic_explanation(scored_pick)
+
