@@ -76,7 +76,7 @@ class FakeBullpenProvider:
 
 
 class FakeWeatherProvider:
-    def get_weather(self, *, venue_id: int, game_time_utc: str) -> MLBWeatherResult:
+    def get_weather(self, *, game_pk: int, game_time_utc: str) -> MLBWeatherResult:
         return MLBWeatherResult(
             meta=MLBProviderMeta(available=True, source="fake"),
             temp_f=75,

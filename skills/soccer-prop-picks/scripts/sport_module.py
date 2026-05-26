@@ -207,7 +207,8 @@ def _build_baseball_module():  # noqa: E302
         from baseball_module import BaseballModule
 
         config = StatsAPIConfig()
-        client = httpx.Client(timeout=config.timeout_seconds)
+        transport = httpx.HTTPTransport(retries=2)
+        client = httpx.Client(timeout=config.timeout_seconds, transport=transport)
 
         service = MLBCollectionService(
             schedule=StatsAPIScheduleAdapter(client=client, config=config),

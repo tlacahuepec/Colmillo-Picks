@@ -282,7 +282,7 @@ class TestStatsAPIWeatherAdapter:
 
     def test_parses_weather_from_game_feed(self) -> None:
         adapter = StatsAPIWeatherAdapter(client=_mock_client("game_feed_live.json"))
-        result = adapter.get_weather(venue_id=3313, game_time_utc="2026-06-15T23:05:00Z")
+        result = adapter.get_weather(game_pk=717465, game_time_utc="2026-06-15T23:05:00Z")
         assert result.meta.available is True
         assert result.temp_f == 78
         assert result.wind_mph == 12
@@ -297,7 +297,7 @@ class TestStatsAPIWeatherAdapter:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         adapter = StatsAPIWeatherAdapter(client=client)
-        result = adapter.get_weather(venue_id=3313, game_time_utc="2026-06-15T23:05:00Z")
+        result = adapter.get_weather(game_pk=717465, game_time_utc="2026-06-15T23:05:00Z")
         assert result.dome is True
 
     def test_never_raises(self) -> None:
@@ -305,9 +305,24 @@ class TestStatsAPIWeatherAdapter:
             client=_timeout_client(),
             config=StatsAPIConfig(max_retries=0),
         )
-        result = adapter.get_weather(venue_id=3313, game_time_utc="2026-06-15T23:05:00Z")
+        result = adapter.get_weather(game_pk=717465, game_time_utc="2026-06-15T23:05:00Z")
         assert isinstance(result, MLBWeatherResult)
         assert result.meta.available is False
+
+    def test_url_uses_game_pk(self) -> None:
+        requests_made: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests_made.append(request)
+            data = _load_fixture("game_feed_live.json")
+            return httpx.Response(200, json=data)
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        adapter = StatsAPIWeatherAdapter(client=client)
+        adapter.get_weather(game_pk=823948, game_time_utc="2026-06-15T23:05:00Z")
+
+        assert len(requests_made) == 1
+        assert "/game/823948/feed/live" in str(requests_made[0].url)
 
 
 class TestStatsAPIBallparkAdapter:

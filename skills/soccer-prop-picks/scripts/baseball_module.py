@@ -157,6 +157,7 @@ class BaseballModule:
         schedule_result = self._collection_service._schedule.get_schedule(date=match_date)
 
         if not schedule_result.meta.available or not schedule_result.games:
+            logger.info("Schedule unavailable or empty for %s", match_date)
             return self._collect_placeholder(home_team, away_team, match_date, league)
 
         game_data = _find_game(schedule_result.games, home_team, away_team)
@@ -177,12 +178,22 @@ class BaseballModule:
             venue_id=game_data.get("venue", {}).get("id"),
         )
 
+        logger.info("Collecting data for game %d: %s vs %s", game_pk, game.home_team, game.away_team)
         ctx = self._collection_service.collect(game_pk=game_pk, game=game)
         players, lines = _context_to_scoring_input(ctx)
 
         if not players:
+            logger.warning(
+                "No players extracted for game %d — pitchers: home=%s away=%s, lineups: home=%s away=%s",
+                game_pk,
+                ctx.home_probable_pitcher is not None,
+                ctx.away_probable_pitcher is not None,
+                ctx.home_batting_order is not None,
+                ctx.away_batting_order is not None,
+            )
             return self._collect_placeholder(home_team, away_team, match_date, league)
 
+        logger.info("Live collection succeeded: %d players for game %d", len(players), game_pk)
         return {
             "home_team": home_team,
             "away_team": away_team,
