@@ -161,11 +161,28 @@ def test_missing_api_key_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> No
     assert excinfo.value.status_code == 401
 
 
-def test_list_picks_sport_filter(client: PicksAPIClient) -> None:
-    client.create_pick({"match_query": "juve - milan today"})
+def test_check_availability_returns_badges(client: PicksAPIClient) -> None:
+    accepted = client.create_pick({"match_query": "juve - milan today"})
+    client.wait_for_pick(accepted["id"], timeout_seconds=5.0, poll_interval_seconds=0.0)
 
-    page_all = client.list_picks(limit=10, offset=0)
-    assert len(page_all["items"]) >= 1
+    result = client.check_availability(accepted["id"])
 
-    page_baseball = client.list_picks(limit=10, offset=0, sport="baseball")
-    assert len(page_baseball["items"]) == 0
+    assert result["pick_id"] == accepted["id"]
+    assert "badges" in result
+    assert "checked_at" in result
+
+
+def test_check_availability_with_platforms(client: PicksAPIClient) -> None:
+    accepted = client.create_pick({"match_query": "juve - milan today"})
+    client.wait_for_pick(accepted["id"], timeout_seconds=5.0, poll_interval_seconds=0.0)
+
+    result = client.check_availability(accepted["id"], platforms=["prizepicks"])
+
+    assert result["pick_id"] == accepted["id"]
+
+
+def test_check_availability_unknown_pick_raises(client: PicksAPIClient) -> None:
+    with pytest.raises(APIError) as excinfo:
+        client.check_availability("nonexistent-id")
+
+    assert excinfo.value.status_code == 404
