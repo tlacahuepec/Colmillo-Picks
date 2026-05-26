@@ -369,9 +369,9 @@ class StatsAPIWeatherAdapter:
         self._client = client or httpx.Client()
         self._config = config or StatsAPIConfig()
 
-    def get_weather(self, *, venue_id: int, game_time_utc: str) -> MLBWeatherResult:
+    def get_weather(self, *, game_pk: int, game_time_utc: str) -> MLBWeatherResult:
         try:
-            url = f"{self._config.base_url}/api/v1.1/game/{venue_id}/feed/live"
+            url = f"{self._config.base_url}/api/v1.1/game/{game_pk}/feed/live"
 
             response = _fetch_with_retry(self._client, url, config=self._config)
             if response is None:
