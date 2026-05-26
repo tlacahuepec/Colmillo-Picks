@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
@@ -33,6 +34,8 @@ from mlb_provider_ports import (
     ProbablePitcherPort,
     ProbablePitcherResult,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -78,7 +81,7 @@ class MLBCollectionService:
         lineup_result = self._safe_call_lineups(game_pk)
         bullpen_home = self._safe_call_bullpen(game.home_team_id, game.game_time_utc[:10] if game.game_time_utc else "")
         bullpen_away = self._safe_call_bullpen(game.away_team_id, game.game_time_utc[:10] if game.game_time_utc else "")
-        weather_result = self._safe_call_weather(game.venue_id, game.game_time_utc)
+        weather_result = self._safe_call_weather(game_pk, game.game_time_utc)
         ballpark_result = self._safe_call_ballpark(game.venue_id)
 
         home_pitcher = _build_probable_pitcher(pitcher_result, "home")
@@ -116,14 +119,22 @@ class MLBCollectionService:
 
     def _safe_call_pitchers(self, game_pk: int) -> ProbablePitcherResult | None:
         try:
-            return self._pitchers.get_probable_pitchers(game_pk=game_pk)
-        except Exception:
+            result = self._pitchers.get_probable_pitchers(game_pk=game_pk)
+            if not result.meta.available:
+                logger.warning("Pitchers unavailable for game %d: %s", game_pk, result.meta.error_message)
+            return result
+        except Exception as exc:
+            logger.warning("Pitchers call failed for game %d: %s", game_pk, exc)
             return None
 
     def _safe_call_lineups(self, game_pk: int) -> MLBLineupsResult | None:
         try:
-            return self._lineups.get_lineups(game_pk=game_pk)
-        except Exception:
+            result = self._lineups.get_lineups(game_pk=game_pk)
+            if not result.meta.available:
+                logger.warning("Lineups unavailable for game %d: %s", game_pk, result.meta.error_message)
+            return result
+        except Exception as exc:
+            logger.warning("Lineups call failed for game %d: %s", game_pk, exc)
             return None
 
     def _safe_call_bullpen(self, team_id: int | None, date: str) -> BullpenResult | None:
@@ -131,15 +142,15 @@ class MLBCollectionService:
             return None
         try:
             return self._bullpen.get_bullpen_state(team_id=team_id, date=date)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Bullpen call failed for team %s: %s", team_id, exc)
             return None
 
-    def _safe_call_weather(self, venue_id: int | None, game_time_utc: str) -> MLBWeatherResult | None:
-        if venue_id is None:
-            return None
+    def _safe_call_weather(self, game_pk: int, game_time_utc: str) -> MLBWeatherResult | None:
         try:
-            return self._weather.get_weather(venue_id=venue_id, game_time_utc=game_time_utc)
-        except Exception:
+            return self._weather.get_weather(game_pk=game_pk, game_time_utc=game_time_utc)
+        except Exception as exc:
+            logger.warning("Weather call failed for game %d: %s", game_pk, exc)
             return None
 
     def _safe_call_ballpark(self, venue_id: int | None) -> BallparkResult | None:
@@ -147,7 +158,8 @@ class MLBCollectionService:
             return None
         try:
             return self._ballpark.get_ballpark(venue_id=venue_id)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Ballpark call failed for venue %s: %s", venue_id, exc)
             return None
 
     def _aggregate_status(

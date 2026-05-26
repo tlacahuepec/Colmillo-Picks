@@ -106,7 +106,7 @@ class BullpenPort(Protocol):
 
 @runtime_checkable
 class MLBWeatherPort(Protocol):
-    def get_weather(self, *, venue_id: int, game_time_utc: str) -> MLBWeatherResult: ...
+    def get_weather(self, *, game_pk: int, game_time_utc: str) -> MLBWeatherResult: ...
 
 
 @runtime_checkable
