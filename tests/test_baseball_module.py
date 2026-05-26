@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from baseball_module import BaseballModule
+from unittest.mock import MagicMock
+
+from baseball_domain import (
+    MLBBattingOrder,
+    MLBBattingOrderSlot,
+    MLBGame,
+    MLBGameContext,
+    MLBProbablePitcher,
+)
+from baseball_module import BaseballModule, _find_game
 from pick_request import PickRequest
 from pipeline_runner import PipelineRunner, PipelineResult
 from sport_module import SportModule, SportModuleRegistry
@@ -133,3 +142,192 @@ class TestBaseballPipelineIntegration:
         assert isinstance(result, PipelineResult)
         assert result.status == "success"
         assert len(result.scores) > 0
+
+
+class TestBaseballModuleWithService:
+    """With a real MLBCollectionService, collect_inputs fetches live data."""
+
+    def _make_schedule_result(self):
+        result = MagicMock()
+        result.meta.available = True
+        result.games = [
+            {
+                "gamePk": 717001,
+                "teams": {
+                    "home": {"team": {"id": 147, "name": "New York Yankees"}},
+                    "away": {"team": {"id": 111, "name": "Boston Red Sox"}},
+                },
+                "gameDate": "2026-05-25T23:05:00Z",
+                "venue": {"id": 3313, "name": "Yankee Stadium"},
+                "status": {"detailedState": "Scheduled"},
+            }
+        ]
+        return result
+
+    def _make_game_context(self) -> MLBGameContext:
+        game = MLBGame(
+            event_id="717001",
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            venue="Yankee Stadium",
+            game_time_utc="2026-05-25T23:05:00Z",
+            home_team_id=147,
+            away_team_id=111,
+            venue_id=3313,
+        )
+        home_order = MLBBattingOrder(
+            team="New York Yankees",
+            confirmed=True,
+            slots=[
+                MLBBattingOrderSlot(position=1, player_name="Anthony Volpe", player_id=683011, field_position="SS"),
+                MLBBattingOrderSlot(position=2, player_name="Juan Soto", player_id=665742, field_position="RF"),
+                MLBBattingOrderSlot(position=3, player_name="Aaron Judge", player_id=592450, field_position="DH"),
+            ],
+        )
+        away_order = MLBBattingOrder(
+            team="Boston Red Sox",
+            confirmed=True,
+            slots=[
+                MLBBattingOrderSlot(position=1, player_name="Jarren Duran", player_id=680776, field_position="CF"),
+                MLBBattingOrderSlot(position=2, player_name="Rafael Devers", player_id=646240, field_position="3B"),
+            ],
+        )
+        return MLBGameContext(
+            game=game,
+            home_batting_order=home_order,
+            away_batting_order=away_order,
+            home_probable_pitcher=MLBProbablePitcher(player_name="Gerrit Cole", player_id=543037, confirmed=True),
+            away_probable_pitcher=MLBProbablePitcher(player_name="Brayan Bello", player_id=678394, confirmed=True),
+        )
+
+    def test_collect_inputs_uses_service_players(self):
+        service = MagicMock()
+        service._schedule.get_schedule.return_value = self._make_schedule_result()
+        service.collect.return_value = self._make_game_context()
+
+        module = BaseballModule(collection_service=service)
+        inputs = module.collect_inputs(
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            match_date="2026-05-25",
+        )
+
+        player_names = [p["player_name"] for p in inputs["players"]]
+        assert "Anthony Volpe" in player_names
+        assert "Aaron Judge" in player_names
+        assert "Gerrit Cole" in player_names
+        assert "Brayan Bello" in player_names
+
+    def test_collect_inputs_includes_batting_order(self):
+        service = MagicMock()
+        service._schedule.get_schedule.return_value = self._make_schedule_result()
+        service.collect.return_value = self._make_game_context()
+
+        module = BaseballModule(collection_service=service)
+        inputs = module.collect_inputs(
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            match_date="2026-05-25",
+        )
+
+        batters = [p for p in inputs["players"] if p["type"] == "batter"]
+        volpe = next(p for p in batters if p["player_name"] == "Anthony Volpe")
+        assert volpe["batting_order"] == 1
+        assert volpe["position"] == "SS"
+
+    def test_falls_back_when_game_not_found(self):
+        schedule_result = MagicMock()
+        schedule_result.meta.available = True
+        schedule_result.games = []
+
+        service = MagicMock()
+        service._schedule.get_schedule.return_value = schedule_result
+
+        module = BaseballModule(collection_service=service)
+        inputs = module.collect_inputs(
+            home_team="Fake Team",
+            away_team="Other Team",
+            match_date="2026-05-25",
+        )
+
+        assert inputs["players"][0]["player_name"] == "Aaron Judge"
+
+    def test_falls_back_on_schedule_error(self):
+        service = MagicMock()
+        service._schedule.get_schedule.side_effect = RuntimeError("network")
+
+        module = BaseballModule(collection_service=service)
+        inputs = module.collect_inputs(
+            home_team="Yankees",
+            away_team="Red Sox",
+            match_date="2026-05-25",
+        )
+
+        assert inputs["players"][0]["player_name"] == "Aaron Judge"
+
+    def test_score_works_with_real_data(self):
+        service = MagicMock()
+        service._schedule.get_schedule.return_value = self._make_schedule_result()
+        service.collect.return_value = self._make_game_context()
+
+        module = BaseballModule(collection_service=service)
+        inputs = module.collect_inputs(
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            match_date="2026-05-25",
+        )
+        scores = module.score(inputs, markets=("hits",))
+
+        assert len(scores) > 0
+        assert all(s["market"] == "hits" for s in scores)
+
+
+class TestFindGame:
+    """Tests for _find_game team name matching with abbreviations."""
+
+    _GAMES = [
+        {
+            "gamePk": 717001,
+            "teams": {
+                "home": {"team": {"id": 119, "name": "Los Angeles Dodgers"}},
+                "away": {"team": {"id": 115, "name": "Colorado Rockies"}},
+            },
+        },
+        {
+            "gamePk": 717002,
+            "teams": {
+                "home": {"team": {"id": 147, "name": "New York Yankees"}},
+                "away": {"team": {"id": 111, "name": "Boston Red Sox"}},
+            },
+        },
+    ]
+
+    def test_full_name_match(self):
+        result = _find_game(self._GAMES, "Los Angeles Dodgers", "Colorado Rockies")
+        assert result is not None
+        assert result["gamePk"] == 717001
+
+    def test_abbreviation_lad(self):
+        result = _find_game(self._GAMES, "lad", "col")
+        assert result is not None
+        assert result["gamePk"] == 717001
+
+    def test_abbreviation_nyy(self):
+        result = _find_game(self._GAMES, "nyy", "bos")
+        assert result is not None
+        assert result["gamePk"] == 717002
+
+    def test_partial_name_dodgers(self):
+        result = _find_game(self._GAMES, "dodgers", "rockies")
+        assert result is not None
+        assert result["gamePk"] == 717001
+
+    def test_partial_name_yankees(self):
+        result = _find_game(self._GAMES, "yankees", "red sox")
+        assert result is not None
+        assert result["gamePk"] == 717002
+
+    def test_no_match_returns_none(self):
+        result = _find_game(self._GAMES, "cubs", "mets")
+        assert result is None
+

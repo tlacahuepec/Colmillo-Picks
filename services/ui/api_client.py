@@ -66,8 +66,11 @@ class PicksAPIClient:
         (or uses ``wait_for_pick``) for completion."""
         return self._request("POST", "/picks", json=payload)
 
-    def list_picks(self, *, limit: int = 20, offset: int = 0) -> dict[str, Any]:
-        return self._request("GET", "/picks", params={"limit": limit, "offset": offset})
+    def list_picks(self, *, limit: int = 20, offset: int = 0, sport: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if sport:
+            params["sport"] = sport
+        return self._request("GET", "/picks", params=params)
 
     def get_pick(self, pick_id: str) -> dict[str, Any]:
         return self._request("GET", f"/picks/{pick_id}")

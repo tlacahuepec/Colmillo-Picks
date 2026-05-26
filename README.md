@@ -1,6 +1,16 @@
 # Colmillo-Picks
 
-AI-powered soccer prop pick assistant — generates ranked player prop picks with confidence levels, risk flags, grounding sources, and platform availability checks.
+Multi-sport AI prop pick assistant — generates ranked player prop picks with confidence levels, risk flags, grounding sources, and platform availability checks. Supports soccer, basketball, and baseball (MLB).
+
+## Supported Sports
+
+| Sport | Module | Markets | Status |
+|-------|--------|---------|--------|
+| Soccer | `score_player_props.py` | Passes, shots, tackles, cards | Production |
+| Basketball | `basketball_scoring.py` | Points, rebounds, assists, 3PM | Production |
+| Baseball (MLB) | `baseball_scoring.py` | Hits, HR, K, RBI, walks, total bases, pitcher outs | Production |
+
+See `docs/mlb-architecture.md` for the full MLB pipeline documentation.
 
 ## Quickstart (CLI)
 
@@ -87,7 +97,7 @@ services/
   worker/                        Optional background job processor
 templates/
   pick_report.md                 Report output template
-tests/                           pytest suite (~250 tests)
+tests/                           pytest suite (~950 tests)
 ```
 
 ## Configuration
