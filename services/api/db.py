@@ -57,6 +57,10 @@ class PickRun(Base):
     status = Column(String(16), nullable=False, default=PICK_STATUS_PENDING)
     error_stage = Column(String(64), nullable=True)
     error_message = Column(Text, nullable=True)
+    sport = Column(String(32), nullable=True)
+    league = Column(String(64), nullable=True)
+    markets_json = Column(Text, nullable=True)
+    scheduled_kickoff_utc = Column(DateTime(timezone=True), nullable=True)
 
 
 class PickOutcome(Base):
@@ -75,6 +79,8 @@ class PickOutcome(Base):
     market = Column(String(64), nullable=False)
     result = Column(String(8), nullable=False)  # win | loss | push | void
     recorded_at = Column(DateTime(timezone=True), nullable=False)
+    resolution_attempted_at = Column(DateTime(timezone=True), nullable=True)
+    last_resolution_error = Column(Text, nullable=True)
 
 
 class PickJob(Base):
@@ -117,18 +123,32 @@ def _ensure_added_columns(engine: Engine) -> None:
     deployments pick up new fields without manual SQL.
     """
     inspector = inspect(engine)
-    if "picks_history" not in inspector.get_table_names():
-        return
-    existing_cols = {col["name"] for col in inspector.get_columns("picks_history")}
-    additive: list[tuple[str, str]] = [
-        ("status", f"VARCHAR(16) NOT NULL DEFAULT '{PICK_STATUS_PENDING}'"),
-        ("error_stage", "VARCHAR(64)"),
-        ("error_message", "TEXT"),
-    ]
-    with engine.begin() as conn:
-        for col_name, col_def in additive:
-            if col_name not in existing_cols:
-                conn.execute(text(f"ALTER TABLE picks_history ADD COLUMN {col_name} {col_def}"))
+    if "picks_history" in inspector.get_table_names():
+        existing_cols = {col["name"] for col in inspector.get_columns("picks_history")}
+        additive: list[tuple[str, str]] = [
+            ("status", f"VARCHAR(16) NOT NULL DEFAULT '{PICK_STATUS_PENDING}'"),
+            ("error_stage", "VARCHAR(64)"),
+            ("error_message", "TEXT"),
+            ("sport", "VARCHAR(32)"),
+            ("league", "VARCHAR(64)"),
+            ("markets_json", "TEXT"),
+            ("scheduled_kickoff_utc", "TIMESTAMP"),
+        ]
+        with engine.begin() as conn:
+            for col_name, col_def in additive:
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE picks_history ADD COLUMN {col_name} {col_def}"))
+
+    if "pick_outcomes" in inspector.get_table_names():
+        existing_cols = {col["name"] for col in inspector.get_columns("pick_outcomes")}
+        outcome_additive: list[tuple[str, str]] = [
+            ("resolution_attempted_at", "TIMESTAMP"),
+            ("last_resolution_error", "TEXT"),
+        ]
+        with engine.begin() as conn:
+            for col_name, col_def in outcome_additive:
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE pick_outcomes ADD COLUMN {col_name} {col_def}"))
 
 
 def configure_engine(url: str | None = None) -> Engine:
@@ -231,6 +251,9 @@ def create_pending_pick_run(*, request_payload: dict[str, Any]) -> PickRun:
         llm_status=None,
         latency_ms=None,
         status=PICK_STATUS_PENDING,
+        sport=str(request_payload.get("sport", "soccer"))[:32] if request_payload.get("sport") else None,
+        league=str(request_payload.get("league", ""))[:64] or None,
+        markets_json=json.dumps(request_payload.get("markets")) if request_payload.get("markets") else None,
     )
     with session_scope() as session:
         session.add(row)
@@ -372,15 +395,12 @@ def mark_pick_failed(
         return row
 
 
-def list_pick_runs(*, limit: int, offset: int) -> list[PickRun]:
+def list_pick_runs(*, limit: int, offset: int, sport: str | None = None) -> list[PickRun]:
     with session_scope() as session:
-        return list(
-            session.query(PickRun)
-            .order_by(PickRun.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-            .all()
-        )
+        query = session.query(PickRun).order_by(PickRun.created_at.desc())
+        if sport is not None:
+            query = query.filter(PickRun.sport == sport)
+        return list(query.limit(limit).offset(offset).all())
 
 
 def get_pick_run(pick_id: str) -> PickRun | None:
@@ -498,3 +518,33 @@ def operational_stats() -> dict[str, Any]:
         "recent_failures": recent_failures,
         "outcomes_recorded": int(outcomes_count),
     }
+
+
+# --------------------------------------------------------------------------- #
+# Outcome resolution queries (Issue #74)                                       #
+# --------------------------------------------------------------------------- #
+
+
+def list_unresolved_picks(*, settled_before: datetime) -> list[PickRun]:
+    """Return successful picks past kickoff that have no recorded outcomes yet.
+
+    A pick is "unresolved" when:
+    - status == success
+    - scheduled_kickoff_utc is set and < settled_before
+    - no PickOutcome rows exist for that pick_id
+    """
+    from sqlalchemy import exists
+
+    with session_scope() as session:
+        outcome_exists = exists().where(PickOutcome.pick_id == PickRun.id)
+        return list(
+            session.query(PickRun)
+            .filter(
+                PickRun.status == PICK_STATUS_SUCCESS,
+                PickRun.scheduled_kickoff_utc.isnot(None),
+                PickRun.scheduled_kickoff_utc < settled_before,
+                ~outcome_exists,
+            )
+            .order_by(PickRun.scheduled_kickoff_utc.asc())
+            .all()
+        )

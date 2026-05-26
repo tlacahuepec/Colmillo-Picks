@@ -1,0 +1,229 @@
+{
+  "global": {
+    "top_k": 5,
+    "contribution_floor": 0.0,
+    "model_version": "baseball-prop-v1.0-mlb-weighted",
+    "min_confidence_for_bet": "medium",
+    "directional_edge": {
+      "min_absolute_edge": 0.15
+    },
+    "guardrail_thresholds": {
+      "severe_blocking_warning_count": 2
+    },
+    "market_freshness": {
+      "max_odds_age_minutes": 60
+    }
+  },
+  "hits": {
+    "factor_weights": {
+      "lineup_position_opportunity": 0.18,
+      "pitcher_matchup_handedness": 0.20,
+      "recent_form_momentum": 0.16,
+      "ballpark_factor": 0.10,
+      "weather_impact": 0.08,
+      "team_run_expectancy": 0.10,
+      "home_away_adjustment": 0.08,
+      "rest_days": 0.05,
+      "market_agreement": 0.05
+    },
+    "position_scores": {
+      "1": 0.95,
+      "2": 0.90,
+      "3": 0.88,
+      "4": 0.85,
+      "5": 0.80,
+      "6": 0.75,
+      "7": 0.68,
+      "8": 0.60,
+      "9": 0.50
+    }
+  },
+  "total_bases": {
+    "factor_weights": {
+      "lineup_position_opportunity": 0.15,
+      "pitcher_matchup_handedness": 0.18,
+      "recent_form_momentum": 0.16,
+      "ballpark_factor": 0.14,
+      "weather_impact": 0.09,
+      "team_run_expectancy": 0.10,
+      "home_away_adjustment": 0.08,
+      "rest_days": 0.05,
+      "market_agreement": 0.05
+    },
+    "position_scores": {
+      "1": 0.95,
+      "2": 0.92,
+      "3": 0.90,
+      "4": 0.88,
+      "5": 0.82,
+      "6": 0.75,
+      "7": 0.65,
+      "8": 0.55,
+      "9": 0.45
+    }
+  },
+  "runs": {
+    "factor_weights": {
+      "lineup_position_opportunity": 0.20,
+      "pitcher_matchup_handedness": 0.14,
+      "recent_form_momentum": 0.16,
+      "ballpark_factor": 0.08,
+      "weather_impact": 0.06,
+      "team_run_expectancy": 0.18,
+      "home_away_adjustment": 0.08,
+      "rest_days": 0.05,
+      "market_agreement": 0.05
+    },
+    "position_scores": {
+      "1": 0.98,
+      "2": 0.92,
+      "3": 0.85,
+      "4": 0.80,
+      "5": 0.75,
+      "6": 0.68,
+      "7": 0.60,
+      "8": 0.52,
+      "9": 0.45
+    }
+  },
+  "rbi": {
+    "factor_weights": {
+      "lineup_position_opportunity": 0.16,
+      "pitcher_matchup_handedness": 0.16,
+      "recent_form_momentum": 0.16,
+      "ballpark_factor": 0.10,
+      "weather_impact": 0.06,
+      "team_run_expectancy": 0.18,
+      "home_away_adjustment": 0.08,
+      "rest_days": 0.05,
+      "market_agreement": 0.05
+    },
+    "position_scores": {
+      "1": 0.70,
+      "2": 0.82,
+      "3": 0.92,
+      "4": 0.98,
+      "5": 0.90,
+      "6": 0.78,
+      "7": 0.65,
+      "8": 0.55,
+      "9": 0.45
+    }
+  },
+  "home_runs": {
+    "factor_weights": {
+      "lineup_position_opportunity": 0.12,
+      "pitcher_matchup_handedness": 0.18,
+      "recent_form_momentum": 0.16,
+      "ballpark_factor": 0.18,
+      "weather_impact": 0.12,
+      "team_run_expectancy": 0.08,
+      "home_away_adjustment": 0.06,
+      "rest_days": 0.05,
+      "market_agreement": 0.05
+    },
+    "position_scores": {
+      "1": 0.80,
+      "2": 0.88,
+      "3": 0.92,
+      "4": 0.95,
+      "5": 0.85,
+      "6": 0.72,
+      "7": 0.60,
+      "8": 0.50,
+      "9": 0.40
+    }
+  },
+  "walks": {
+    "factor_weights": {
+      "lineup_position_opportunity": 0.15,
+      "pitcher_matchup_handedness": 0.12,
+      "recent_form_momentum": 0.18,
+      "ballpark_factor": 0.05,
+      "weather_impact": 0.04,
+      "team_run_expectancy": 0.12,
+      "home_away_adjustment": 0.08,
+      "rest_days": 0.06,
+      "market_agreement": 0.20
+    },
+    "position_scores": {
+      "1": 0.92,
+      "2": 0.88,
+      "3": 0.82,
+      "4": 0.78,
+      "5": 0.72,
+      "6": 0.65,
+      "7": 0.58,
+      "8": 0.50,
+      "9": 0.45
+    }
+  },
+  "strikeouts": {
+    "factor_weights": {
+      "lineup_position_opportunity": 0.10,
+      "pitcher_matchup_handedness": 0.15,
+      "recent_form_momentum": 0.18,
+      "ballpark_factor": 0.05,
+      "weather_impact": 0.04,
+      "opp_team_contact_rate": 0.18,
+      "home_away_adjustment": 0.08,
+      "workload_durability": 0.12,
+      "market_agreement": 0.10
+    },
+    "position_scores": {
+      "1": 0.85,
+      "2": 0.82,
+      "3": 0.80,
+      "4": 0.78,
+      "5": 0.75,
+      "6": 0.70,
+      "7": 0.65,
+      "8": 0.60,
+      "9": 0.55
+    }
+  },
+  "pitcher_outs": {
+    "factor_weights": {
+      "recent_form_momentum": 0.18,
+      "opp_team_contact_rate": 0.16,
+      "rest_days": 0.20,
+      "workload_durability": 0.18,
+      "home_away_adjustment": 0.08,
+      "ballpark_factor": 0.08,
+      "weather_impact": 0.04,
+      "market_agreement": 0.08
+    },
+    "position_scores": {}
+  },
+  "calibration": {
+    "handedness_splits": {
+      "platoon_advantage": 0.12,
+      "same_hand_penalty": -0.06,
+      "neutral": 0.0
+    },
+    "rest_days": {
+      "3_less": -0.10,
+      "4": 0.0,
+      "5_plus": 0.06
+    },
+    "home_away": {
+      "home_bonus": 0.05,
+      "away_penalty": 0.03
+    },
+    "weather_tiers": {
+      "hot": {"min_temp": 85, "score": 0.70},
+      "warm": {"min_temp": 70, "score": 0.55},
+      "mild": {"min_temp": 55, "score": 0.45},
+      "cold": {"min_temp": 0, "score": 0.30}
+    },
+    "wind_direction": {
+      "out": 0.12,
+      "in": -0.10,
+      "cross": 0.0
+    },
+    "confidence_thresholds": {
+      "high": 0.76,
+      "medium": 0.60
+    }
+  }
+}

@@ -125,6 +125,7 @@ class PickSummary(BaseModel):
     llm_status: str | None = None
     latency_ms: int | None = None
     error_stage: str | None = None
+    sport: str | None = None
 
 
 class PicksListResponse(BaseModel):
@@ -149,6 +150,9 @@ class PickDetailResponse(BaseModel):
     report_markdown: str
     scores: list[dict[str, Any]]
     trace: dict[str, Any] | None = None
+    sport: str | None = None
+    league: str | None = None
+    markets: list[str] | None = None
 
 
 class HealthResponse(BaseModel):
@@ -291,6 +295,7 @@ def _row_to_summary(row: db_module.PickRun) -> PickSummary:
         llm_status=row.llm_status,
         latency_ms=row.latency_ms,
         error_stage=row.error_stage,
+        sport=getattr(row, "sport", None),
     )
 
 
@@ -311,6 +316,9 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
         report_markdown=row.report_markdown or "",
         scores=json.loads(row.scores_json) if row.scores_json else [],
         trace=json.loads(row.trace_json) if row.trace_json else None,
+        sport=getattr(row, "sport", None),
+        league=getattr(row, "league", None),
+        markets=json.loads(row.markets_json) if getattr(row, "markets_json", None) else None,
     )
 
 
@@ -504,12 +512,84 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     )
     runner = PipelineRunner()
     pipeline_result = runner.run(request=pick_req, module=module)
+
+    report_md = _render_report_for_sport(
+        sport=sport,
+        scores=pipeline_result.scores,
+        match_inputs=pipeline_result.match_inputs,
+    )
+    trace = _build_trace_for_sport(
+        sport=sport,
+        scores=pipeline_result.scores,
+        match_inputs=pipeline_result.match_inputs,
+        steps=pipeline_result.steps,
+    )
+
     return {
         "scores": pipeline_result.scores,
         "match_inputs": pipeline_result.match_inputs,
         "steps": pipeline_result.steps,
-        "report_markdown": "",
-        "trace": {"llm_status": "not_requested"},
+        "report_markdown": report_md,
+        "trace": trace,
+    }
+
+
+def _render_report_for_sport(
+    sport: str, scores: list[dict[str, Any]], match_inputs: dict[str, Any]
+) -> str:
+    if sport == "baseball":
+        from render_baseball_report import render_baseball_report
+
+        return render_baseball_report(
+            match_context=match_inputs,
+            picks=scores,
+            no_bet_picks=match_inputs.get("no_bet_picks"),
+            provider_statuses=match_inputs.get("provider_statuses"),
+        )
+
+    from render_basketball_report import render_basketball_report
+
+    used_fallback = not match_inputs.get("game")
+    return render_basketball_report(
+        scores,
+        match_inputs,
+        used_fallback=used_fallback,
+    )
+
+
+def _build_trace_for_sport(
+    sport: str,
+    scores: list[dict[str, Any]],
+    match_inputs: dict[str, Any],
+    steps: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if sport == "baseball":
+        from baseball_trace import MLBTraceRecord, PickTrace, compute_input_hash
+
+        picks = [
+            PickTrace(
+                player=s.get("player", "Unknown"),
+                market=s.get("market", "unknown"),
+                direction=s.get("direction", "over"),
+                line=s.get("line", 0),
+                score=s.get("score", 0),
+                confidence=s.get("confidence", "medium"),
+                risk_flags=s.get("explainability", {}).get("risk_flags", []),
+                top_factors=s.get("explainability", {}).get("top_contributing_factors", []),
+            )
+            for s in scores
+        ]
+        record = MLBTraceRecord(
+            run_id=match_inputs.get("run_id", ""),
+            input_hash=compute_input_hash(match_inputs),
+            picks=picks,
+        )
+        return record.model_dump()
+
+    used_fallback = not match_inputs.get("game")
+    return {
+        "llm_status": "fallback" if used_fallback else "completed",
+        "pipeline_steps": steps,
     }
 
 
@@ -650,8 +730,9 @@ def create_app() -> FastAPI:
     def list_picks(
         limit: int = Query(20, ge=1, le=100),
         offset: int = Query(0, ge=0),
+        sport: str | None = Query(None),
     ) -> PicksListResponse:
-        rows = db_module.list_pick_runs(limit=limit, offset=offset)
+        rows = db_module.list_pick_runs(limit=limit, offset=offset, sport=sport)
         return PicksListResponse(
             items=[_row_to_summary(row) for row in rows], limit=limit, offset=offset
         )

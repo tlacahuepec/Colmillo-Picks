@@ -64,8 +64,13 @@ def _build_default_registry() -> MarketRegistry:
 
     baseball_markets = [
         Market(id="hits", display_name="Hits", sport="baseball", value_type="float", sides=("over", "under")),
-        Market(id="strikeouts", display_name="Strikeouts", sport="baseball", value_type="float", sides=("over", "under")),
         Market(id="total_bases", display_name="Total Bases", sport="baseball", value_type="float", sides=("over", "under")),
+        Market(id="runs", display_name="Runs", sport="baseball", value_type="float", sides=("over", "under")),
+        Market(id="rbi", display_name="RBI", sport="baseball", value_type="float", sides=("over", "under")),
+        Market(id="home_runs", display_name="Home Runs", sport="baseball", value_type="float", sides=("over", "under")),
+        Market(id="strikeouts", display_name="Strikeouts", sport="baseball", value_type="float", sides=("over", "under")),
+        Market(id="walks", display_name="Walks", sport="baseball", value_type="float", sides=("over", "under")),
+        Market(id="pitcher_outs", display_name="Pitcher Outs (Recorded)", sport="baseball", value_type="float", sides=("over", "under")),
     ]
 
     for m in soccer_markets + basketball_markets + baseball_markets:

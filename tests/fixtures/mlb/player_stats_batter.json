@@ -1,0 +1,86 @@
+{
+  "copyright": "Copyright 2026 MLB Advanced Media",
+  "people": [
+    {
+      "id": 592450,
+      "fullName": "Aaron Judge",
+      "primaryPosition": {"abbreviation": "RF"},
+      "batSide": {"code": "R"},
+      "pitchHand": {"code": "R"},
+      "stats": [
+        {
+          "type": {"displayName": "season"},
+          "group": {"displayName": "hitting"},
+          "splits": [
+            {
+              "season": "2026",
+              "stat": {
+                "gamesPlayed": 65,
+                "atBats": 245,
+                "runs": 55,
+                "hits": 78,
+                "doubles": 14,
+                "triples": 1,
+                "homeRuns": 25,
+                "rbi": 60,
+                "stolenBases": 4,
+                "baseOnBalls": 50,
+                "strikeOuts": 75,
+                "avg": ".318",
+                "obp": ".430",
+                "slg": ".650",
+                "ops": "1.080",
+                "totalBases": 159
+              }
+            }
+          ]
+        },
+        {
+          "type": {"displayName": "gameLog"},
+          "group": {"displayName": "hitting"},
+          "splits": [
+            {
+              "date": "2026-06-14",
+              "stat": {
+                "atBats": 4,
+                "runs": 1,
+                "hits": 2,
+                "homeRuns": 1,
+                "rbi": 2,
+                "baseOnBalls": 1,
+                "strikeOuts": 1,
+                "totalBases": 6
+              }
+            },
+            {
+              "date": "2026-06-13",
+              "stat": {
+                "atBats": 4,
+                "runs": 0,
+                "hits": 1,
+                "homeRuns": 0,
+                "rbi": 0,
+                "baseOnBalls": 0,
+                "strikeOuts": 2,
+                "totalBases": 1
+              }
+            },
+            {
+              "date": "2026-06-12",
+              "stat": {
+                "atBats": 3,
+                "runs": 2,
+                "hits": 2,
+                "homeRuns": 1,
+                "rbi": 3,
+                "baseOnBalls": 2,
+                "strikeOuts": 0,
+                "totalBases": 5
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -159,3 +159,13 @@ def test_missing_api_key_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> No
         bad_client.create_pick({"match_query": "juve - milan today"})
 
     assert excinfo.value.status_code == 401
+
+
+def test_list_picks_sport_filter(client: PicksAPIClient) -> None:
+    client.create_pick({"match_query": "juve - milan today"})
+
+    page_all = client.list_picks(limit=10, offset=0)
+    assert len(page_all["items"]) >= 1
+
+    page_baseball = client.list_picks(limit=10, offset=0, sport="baseball")
+    assert len(page_baseball["items"]) == 0

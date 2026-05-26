@@ -1,0 +1,47 @@
+{
+  "copyright": "Copyright 2026 MLB Advanced Media",
+  "totalItems": 1,
+  "totalEvents": 1,
+  "totalGames": 1,
+  "totalGamesInProgress": 0,
+  "dates": [
+    {
+      "date": "2026-06-15",
+      "totalItems": 1,
+      "totalEvents": 1,
+      "totalGames": 1,
+      "games": [
+        {
+          "gamePk": 717465,
+          "gameDate": "2026-06-15T23:05:00Z",
+          "status": {
+            "abstractGameState": "Preview",
+            "codedGameState": "S",
+            "detailedState": "Scheduled",
+            "statusCode": "S"
+          },
+          "teams": {
+            "away": {
+              "team": {
+                "id": 111,
+                "name": "Boston Red Sox"
+              }
+            },
+            "home": {
+              "team": {
+                "id": 147,
+                "name": "New York Yankees"
+              }
+            }
+          },
+          "venue": {
+            "id": 3313,
+            "name": "Yankee Stadium"
+          },
+          "doubleHeader": "N",
+          "gameNumber": 1
+        }
+      ]
+    }
+  ]
+}
