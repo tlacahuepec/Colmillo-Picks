@@ -113,6 +113,14 @@ class PicksAPIClient:
         params = {"since": since} if since else None
         return self._request("GET", "/stats/hit-rate", params=params)
 
+    def check_availability(
+        self, pick_id: str, *, platforms: list[str] | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if platforms:
+            payload["platforms"] = platforms
+        return self._request("POST", f"/picks/{pick_id}/availability", json=payload)
+
     # Internals ------------------------------------------------------------- #
 
     def _client(self) -> httpx.Client:
