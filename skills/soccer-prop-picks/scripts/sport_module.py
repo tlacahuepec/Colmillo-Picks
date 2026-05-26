@@ -187,9 +187,45 @@ def _build_basketball_module():
 
 _DEFAULT_REGISTRY.register(_build_basketball_module())
 
-from baseball_module import BaseballModule  # noqa: E402
 
-_DEFAULT_REGISTRY.register(BaseballModule())
+def _build_baseball_module():  # noqa: E302
+    """Wire MLB StatsAPI providers into the baseball module."""
+    try:
+        import httpx
+        from mlb_statsapi_adapter import (
+            StatsAPIBallparkAdapter,
+            StatsAPIBullpenAdapter,
+            StatsAPIConfig,
+            StatsAPILineupsAdapter,
+            StatsAPIPitcherAdapter,
+            StatsAPIPlayerStatsAdapter,
+            StatsAPIScheduleAdapter,
+            StatsAPISplitsAdapter,
+            StatsAPIWeatherAdapter,
+        )
+        from mlb_collection import MLBCollectionService
+        from baseball_module import BaseballModule
+
+        config = StatsAPIConfig()
+        client = httpx.Client(timeout=config.timeout_seconds)
+
+        service = MLBCollectionService(
+            schedule=StatsAPIScheduleAdapter(client=client, config=config),
+            pitchers=StatsAPIPitcherAdapter(client=client, config=config),
+            lineups=StatsAPILineupsAdapter(client=client, config=config),
+            player_stats=StatsAPIPlayerStatsAdapter(client=client, config=config),
+            splits=StatsAPISplitsAdapter(client=client, config=config),
+            bullpen=StatsAPIBullpenAdapter(client=client, config=config),
+            weather=StatsAPIWeatherAdapter(client=client, config=config),
+            ballpark=StatsAPIBallparkAdapter(client=client, config=config),
+        )
+        return BaseballModule(collection_service=service)
+    except Exception:
+        from baseball_module import BaseballModule
+        return BaseballModule()
+
+
+_DEFAULT_REGISTRY.register(_build_baseball_module())
 
 
 def get_sport_module(sport: str) -> SportModule:
