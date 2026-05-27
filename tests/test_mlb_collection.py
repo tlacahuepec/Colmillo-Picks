@@ -119,7 +119,7 @@ class FakeWeather:
     def __init__(self, *, available: bool = True):
         self._available = available
 
-    def get_weather(self, *, venue_id: int, game_time_utc: str) -> MLBWeatherResult:
+    def get_weather(self, *, game_pk: int, game_time_utc: str) -> MLBWeatherResult:
         if not self._available:
             return MLBWeatherResult(meta=_fresh_meta(available=False))
         return MLBWeatherResult(
@@ -276,6 +276,20 @@ class TestMLBCollectionDegradedData:
         ctx = service.collect(game_pk=717465, game=_make_game())
         assert isinstance(ctx, MLBGameContext)
         assert ctx.weather is None
+
+    def test_weather_receives_game_pk_not_venue_id(self) -> None:
+        class RecordingWeather:
+            def __init__(self):
+                self.received_game_pk = None
+
+            def get_weather(self, *, game_pk: int, game_time_utc: str) -> MLBWeatherResult:
+                self.received_game_pk = game_pk
+                return MLBWeatherResult(meta=_fresh_meta(), temp_f=72)
+
+        weather = RecordingWeather()
+        service = _build_service(weather=weather)
+        service.collect(game_pk=717465, game=_make_game())
+        assert weather.received_game_pk == 717465
 
     def test_all_ports_unavailable_returns_minimal_context(self) -> None:
         service = _build_service(
