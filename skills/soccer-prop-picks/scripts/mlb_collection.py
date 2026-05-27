@@ -35,7 +35,7 @@ from mlb_provider_ports import (
     ProbablePitcherResult,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("colmillo.mlb_collection")
 
 
 @dataclass
