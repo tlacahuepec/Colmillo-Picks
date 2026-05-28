@@ -66,6 +66,26 @@ class PicksAPIClient:
         (or uses ``wait_for_pick``) for completion."""
         return self._request("POST", "/picks", json=payload)
 
+    def discover_matches(
+        self,
+        *,
+        date: str,
+        sports: list[str],
+        limit_per_sport: int = 5,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "date": date,
+            "sports": sports,
+            "limit_per_sport": limit_per_sport,
+        }
+        if llm_provider:
+            payload["llm_provider"] = llm_provider
+        if llm_model:
+            payload["llm_model"] = llm_model
+        return self._request("POST", "/matches/discover", json=payload)
+
     def list_picks(self, *, limit: int = 20, offset: int = 0, sport: str | None = None) -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if sport:

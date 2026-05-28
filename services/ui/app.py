@@ -89,6 +89,74 @@ def _build_pick_payload(
     return payload
 
 
+def _build_match_discovery_payload(
+    *,
+    date: _date,
+    sports: list[str],
+    limit_per_sport: int,
+) -> dict[str, Any]:
+    normalized_sports = [
+        sport.strip().lower()
+        for sport in sports
+        if sport and sport.strip()
+    ]
+    if not normalized_sports:
+        raise ValueError("at least one sport is required")
+    return {
+        "date": date.isoformat(),
+        "sports": normalized_sports,
+        "limit_per_sport": int(limit_per_sport),
+    }
+
+
+def _build_payload_from_suggested_match(
+    suggested_match: dict[str, Any] | None,
+    *,
+    top_n: int,
+    use_llm_enrichment: bool,
+    allow_fallback: bool,
+) -> dict[str, Any]:
+    if not suggested_match:
+        raise ValueError("suggested match is required")
+
+    event_date = str(suggested_match.get("event_date", "")).strip()
+    try:
+        parsed_date = _date.fromisoformat(event_date)
+    except ValueError:
+        raise ValueError(f"suggested match date must be YYYY-MM-DD, got: {event_date!r}") from None
+
+    return _build_pick_payload(
+        sport=str(suggested_match.get("sport", "")).strip().lower(),
+        home_team=str(suggested_match.get("home_team", "")).strip(),
+        away_team=str(suggested_match.get("away_team", "")).strip(),
+        date=parsed_date,
+        top_n=top_n,
+        use_llm_enrichment=use_llm_enrichment,
+        allow_fallback=allow_fallback,
+        league=suggested_match.get("league") or None,
+    )
+
+
+def _format_suggested_match(match: dict[str, Any]) -> str:
+    sport = str(match.get("sport", "")).strip().title() or "Sport"
+    home = str(match.get("home_team", "")).strip() or "Unknown"
+    away = str(match.get("away_team", "")).strip() or "Unknown"
+    competition = match.get("competition") or match.get("league") or "competition unknown"
+    kickoff = match.get("kickoff_utc") or "kickoff unknown"
+    importance = match.get("importance") or "importance unknown"
+    data_quality = match.get("data_quality") if isinstance(match.get("data_quality"), dict) else {}
+    confidence = data_quality.get("confidence", "unknown")
+    missing_fields = data_quality.get("missing_fields") or []
+    missing = ",".join(str(field) for field in missing_fields) if missing_fields else "none"
+    source_count = data_quality.get("source_count", len(match.get("sources") or []))
+
+    return (
+        f"{sport} | {home} vs {away} | {competition} | {kickoff} | "
+        f"importance={importance} | confidence={confidence} | "
+        f"missing={missing} | sources={source_count}"
+    )
+
+
 @st.cache_resource(show_spinner=False)
 def _get_client() -> PicksAPIClient:
     return PicksAPIClient(APIClientConfig.from_env())
@@ -123,6 +191,61 @@ def _render_pick_payload(payload: dict[str, Any]) -> None:
     if payload.get("match_inputs") is not None:
         with st.expander("Match inputs"):
             st.json(payload["match_inputs"])
+
+
+def _clear_availability_cache() -> None:
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("availability_badges_") or str(key).startswith("availability_"):
+            del st.session_state[key]
+
+
+def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any]) -> None:
+    _clear_availability_cache()
+
+    with st.spinner("Submitting pick request..."):
+        try:
+            accepted = client.create_pick(payload)
+        except APIError as exc:
+            _render_pipeline_error(exc)
+            return
+        except Exception as exc:
+            st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
+            return
+
+    pick_id = accepted.get("id", "")
+    st.info(f"Pick `{pick_id}` accepted. Waiting for pipeline to finish...", icon="\u23f3")
+    progress_box = st.empty()
+    try:
+        with st.spinner("Running pick pipeline..."):
+            final = client.wait_for_pick(
+                pick_id, timeout_seconds=180.0, poll_interval_seconds=1.5
+            )
+    except APIError as exc:
+        _render_pipeline_error(exc)
+        return
+    except Exception as exc:
+        st.error(f"Pipeline status polling failed: {exc}", icon="\U0001f6d1")
+        return
+    finally:
+        progress_box.empty()
+
+    if final.get("status") == "failed":
+        st.error(
+            f"Pipeline failed at stage **{final.get('error_stage')}**: "
+            f"{final.get('error_message', 'unknown error')}",
+            icon="\U0001f6d1",
+        )
+        return
+
+    try:
+        detail = client.get_pick(pick_id)
+    except APIError as exc:
+        _render_pipeline_error(exc)
+        return
+
+    st.success(f"Pick saved as id `{pick_id}`.", icon="\u2705")
+    _render_pick_payload(detail)
+    _render_availability_section(client, pick_id)
 
 
 def _render_availability_section(client: PicksAPIClient, pick_id: str) -> None:
@@ -187,9 +310,112 @@ def _render_availability_section(client: PicksAPIClient, pick_id: str) -> None:
             st.info(f"{status.icon} **{player}** ({market}) — Could not check {platform}")
 
 
+def _render_match_suggestions(client: PicksAPIClient) -> bool:
+    st.subheader("Match Suggestions")
+
+    col_date, col_sports, col_limit = st.columns([1, 2, 1])
+    with col_date:
+        discovery_date = st.date_input(
+            "Suggestion date",
+            value=st.session_state.get("gen_date", _date.today()),
+            key="discover_date",
+        )
+    with col_sports:
+        discovery_sports = st.multiselect(
+            "Suggestion sports",
+            options=["Soccer", "Basketball", "Baseball"],
+            default=["Soccer", "Basketball", "Baseball"],
+            key="discover_sports",
+        )
+    with col_limit:
+        limit_per_sport = st.slider(
+            "Matches per sport",
+            min_value=1,
+            max_value=5,
+            value=3,
+            key="discover_limit",
+        )
+
+    run_col_n, run_col_explain, run_col_fallback = st.columns(3)
+    with run_col_n:
+        suggestion_top_n = st.slider(
+            "Suggestion top N",
+            min_value=1,
+            max_value=5,
+            value=5,
+            key="suggestion_top_n",
+        )
+    with run_col_explain:
+        suggestion_explain = st.checkbox(
+            "Suggestion explanations",
+            value=False,
+            key="suggestion_explain",
+        )
+    with run_col_fallback:
+        suggestion_fallback = st.checkbox(
+            "Suggestion fallback",
+            value=False,
+            key="suggestion_fallback",
+        )
+
+    if st.button("Find today's matches", key="find_todays_matches"):
+        try:
+            payload = _build_match_discovery_payload(
+                date=discovery_date,
+                sports=discovery_sports,
+                limit_per_sport=limit_per_sport,
+            )
+            st.session_state["match_discovery_results"] = client.discover_matches(**payload)
+            st.session_state.pop("match_discovery_error", None)
+        except APIError as exc:
+            st.session_state["match_discovery_error"] = f"API returned {exc.status_code}: {exc.detail}"
+        except Exception as exc:
+            st.session_state["match_discovery_error"] = str(exc)
+
+    if st.session_state.get("match_discovery_error"):
+        st.error(st.session_state["match_discovery_error"], icon="\U0001f6d1")
+
+    discovery = st.session_state.get("match_discovery_results")
+    if not discovery:
+        return False
+
+    results = discovery.get("results", {})
+    for sport, sport_result in results.items():
+        st.markdown(f"**{str(sport).title()}**")
+        if sport_result.get("error"):
+            st.warning(str(sport_result["error"]), icon="\u26a0\ufe0f")
+        matches = sport_result.get("matches") or []
+        if not matches:
+            st.info("No suggested matches returned.")
+            continue
+        for index, match in enumerate(matches):
+            text_col, run_col = st.columns([5, 1])
+            with text_col:
+                st.caption(_format_suggested_match(match))
+            with run_col:
+                if st.button("Run", key=f"run_suggested_{sport}_{index}"):
+                    try:
+                        payload = _build_payload_from_suggested_match(
+                            match,
+                            top_n=suggestion_top_n,
+                            use_llm_enrichment=suggestion_explain,
+                            allow_fallback=suggestion_fallback,
+                        )
+                    except ValueError as exc:
+                        st.error(str(exc), icon="\u26a0\ufe0f")
+                        return True
+                    _submit_pick_and_render(client, payload)
+                    return True
+
+    return False
+
+
 def render_generate_page(client: PicksAPIClient) -> None:
     st.title("Generate Pick Report")
     st.caption("Enter match details to generate prop pick recommendations.")
+
+    if _render_match_suggestions(client):
+        return
 
     # Explicit widget keys prevent Streamlit from resetting values when
     # the baseball conditional block adds/removes widgets between reruns.
@@ -259,10 +485,6 @@ def render_generate_page(client: PicksAPIClient) -> None:
     if not submitted:
         return
 
-    for key in list(st.session_state.keys()):
-        if key.startswith("availability_badges_"):
-            del st.session_state[key]
-
     try:
         payload = _build_pick_payload(
             sport=sport.lower(),
@@ -275,55 +497,11 @@ def render_generate_page(client: PicksAPIClient) -> None:
             markets=selected_markets or None,
             league=selected_league,
         )
+        _submit_pick_and_render(client, payload)
+        return
     except ValueError as exc:
         st.error(str(exc), icon="⚠️")
         return
-
-    with st.spinner("Submitting pick request…"):
-        try:
-            accepted = client.create_pick(payload)
-        except APIError as exc:
-            _render_pipeline_error(exc)
-            return
-        except Exception as exc:
-            st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
-            return
-
-    pick_id = accepted.get("id", "")
-    st.info(f"Pick `{pick_id}` accepted. Waiting for pipeline to finish…", icon="\u23f3")
-    progress_box = st.empty()
-    try:
-        with st.spinner("Running pick pipeline…"):
-            final = client.wait_for_pick(
-                pick_id, timeout_seconds=180.0, poll_interval_seconds=1.5
-            )
-    except APIError as exc:
-        _render_pipeline_error(exc)
-        return
-    except Exception as exc:
-        st.error(f"Pipeline status polling failed: {exc}", icon="\U0001f6d1")
-        return
-    finally:
-        progress_box.empty()
-
-    if final.get("status") == "failed":
-        st.error(
-            f"Pipeline failed at stage **{final.get('error_stage')}**: "
-            f"{final.get('error_message', 'unknown error')}",
-            icon="\U0001f6d1",
-        )
-        return
-
-    try:
-        detail = client.get_pick(pick_id)
-    except APIError as exc:
-        _render_pipeline_error(exc)
-        return
-
-    st.success(f"Pick saved as id `{pick_id}`.", icon="\u2705")
-    _render_pick_payload(detail)
-    _render_availability_section(client, pick_id)
-
 
 def _format_history_row(item: dict[str, Any]) -> str:
     parts = [item.get("created_at", ""), item.get("match_query", "")]
