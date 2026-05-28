@@ -347,3 +347,84 @@ class TestBaseballPayload:
         assert "markets" not in payload
         assert "league" not in payload
         assert payload["sport"] == "soccer"
+
+
+class TestSuggestedMatches:
+    def test_build_payload_from_suggested_match_reuses_structured_shape(self) -> None:
+        from services.ui.app import _build_payload_from_suggested_match
+
+        payload = _build_payload_from_suggested_match(
+            {
+                "sport": "baseball",
+                "home_team": "New York Yankees",
+                "away_team": "Boston Red Sox",
+                "event_date": "2026-06-01",
+                "league": "mlb",
+            },
+            top_n=4,
+            use_llm_enrichment=False,
+            allow_fallback=True,
+        )
+
+        assert payload == {
+            "sport": "baseball",
+            "event_date": "2026-06-01",
+            "home_team": "New York Yankees",
+            "away_team": "Boston Red Sox",
+            "top_n": 4,
+            "allow_deterministic_fallback": True,
+            "league": "mlb",
+        }
+
+    def test_build_payload_from_suggested_match_raises_without_selection(self) -> None:
+        from services.ui.app import _build_payload_from_suggested_match
+
+        with pytest.raises(ValueError, match="suggested match"):
+            _build_payload_from_suggested_match(
+                None,
+                top_n=3,
+                use_llm_enrichment=False,
+                allow_fallback=False,
+            )
+
+    def test_format_suggested_match_includes_sport_teams_and_uncertainty(self) -> None:
+        from services.ui.app import _format_suggested_match
+
+        text = _format_suggested_match(
+            {
+                "sport": "soccer",
+                "home_team": "Arsenal",
+                "away_team": "Liverpool",
+                "competition": "Premier League",
+                "kickoff_utc": "2026-06-01T19:00:00Z",
+                "importance": "high",
+                "data_quality": {
+                    "confidence": "medium",
+                    "missing_fields": ["confirmed_lineups"],
+                    "source_count": 2,
+                },
+            }
+        )
+
+        assert "Soccer" in text
+        assert "Arsenal vs Liverpool" in text
+        assert "Premier League" in text
+        assert "high" in text
+        assert "confidence=medium" in text
+        assert "missing=confirmed_lineups" in text
+        assert "sources=2" in text
+
+    def test_discovery_payload_uses_requested_date_sports_and_limit(self) -> None:
+        from services.ui.app import _build_match_discovery_payload
+
+        payload = _build_match_discovery_payload(
+            date=datetime.date(2026, 6, 1),
+            sports=["Soccer", "Baseball"],
+            limit_per_sport=3,
+        )
+
+        assert payload == {
+            "date": "2026-06-01",
+            "sports": ["soccer", "baseball"],
+            "limit_per_sport": 3,
+        }
