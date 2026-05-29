@@ -342,8 +342,8 @@ class TestBaseballModuleWithService:
             game=game,
             home_probable_pitcher=MLBProbablePitcher(player_name="Gerrit Cole", player_id=543037, confirmed=True),
             away_probable_pitcher=MLBProbablePitcher(player_name="Brayan Bello", player_id=678394, confirmed=True),
-            home_batting_order=None,
-            away_batting_order=None,
+            home_batting_order=MLBBattingOrder(team="New York Yankees", confirmed=False, slots=[]),
+            away_batting_order=MLBBattingOrder(team="Boston Red Sox", confirmed=False, slots=[]),
         )
 
         module = BaseballModule(collection_service=service)
@@ -353,10 +353,28 @@ class TestBaseballModuleWithService:
             match_date="2026-05-25",
         )
 
-        with pytest.raises(BaseballDataQualityError, match="hitter markets require batter data"):
+        assert inputs["collection_summary"]["game_found"] is True
+        assert inputs["collection_summary"]["source"] == "mlb_statsapi"
+        assert inputs["collection_summary"]["game_pk"] == "717001"
+        assert inputs["collection_summary"]["batter_count"] == 0
+        assert inputs["collection_summary"]["pitcher_count"] == 2
+        assert inputs["collection_summary"]["prop_line_count"] == 0
+        assert inputs["collection_summary"]["home_lineup_players"] == 0
+        assert inputs["collection_summary"]["away_lineup_players"] == 0
+
+        with pytest.raises(BaseballDataQualityError, match="MLB StatsAPI found the game") as exc_info:
             module.score(inputs, markets=("hits", "total_bases", "runs", "rbi", "home_runs"))
+        assert exc_info.value.reason == "hitter_inputs_unavailable"
         assert "baseball_scoring_rejected" in caplog.text
-        assert "missing_batter_data" in caplog.text
+        assert "hitter_inputs_unavailable" in caplog.text
+        assert "source=mlb_statsapi" in caplog.text
+        assert "game_pk=717001" in caplog.text
+        assert "players=2" in caplog.text
+        assert "batters=0" in caplog.text
+        assert "pitchers=2" in caplog.text
+        assert "prop_lines=0" in caplog.text
+        assert "home_lineup_players=0" in caplog.text
+        assert "away_lineup_players=0" in caplog.text
 
     def test_missing_lines_do_not_become_zero_line_recommendations(self, caplog):
         module = BaseballModule()

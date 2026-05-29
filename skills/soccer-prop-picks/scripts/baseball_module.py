@@ -228,6 +228,12 @@ class BaseballModule:
         logger.info("Collecting data for game %d: %s vs %s", game_pk, game.home_team, game.away_team)
         ctx = self._collection_service.collect(game_pk=game_pk, game=game)
         players, lines = _context_to_scoring_input(ctx)
+        collection_summary = _collection_summary(
+            ctx=ctx,
+            game=game,
+            players=players,
+            lines=lines,
+        )
 
         if not players:
             return self._reject_or_fallback(
@@ -236,16 +242,20 @@ class BaseballModule:
                 away_team=away_team,
                 match_date=match_date,
                 league=league,
-                context={
-                    "game_pk": game_pk,
-                    "home_pitcher": ctx.home_probable_pitcher is not None,
-                    "away_pitcher": ctx.away_probable_pitcher is not None,
-                    "home_lineup": ctx.home_batting_order is not None,
-                    "away_lineup": ctx.away_batting_order is not None,
-                },
+                context=collection_summary,
             )
 
-        logger.info("Live collection succeeded: %d players for game %d", len(players), game_pk)
+        logger.info(
+            "Live collection succeeded: source=mlb_statsapi game_pk=%s players=%s "
+            "batters=%s pitchers=%s prop_lines=%s home_lineup_players=%s away_lineup_players=%s",
+            game_pk,
+            collection_summary["player_count"],
+            collection_summary["batter_count"],
+            collection_summary["pitcher_count"],
+            collection_summary["prop_line_count"],
+            collection_summary["home_lineup_players"],
+            collection_summary["away_lineup_players"],
+        )
         return {
             "home_team": game.home_team,
             "away_team": game.away_team,
@@ -262,6 +272,7 @@ class BaseballModule:
             "players": players,
             "lines": lines,
             "data_quality": _data_quality_from_context(ctx),
+            "collection_summary": collection_summary,
         }
 
     def _collect_placeholder(
@@ -295,14 +306,15 @@ class BaseballModule:
         if _HITTER_MARKETS.intersection(target_markets) and not any(
             _is_batter(player) for player in players if isinstance(player, dict)
         ):
+            reason = _missing_batter_reason(match_inputs)
             _log_scoring_rejection(
-                reason="missing_batter_data",
+                reason=reason,
                 match_inputs=match_inputs,
                 markets=target_markets,
             )
             raise BaseballDataQualityError(
-                "Could not find enough match details: hitter markets require batter data.",
-                reason="missing_batter_data",
+                _missing_batter_message(match_inputs),
+                reason=reason,
             )
 
         scores: list[dict[str, Any]] = []
@@ -426,17 +438,29 @@ def _log_scoring_rejection(
     markets: tuple[str, ...],
     context: dict[str, Any] | None = None,
 ) -> None:
-    context_text = f" context={context}" if context else ""
+    summary = _score_rejection_context(match_inputs, context)
     logger.warning(
         "baseball_scoring_rejected reason=%s sport=baseball home_team=%s away_team=%s "
-        "match_date=%s league=%s markets=%s%s",
+        "match_date=%s league=%s markets=%s source=%s game_pk=%s venue=%s game_time_utc=%s "
+        "players=%s batters=%s pitchers=%s prop_lines=%s home_lineup_players=%s "
+        "away_lineup_players=%s context=%s",
         reason,
         match_inputs.get("home_team", ""),
         match_inputs.get("away_team", ""),
         match_inputs.get("match_date", ""),
         match_inputs.get("league", "mlb"),
         ",".join(markets),
-        context_text,
+        summary.get("source", ""),
+        summary.get("game_pk", ""),
+        summary.get("venue", ""),
+        summary.get("game_time_utc", ""),
+        summary.get("player_count", 0),
+        summary.get("batter_count", 0),
+        summary.get("pitcher_count", 0),
+        summary.get("prop_line_count", 0),
+        summary.get("home_lineup_players", 0),
+        summary.get("away_lineup_players", 0),
+        summary,
     )
 
 
@@ -455,6 +479,91 @@ def _data_quality_from_context(ctx: Any) -> dict[str, Any]:
         "home_lineup_players": len(getattr(home_order, "slots", []) or []),
         "away_lineup_players": len(getattr(away_order, "slots", []) or []),
     }
+
+
+def _collection_summary(
+    *,
+    ctx: Any,
+    game: Any,
+    players: list[dict[str, Any]],
+    lines: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    home_order = getattr(ctx, "home_batting_order", None)
+    away_order = getattr(ctx, "away_batting_order", None)
+    prop_lines = getattr(ctx, "prop_lines", []) or []
+    return {
+        "source": "mlb_statsapi",
+        "game_found": True,
+        "game_pk": getattr(game, "event_id", ""),
+        "venue": getattr(game, "venue", ""),
+        "game_time_utc": getattr(game, "game_time_utc", ""),
+        "player_count": len(players),
+        "batter_count": sum(1 for player in players if _is_batter(player)),
+        "pitcher_count": sum(1 for player in players if _is_pitcher(player)),
+        "prop_line_count": _prop_line_count(lines),
+        "raw_prop_line_count": len(prop_lines),
+        "home_lineup_players": len(getattr(home_order, "slots", []) or []),
+        "away_lineup_players": len(getattr(away_order, "slots", []) or []),
+        "home_probable_pitcher": (
+            ctx.home_probable_pitcher.player_name if ctx.home_probable_pitcher else None
+        ),
+        "away_probable_pitcher": (
+            ctx.away_probable_pitcher.player_name if ctx.away_probable_pitcher else None
+        ),
+        "rejection_reasons": list(getattr(ctx, "rejection_reasons", []) or []),
+    }
+
+
+def _score_rejection_context(
+    match_inputs: dict[str, Any], extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    summary = dict(match_inputs.get("collection_summary") or {})
+    players = [p for p in match_inputs.get("players", []) if isinstance(p, dict)]
+    lines = match_inputs.get("lines", {})
+    summary.setdefault("source", match_inputs.get("data_quality", {}).get("source", ""))
+    summary.setdefault("game_found", bool(summary.get("game_pk")))
+    summary.setdefault("game_pk", match_inputs.get("game_pk", ""))
+    summary.setdefault("venue", match_inputs.get("venue", ""))
+    summary.setdefault("game_time_utc", match_inputs.get("game_time_utc", ""))
+    summary.setdefault("player_count", len(players))
+    summary.setdefault("batter_count", sum(1 for player in players if _is_batter(player)))
+    summary.setdefault("pitcher_count", sum(1 for player in players if _is_pitcher(player)))
+    summary.setdefault("prop_line_count", _prop_line_count(lines))
+    summary.setdefault(
+        "home_lineup_players",
+        match_inputs.get("data_quality", {}).get("home_lineup_players", 0),
+    )
+    summary.setdefault(
+        "away_lineup_players",
+        match_inputs.get("data_quality", {}).get("away_lineup_players", 0),
+    )
+    if extra:
+        summary.update(extra)
+    return summary
+
+
+def _missing_batter_reason(match_inputs: dict[str, Any]) -> str:
+    summary = _score_rejection_context(match_inputs)
+    if summary.get("source") == "mlb_statsapi" and summary.get("game_found"):
+        return "hitter_inputs_unavailable"
+    return "missing_batter_data"
+
+
+def _missing_batter_message(match_inputs: dict[str, Any]) -> str:
+    summary = _score_rejection_context(match_inputs)
+    if summary.get("source") == "mlb_statsapi" and summary.get("game_found"):
+        return (
+            "Could not find enough match details: MLB StatsAPI found the game, but hitter "
+            "markets require official batting order data and prop lines; those inputs are "
+            "unavailable for this game right now."
+        )
+    return "Could not find enough match details: hitter markets require batter data."
+
+
+def _prop_line_count(lines: Any) -> int:
+    if not isinstance(lines, dict):
+        return 0
+    return sum(len(player_lines) for player_lines in lines.values() if isinstance(player_lines, dict))
 
 
 def _is_batter(player: dict[str, Any]) -> bool:
