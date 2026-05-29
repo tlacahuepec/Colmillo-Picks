@@ -10,8 +10,11 @@ from baseball_domain import (
     MLBGame,
     MLBGameContext,
     MLBProbablePitcher,
+    MLBPropLine,
 )
-from baseball_module import BaseballModule, _find_game
+import pytest
+
+from baseball_module import BaseballDataQualityError, BaseballModule, _find_game
 from pick_request import PickRequest
 from pipeline_runner import PipelineRunner, PipelineResult
 from sport_module import SportModule, SportModuleRegistry
@@ -67,9 +70,20 @@ class TestBaseballModuleRegistry:
         assert registry.get("baseball").sport_id == "baseball"
 
 
-class TestBaseballPlaceholderScoring:
-    def test_collect_inputs_returns_structured_data(self) -> None:
+class TestBaseballDeterministicFallback:
+    def test_default_collect_inputs_rejects_missing_live_service(self) -> None:
         module = BaseballModule()
+
+        with pytest.raises(BaseballDataQualityError, match="Could not find enough match details"):
+            module.collect_inputs(
+                home_team="Yankees",
+                away_team="Red Sox",
+                match_date="2026-06-01",
+                league="mlb",
+            )
+
+    def test_explicit_fallback_collect_inputs_returns_structured_data(self) -> None:
+        module = BaseballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="Yankees",
             away_team="Red Sox",
@@ -80,9 +94,10 @@ class TestBaseballPlaceholderScoring:
         assert "away_team" in inputs
         assert "players" in inputs
         assert len(inputs["players"]) > 0
+        assert inputs["data_quality"]["source"] == "deterministic_fallback"
 
-    def test_score_returns_valid_picks(self) -> None:
-        module = BaseballModule()
+    def test_explicit_fallback_score_returns_valid_picks(self) -> None:
+        module = BaseballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="Yankees",
             away_team="Red Sox",
@@ -99,8 +114,8 @@ class TestBaseballPlaceholderScoring:
             assert "confidence" in pick
             assert pick["market"] in ("hits", "total_bases")
 
-    def test_score_all_markets_when_none_specified(self) -> None:
-        module = BaseballModule()
+    def test_explicit_fallback_score_all_markets_when_none_specified(self) -> None:
+        module = BaseballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="Yankees",
             away_team="Red Sox",
@@ -128,7 +143,7 @@ class TestBaseballPlaceholderScoring:
 
 class TestBaseballPipelineIntegration:
     def test_baseball_request_runs_through_pipeline(self) -> None:
-        module = BaseballModule()
+        module = BaseballModule(allow_deterministic_fallback=True)
         request = PickRequest(
             sport="baseball",
             event_date="2026-06-01",
@@ -198,6 +213,13 @@ class TestBaseballModuleWithService:
             away_batting_order=away_order,
             home_probable_pitcher=MLBProbablePitcher(player_name="Gerrit Cole", player_id=543037, confirmed=True),
             away_probable_pitcher=MLBProbablePitcher(player_name="Brayan Bello", player_id=678394, confirmed=True),
+            prop_lines=[
+                MLBPropLine(player_name="Anthony Volpe", market="hits", line=1.5),
+                MLBPropLine(player_name="Juan Soto", market="hits", line=1.5),
+                MLBPropLine(player_name="Aaron Judge", market="hits", line=1.5),
+                MLBPropLine(player_name="Jarren Duran", market="hits", line=1.5),
+                MLBPropLine(player_name="Rafael Devers", market="hits", line=1.5),
+            ],
         )
 
     def test_collect_inputs_uses_service_players(self):
@@ -235,7 +257,7 @@ class TestBaseballModuleWithService:
         assert volpe["batting_order"] == 1
         assert volpe["position"] == "SS"
 
-    def test_falls_back_when_game_not_found(self):
+    def test_rejects_when_game_not_found_by_default(self, caplog):
         schedule_result = MagicMock()
         schedule_result.meta.available = True
         schedule_result.games = []
@@ -244,6 +266,25 @@ class TestBaseballModuleWithService:
         service._schedule.get_schedule.return_value = schedule_result
 
         module = BaseballModule(collection_service=service)
+
+        with pytest.raises(BaseballDataQualityError, match="Could not find enough match details"):
+            module.collect_inputs(
+                home_team="Fake Team",
+                away_team="Other Team",
+                match_date="2026-05-25",
+            )
+        assert "baseball_collection_rejected" in caplog.text
+        assert "schedule_unavailable" in caplog.text
+
+    def test_explicit_fallback_when_game_not_found(self):
+        schedule_result = MagicMock()
+        schedule_result.meta.available = True
+        schedule_result.games = []
+
+        service = MagicMock()
+        service._schedule.get_schedule.return_value = schedule_result
+
+        module = BaseballModule(collection_service=service, allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="Fake Team",
             away_team="Other Team",
@@ -251,19 +292,22 @@ class TestBaseballModuleWithService:
         )
 
         assert inputs["players"][0]["player_name"] == "Aaron Judge"
+        assert inputs["data_quality"]["source"] == "deterministic_fallback"
 
-    def test_falls_back_on_schedule_error(self):
+    def test_rejects_on_schedule_error_by_default(self, caplog):
         service = MagicMock()
         service._schedule.get_schedule.side_effect = RuntimeError("network")
 
         module = BaseballModule(collection_service=service)
-        inputs = module.collect_inputs(
-            home_team="Yankees",
-            away_team="Red Sox",
-            match_date="2026-05-25",
-        )
 
-        assert inputs["players"][0]["player_name"] == "Aaron Judge"
+        with pytest.raises(BaseballDataQualityError, match="Could not find enough match details"):
+            module.collect_inputs(
+                home_team="Yankees",
+                away_team="Red Sox",
+                match_date="2026-05-25",
+            )
+        assert "baseball_collection_rejected" in caplog.text
+        assert "network" in caplog.text
 
     def test_score_works_with_real_data(self):
         service = MagicMock()
@@ -280,6 +324,64 @@ class TestBaseballModuleWithService:
 
         assert len(scores) > 0
         assert all(s["market"] == "hits" for s in scores)
+
+    def test_pitcher_only_collection_rejects_hitter_markets(self, caplog):
+        service = MagicMock()
+        service._schedule.get_schedule.return_value = self._make_schedule_result()
+        game = MLBGame(
+            event_id="717001",
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            venue="Yankee Stadium",
+            game_time_utc="2026-05-25T23:05:00Z",
+            home_team_id=147,
+            away_team_id=111,
+            venue_id=3313,
+        )
+        service.collect.return_value = MLBGameContext(
+            game=game,
+            home_probable_pitcher=MLBProbablePitcher(player_name="Gerrit Cole", player_id=543037, confirmed=True),
+            away_probable_pitcher=MLBProbablePitcher(player_name="Brayan Bello", player_id=678394, confirmed=True),
+            home_batting_order=None,
+            away_batting_order=None,
+        )
+
+        module = BaseballModule(collection_service=service)
+        inputs = module.collect_inputs(
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            match_date="2026-05-25",
+        )
+
+        with pytest.raises(BaseballDataQualityError, match="hitter markets require batter data"):
+            module.score(inputs, markets=("hits", "total_bases", "runs", "rbi", "home_runs"))
+        assert "baseball_scoring_rejected" in caplog.text
+        assert "missing_batter_data" in caplog.text
+
+    def test_missing_lines_do_not_become_zero_line_recommendations(self, caplog):
+        module = BaseballModule()
+        inputs = {
+            "home_team": "New York Yankees",
+            "away_team": "Boston Red Sox",
+            "match_date": "2026-05-25",
+            "league": "mlb",
+            "players": [
+                {
+                    "player_name": "Aaron Judge",
+                    "player_type": "batter",
+                    "team": "NYY",
+                    "batting_order": 2,
+                    "hits_per_game": 1.5,
+                    "hits_last5_per_game": 1.6,
+                }
+            ],
+            "lines": {"Aaron Judge": {}},
+        }
+
+        with pytest.raises(BaseballDataQualityError, match="missing prop lines"):
+            module.score(inputs, markets=("hits",))
+        assert "baseball_scoring_rejected" in caplog.text
+        assert "missing_prop_lines" in caplog.text
 
 
 class TestFindGame:

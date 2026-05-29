@@ -37,6 +37,7 @@ from pipeline_service import (  # noqa: E402
     PipelineServiceError,
     run_pipeline_with_payload,
 )
+from pipeline_runner import PipelineRunError  # noqa: E402
 from services.api import db as db_module  # noqa: E402
 from services.api import jobs as jobs_module  # noqa: E402
 from services.api.logging_config import configure_json_logging  # noqa: E402
@@ -719,6 +720,13 @@ def _execute_pipeline_job(
         else:
             deps = build_dependency_bundle(**bundle_kwargs)
             result = run_pipeline_with_payload(request=request_dict, deps=deps)
+    except PipelineRunError as exc:
+        latency_ms = max(0, round((time.perf_counter() - started) * 1000))
+        db_module.mark_pick_failed(
+            pick_id=pick_id, stage=exc.stage, message=exc.message, latency_ms=latency_ms
+        )
+        ledger.fail_run(run_ctx.id, error_summary=exc.message, error_stage=exc.stage)
+        return False
     except PipelineServiceError as exc:
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         cause = exc.__cause__

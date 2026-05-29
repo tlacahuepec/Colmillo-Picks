@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from baseball_module import BaseballDataQualityError
 from baseball_module import BaseballModule
 
 
@@ -80,7 +83,7 @@ class TestBaseballModuleScoring:
         assert "explainability" in pick
         assert "top_contributing_factors" in pick["explainability"]
 
-    def test_score_empty_players_returns_empty(self):
+    def test_score_empty_players_rejects_hitter_markets(self):
         module = BaseballModule()
         match_inputs = {
             "home_team": "NYY",
@@ -89,8 +92,8 @@ class TestBaseballModuleScoring:
             "players": [],
             "lines": {},
         }
-        scores = module.score(match_inputs, markets=("hits",))
-        assert scores == []
+        with pytest.raises(BaseballDataQualityError, match="hitter markets require batter data"):
+            module.score(match_inputs, markets=("hits",))
 
     def test_explain_uses_real_explainer(self):
         module = BaseballModule()
@@ -116,7 +119,7 @@ class TestBaseballModuleScoring:
 
 class TestBaseballModulePipelineIntegration:
     def test_collect_score_explain_pipeline(self):
-        module = BaseballModule()
+        module = BaseballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="NYY", away_team="BOS", match_date="2026-05-25"
         )
@@ -135,7 +138,7 @@ class TestBaseballModulePipelineIntegration:
         from pick_request import PickRequest
         from pipeline_runner import PipelineRunner
 
-        module = BaseballModule()
+        module = BaseballModule(allow_deterministic_fallback=True)
         req = PickRequest(
             sport="baseball",
             event_date="2026-05-25",
@@ -154,7 +157,7 @@ class TestBaseballModulePipelineIntegration:
     def test_report_renders_for_baseball_scores(self):
         from render_baseball_report import render_baseball_report
 
-        module = BaseballModule()
+        module = BaseballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="NYY", away_team="BOS", match_date="2026-05-25"
         )
@@ -168,7 +171,7 @@ class TestBaseballModulePipelineIntegration:
     def test_trace_builds_for_baseball(self):
         from baseball_trace import MLBTraceRecord, PickTrace, compute_input_hash
 
-        module = BaseballModule()
+        module = BaseballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="NYY", away_team="BOS", match_date="2026-05-25"
         )

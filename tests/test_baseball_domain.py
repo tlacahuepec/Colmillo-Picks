@@ -132,7 +132,7 @@ class TestMissingBaseballData:
 
 class TestBaseballContextWithModule:
     def test_fake_context_feeds_baseball_module(self) -> None:
-        module = BaseballModule()
+        module = BaseballModule(allow_deterministic_fallback=True)
         ctx = BaseballContext(
             home_team="Yankees",
             away_team="Red Sox",
