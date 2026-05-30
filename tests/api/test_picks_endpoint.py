@@ -332,14 +332,22 @@ def test_request_logging_emits_json_line(
     assert response.status_code == 202
     assert response.headers["X-Request-Id"] == "fixed-req-id"
 
-    request_records = [r for r in caplog.records if r.message == "request"]
+    # Robust record lookup (multi-accessor + getattr) to survive any remaining
+    # caplog + JsonFormatter interaction quirks in CI, consistent with the
+    # broader hardening done for Epic #219 cross-sport observability.
+    request_records = [
+        r for r in caplog.records
+        if getattr(r, "message", "") == "request"
+        or getattr(r, "msg", "") == "request"
+        or r.getMessage() == "request"
+    ]
     assert request_records, "expected a 'request' log record"
     record = request_records[-1]
-    assert record.request_id == "fixed-req-id"
-    assert record.method == "POST"
-    assert record.path == "/picks"
-    assert record.status_code == 202
-    assert isinstance(record.latency_ms, int) and record.latency_ms >= 0
+    assert getattr(record, "request_id", None) == "fixed-req-id"
+    assert getattr(record, "method", None) == "POST"
+    assert getattr(record, "path", None) == "/picks"
+    assert getattr(record, "status_code", None) == 202
+    assert isinstance(getattr(record, "latency_ms", None), int) and record.latency_ms >= 0
 
 
 def test_json_formatter_serializes_request_fields() -> None:
@@ -369,6 +377,44 @@ def test_json_formatter_serializes_request_fields() -> None:
     assert payload["method"] == "GET"
     assert payload["status_code"] == 200
     assert payload["latency_ms"] == 4
+
+
+def test_json_formatter_never_raises_on_malicious_extra() -> None:
+    """The formatter (including its ultra-defensive fallback) must never raise,
+    no matter what garbage ends up in extra= (the exact class of failure that
+    caused repeated CI exit-2 on the cross-sport observability PR).
+
+    This is the TDD guardrail for the infrastructure change in logging_config.
+    """
+    from services.api.logging_config import JsonFormatter
+
+    formatter = JsonFormatter()
+
+    # Build a record with several "evil" extra values that have historically
+    # caused json.dumps or formatTime/getMessage paths to blow up in CI.
+    record = logging.LogRecord(
+        name="colmillo",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="pipeline_run_failed",
+        args=(),
+        exc_info=None,
+    )
+    record.sport = "baseball"
+    record.critical_missing_fields = ["foo", "bar"]
+    # Problematic types that have caused issues in real runs
+    record.provider_status = {"nested": {"ok": False, "ts": object()}}  # unserializable
+    record.weird = lambda: 42  # callable
+    record.dt = __import__("datetime").datetime.now()  # datetime edge cases
+    record.circular_hint = {"self": None}  # would be circular if we did something dumb
+
+    # Must not raise, even if it hits the fallback path
+    payload_str = formatter.format(record)
+    payload = json.loads(payload_str)
+
+    assert isinstance(payload, dict)
+    assert "message" in payload or "formatter_error" in payload
 
 
 # --------------------------------------------------------------------------- #
