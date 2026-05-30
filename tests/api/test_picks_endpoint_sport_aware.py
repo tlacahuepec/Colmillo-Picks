@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from pipeline_runner import PipelineRunError
 from services.api import main as api_main
 from services.api import db as db_module
 
@@ -48,6 +49,52 @@ class TestStructuredPicksRequest:
         data = resp.json()
         assert "id" in data
         assert data["status"] == "pending"
+
+    def test_sport_module_pipeline_error_persists_stage(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        row = db_module.create_pending_pick_run(
+            request_payload={
+                "_sport_module_path": True,
+                "sport": "baseball",
+                "home_team": "CIN",
+                "away_team": "ATL",
+                "event_date": "2026-05-29",
+                "markets": ["hits"],
+                "top_n": 5,
+                "league": "mlb",
+            }
+        )
+
+        def fail_pipeline(_request_dict):
+            raise PipelineRunError(
+                stage="score",
+                message="Could not find enough match details: missing prop lines.",
+            )
+
+        monkeypatch.setattr(api_main, "_run_sport_module_pipeline", fail_pipeline)
+
+        api_main._execute_pipeline_job(
+            pick_id=row.id,
+            request_dict={
+                "_sport_module_path": True,
+                "sport": "baseball",
+                "home_team": "CIN",
+                "away_team": "ATL",
+                "event_date": "2026-05-29",
+                "markets": ["hits"],
+                "top_n": 5,
+                "league": "mlb",
+            },
+            bundle_kwargs={},
+        )
+
+        status = client.get(f"/picks/{row.id}/status").json()
+        assert status["status"] == "failed"
+        assert status["error_stage"] == "score"
+        assert "Could not find enough match details" in status["error_message"]
 
     def test_invalid_sport_returns_400(self, client: TestClient) -> None:
         resp = client.post("/picks", json={

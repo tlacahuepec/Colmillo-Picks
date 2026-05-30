@@ -37,6 +37,7 @@ from pipeline_service import (  # noqa: E402
     PipelineServiceError,
     run_pipeline_with_payload,
 )
+from pipeline_runner import PipelineRunError  # noqa: E402
 from services.api import db as db_module  # noqa: E402
 from services.api import jobs as jobs_module  # noqa: E402
 from services.api.logging_config import configure_json_logging  # noqa: E402
@@ -220,6 +221,48 @@ class AvailabilityCheckResponse(BaseModel):
     checked_at: str
 
 
+class MatchDiscoveryRequest(BaseModel):
+    date: str = Field(..., description="YYYY-MM-DD date to discover matches for.")
+    sports: list[str] = Field(default_factory=lambda: ["soccer"], min_length=1)
+    limit_per_sport: int = Field(5, ge=1, le=5)
+    llm_provider: str | None = Field(None, description="gemini | grok | openai")
+    llm_model: str | None = None
+
+
+class DiscoverySource(BaseModel):
+    label: str
+    url: str | None = None
+
+
+class DiscoveredMatch(BaseModel):
+    sport: str
+    home_team: str
+    away_team: str
+    event_date: str
+    league: str | None = None
+    competition: str | None = None
+    kickoff_utc: str | None = None
+    importance: str
+    notes: str | None = None
+    source_provider: str | None = None
+    source_model: str | None = None
+    sources: list[DiscoverySource] = Field(default_factory=list)
+    data_quality: dict[str, Any] = Field(default_factory=dict)
+
+
+class SportDiscoveryResult(BaseModel):
+    matches: list[DiscoveredMatch] = Field(default_factory=list)
+    error: str | None = None
+    data_quality: dict[str, Any] = Field(default_factory=dict)
+
+
+class MatchDiscoveryResponse(BaseModel):
+    date_utc: str
+    generated_at_utc: str
+    limit_per_sport: int
+    results: dict[str, SportDiscoveryResult]
+
+
 class RunSummary(BaseModel):
     """Lightweight row used by ``GET /runs`` listings."""
 
@@ -386,6 +429,15 @@ def _build_run_ledger():
         return SqliteRunLedger()
     except Exception:
         return InMemoryRunLedger()
+
+
+def _build_match_discovery_client(payload: MatchDiscoveryRequest):
+    from match_discovery import MatchDiscoveryClient
+
+    return MatchDiscoveryClient.from_env(
+        provider=payload.llm_provider,
+        model=payload.llm_model,
+    )
 
 
 def _handle_legacy_picks(body: dict[str, Any], background_tasks: Any) -> PickAcceptedResponse:
@@ -668,6 +720,13 @@ def _execute_pipeline_job(
         else:
             deps = build_dependency_bundle(**bundle_kwargs)
             result = run_pipeline_with_payload(request=request_dict, deps=deps)
+    except PipelineRunError as exc:
+        latency_ms = max(0, round((time.perf_counter() - started) * 1000))
+        db_module.mark_pick_failed(
+            pick_id=pick_id, stage=exc.stage, message=exc.message, latency_ms=latency_ms
+        )
+        ledger.fail_run(run_ctx.id, error_summary=exc.message, error_stage=exc.stage)
+        return False
     except PipelineServiceError as exc:
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         cause = exc.__cause__
@@ -774,6 +833,34 @@ def create_app() -> FastAPI:
             "branch": meta.branch,
             "channel": meta.channel,
         }
+
+    # ---- Match Discovery ------------------------------------------------- #
+    @app.post("/matches/discover", response_model=MatchDiscoveryResponse)
+    def discover_matches(payload: MatchDiscoveryRequest) -> MatchDiscoveryResponse:
+        from match_discovery import (
+            MatchDiscoveryError,
+            MatchDiscoveryValidationError,
+            validate_match_discovery_inputs,
+        )
+
+        try:
+            sports = validate_match_discovery_inputs(
+                date_utc=payload.date,
+                sports=payload.sports,
+                limit_per_sport=payload.limit_per_sport,
+            )
+            client = _build_match_discovery_client(payload)
+            result = client.discover_matches(
+                date_utc=payload.date,
+                sports=sports,
+                limit_per_sport=payload.limit_per_sport,
+            )
+        except MatchDiscoveryValidationError as exc:
+            raise HTTPException(status_code=400, detail="; ".join(exc.errors)) from exc
+        except MatchDiscoveryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return MatchDiscoveryResponse(**result)
 
     # ---- Picks (async) ---------------------------------------------------- #
     @app.post("/picks", response_model=PickAcceptedResponse, status_code=202)

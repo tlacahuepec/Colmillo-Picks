@@ -92,3 +92,85 @@ def build_daily_intelligence_user_prompt(*, date_utc: str, top_n: int) -> str:
         ],
     }
     return json.dumps(payload, sort_keys=True)
+
+
+def build_match_discovery_system_prompt() -> str:
+    return (
+        "You are a real-time multi-sport match discovery analyst. "
+        "Use current, verifiable sources to identify important scheduled matches. "
+        "Return exactly one valid JSON object. Do not include markdown, code fences, or prose outside the JSON. "
+        "Use null for unavailable or unverifiable fields, and include error metadata per sport when a sport cannot be discovered. "
+        "Never invent fixtures, kickoff times, leagues, or sources."
+    )
+
+
+def build_match_discovery_user_prompt(
+    *,
+    date_utc: str,
+    sports: list[str],
+    limit_per_sport: int,
+) -> str:
+    payload = {
+        "task": (
+            f"Identify up to {limit_per_sport} important matches per requested sport on {date_utc}."
+        ),
+        "today_utc": date_utc,
+        "sports": sports,
+        "limit_per_sport": limit_per_sport,
+        "selection_criteria_by_sport": {
+            "soccer": [
+                "Major competitions, derbies, title races, relegation battles, knockout matches, and top-four races",
+                "Prefer matches with clear kickoff time and competition context",
+            ],
+            "basketball": [
+                "NBA, EuroLeague, or NCAAB games with playoff, rivalry, rest, injury, or standings significance",
+                "Prefer games with clear home and away teams and scheduled tip time",
+            ],
+            "baseball": [
+                "MLB games with notable pitchers, rivalry context, playoff relevance, or strong market interest",
+                "Prefer games with clear probable teams and scheduled first pitch",
+            ],
+        },
+        "required_json_shape": {
+            "schema_version": "v1.0.0",
+            "date_utc": "YYYY-MM-DD",
+            "generated_at_utc": "ISO-8601Z timestamp",
+            "provider": "provider name",
+            "model": "model name used",
+            "grouped_by_sport": {
+                "soccer": {
+                    "matches": [
+                        {
+                            "home_team": "str",
+                            "away_team": "str",
+                            "event_date": "YYYY-MM-DD",
+                            "league": "stable league key or null",
+                            "competition": "display competition name or null",
+                            "kickoff_utc": "ISO-8601Z or null",
+                            "importance": "high|medium|low",
+                            "notes": "short rationale or null",
+                            "sources": [
+                                {"label": "source label", "url": "https://... or null"}
+                            ],
+                            "data_quality": {
+                                "confidence": "high|medium|low",
+                                "missing_fields": ["field name"],
+                            },
+                        }
+                    ],
+                    "error": None,
+                    "data_quality": {"status": "ok|partial|error"},
+                }
+            },
+        },
+        "rules": [
+            "Return only JSON, with no markdown fences or prose outside the JSON",
+            "Only include sports requested in the sports array",
+            f"Include at most {limit_per_sport} matches for each requested sport",
+            "Group every result under grouped_by_sport using the sport key",
+            "If a sport cannot be discovered, return an empty matches list plus an error string for that sport",
+            "Use null for unknown kickoff, league, competition, notes, or source URLs",
+            "Do not fabricate fixtures, kickoff times, leagues, or sources",
+        ],
+    }
+    return json.dumps(payload, sort_keys=True)

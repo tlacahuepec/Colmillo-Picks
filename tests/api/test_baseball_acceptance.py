@@ -62,7 +62,7 @@ class TestBaseballAPIAcceptance:
         assert body["status"] == "pending"
         assert "id" in body
 
-    def test_baseball_request_executes_successfully(self, client: TestClient) -> None:
+    def test_baseball_request_fails_without_enough_match_details(self, client: TestClient) -> None:
         response = client.post(
             "/picks",
             json={
@@ -78,14 +78,14 @@ class TestBaseballAPIAcceptance:
         _run_next_job()
 
         detail = client.get(f"/picks/{pick_id}").json()
-        assert detail["status"] == "success"
-        assert len(detail["scores"]) > 0
-        for pick in detail["scores"]:
-            assert "player" in pick
-            assert "market" in pick
-            assert "score" in pick
+        assert detail["status"] == "failed"
+        assert detail["error_stage"] == "collect"
+        assert "Could not find enough match details" in detail["error_message"]
+        assert detail["scores"] == []
 
-    def test_baseball_with_specific_markets(self, client: TestClient) -> None:
+    def test_baseball_with_specific_markets_fails_without_enough_match_details(
+        self, client: TestClient
+    ) -> None:
         response = client.post(
             "/picks",
             json={
@@ -102,9 +102,10 @@ class TestBaseballAPIAcceptance:
         _run_next_job()
 
         detail = client.get(f"/picks/{pick_id}").json()
-        assert detail["status"] == "success"
-        markets_seen = {s["market"] for s in detail["scores"]}
-        assert markets_seen <= {"hits", "strikeouts"}
+        assert detail["status"] == "failed"
+        assert detail["error_stage"] == "collect"
+        assert "Could not find enough match details" in detail["error_message"]
+        assert detail["scores"] == []
 
     def test_baseball_npb_rejected(self, client: TestClient) -> None:
         response = client.post(

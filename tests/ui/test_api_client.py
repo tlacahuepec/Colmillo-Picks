@@ -169,3 +169,64 @@ def test_list_picks_sport_filter(client: PicksAPIClient) -> None:
 
     page_baseball = client.list_picks(limit=10, offset=0, sport="baseball")
     assert len(page_baseball["items"]) == 0
+
+
+def test_discover_matches_posts_date_sports_and_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("COLMILLO_API_KEY", _TEST_API_KEY)
+
+    class _FakeDiscoveryClient:
+        def discover_matches(
+            self,
+            *,
+            date_utc: str,
+            sports: list[str],
+            limit_per_sport: int,
+        ) -> dict[str, Any]:
+            assert date_utc == "2026-06-01"
+            assert sports == ["soccer", "baseball"]
+            assert limit_per_sport == 2
+            return {
+                "date_utc": date_utc,
+                "generated_at_utc": "2026-06-01T12:00:00Z",
+                "limit_per_sport": limit_per_sport,
+                "results": {
+                    "soccer": {
+                        "matches": [
+                            {
+                                "sport": "soccer",
+                                "home_team": "Arsenal",
+                                "away_team": "Liverpool",
+                                "event_date": date_utc,
+                                "league": "premier_league",
+                                "competition": "Premier League",
+                                "kickoff_utc": "2026-06-01T19:00:00Z",
+                                "importance": "high",
+                                "notes": "Title-race leverage",
+                                "source_provider": "fake",
+                                "source_model": "fake-model",
+                                "sources": [],
+                                "data_quality": {"confidence": "medium", "missing_fields": []},
+                            }
+                        ],
+                        "error": None,
+                        "data_quality": {"status": "ok"},
+                    }
+                },
+            }
+
+    monkeypatch.setattr(api_main, "_build_match_discovery_client", lambda _: _FakeDiscoveryClient())
+    transport = _build_test_transport(api_main.create_app())
+    api_client = PicksAPIClient(
+        APIClientConfig(base_url="http://testserver", api_key=_TEST_API_KEY),
+        transport=transport,
+    )
+
+    response = api_client.discover_matches(
+        date="2026-06-01",
+        sports=["soccer", "baseball"],
+        limit_per_sport=2,
+    )
+
+    assert response["results"]["soccer"]["matches"][0]["home_team"] == "Arsenal"
