@@ -236,7 +236,13 @@ class TestStructuredPicksRequest:
             )
 
         # The handler emits "pipeline_run_failed" with the rich error_details fields promoted via extra=
-        failed_logs = [r for r in caplog.records if getattr(r, "message", "") == "pipeline_run_failed"]
+        # Use .msg (original log msg) + fallback for cross-env compatibility (pytest/caplog + py version diffs)
+        failed_logs = [
+            r for r in caplog.records
+            if getattr(r, "msg", "") == "pipeline_run_failed"
+            or getattr(r, "message", "") == "pipeline_run_failed"
+            or r.getMessage() == "pipeline_run_failed"
+        ]
         assert failed_logs, "Expected structured 'pipeline_run_failed' log from error handler"
         log_record = failed_logs[0]
         # The JsonFormatter promotes extra keys; they should be directly on the record
