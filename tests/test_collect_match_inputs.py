@@ -130,6 +130,60 @@ def test_collect_inputs_rejects_missing_fixture_when_fallback_disabled() -> None
         )
 
 
+def test_collect_inputs_rejects_missing_lineup_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Lineup lookup failed:"):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=_NoneLineupProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
+def test_collect_inputs_rejects_empty_players_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Player lookup failed: No player-level provider data returned\\."):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=_EmptyPlayersProvider(),
+            odds_provider=collector.DeterministicOddsProvider(),
+            weather_provider=collector.DeterministicWeatherProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
+def test_collect_inputs_rejects_insufficient_odds_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Odds lookup failed: fewer than 2 sportsbook snapshots returned\\."):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=collector.DeterministicLineupProvider(),
+            odds_provider=_SparseOddsProvider(),
+            weather_provider=collector.DeterministicWeatherProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
+def test_collect_inputs_rejects_missing_weather_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Weather lookup failed:"):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=collector.DeterministicLineupProvider(),
+            odds_provider=collector.DeterministicOddsProvider(),
+            weather_provider=_MissingWeatherProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
 def test_collect_inputs_preserves_fixture_status_in_match_payload() -> None:
     collector = load_script_module("collect_match_inputs.py")
 

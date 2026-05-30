@@ -35,6 +35,19 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 class TestStructuredPicksRequest:
+    def test_structured_soccer_requires_real_provider_by_default(self, client: TestClient) -> None:
+        resp = client.post("/picks", json={
+            "sport": "soccer",
+            "event_date": "2026-06-01",
+            "home_team": "Arsenal",
+            "away_team": "Liverpool",
+            "markets": ["passes", "shots"],
+            "top_n": 3,
+        })
+
+        assert resp.status_code == 400
+        assert "No LLM fixture provider configured" in resp.json()["detail"]
+
     def test_structured_soccer_request_returns_202(self, client: TestClient) -> None:
         resp = client.post("/picks", json={
             "sport": "soccer",
