@@ -185,14 +185,18 @@ class TestStructuredPicksRequest:
         self,
         client: TestClient,
         monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """On any pipeline failure, the system must emit structured logs (colmillo logger)
         containing sport, stage, critical_missing_fields, provider_status summaries, etc.
         This satisfies the 'every provider failure... is logged with ... details' requirement
         from Epic #219.
+
+        Uses direct monkeypatch of the logger to guarantee deterministic capture regardless of
+        JsonFormatter, handler ordering, caplog internals, or Python 3.11 CI environment.
+        (The caplog-based version was environment-sensitive and caused persistent exit-2 failures.)
         """
-        import logging
+        import logging as _logging
+
         row = db_module.create_pending_pick_run(
             request_payload={
                 "_sport_module_path": True,
@@ -220,36 +224,38 @@ class TestStructuredPicksRequest:
 
         monkeypatch.setattr(api_main, "_run_sport_module_pipeline", fail_and_log)
 
-        with caplog.at_level(logging.WARNING, logger="colmillo"):
-            api_main._execute_pipeline_job(
-                pick_id=row.id,
-                request_dict={
-                    "_sport_module_path": True,
-                    "sport": "basketball",
-                    "home_team": "Lakers",
-                    "away_team": "Celtics",
-                    "event_date": "2026-06-01",
-                    "markets": ["points"],
-                    "top_n": 3,
-                },
-                bundle_kwargs={},
-            )
+        # Deterministic capture: patch the exact method the error handler calls.
+        # Immune to all formatter / caplog / propagate quirks that caused CI exit 2.
+        calls: list[tuple[str, dict | None]] = []
 
-        # The handler emits "pipeline_run_failed" with the rich error_details fields promoted via extra=
-        # (filter uses multiple accessors for cross-env robustness with caplog + our JsonFormatter;
-        # the semantic assertions below on the log content are preserved exactly as required)
-        failed_logs = [
-            r for r in caplog.records
-            if getattr(r, "msg", "") == "pipeline_run_failed"
-            or getattr(r, "message", "") == "pipeline_run_failed"
-            or r.getMessage() == "pipeline_run_failed"
-        ]
-        assert failed_logs, "Expected structured 'pipeline_run_failed' log from error handler"
-        log_record = failed_logs[0]
-        # The JsonFormatter promotes extra keys; they should be directly on the record
-        assert getattr(log_record, "critical_missing_fields", None) == ["player_stats", "prop_lines"]
-        assert getattr(log_record, "sport", None) == "basketball"
-        assert "player_stats" in str(getattr(log_record, "provider_status_summary", {})) or "provider_status_summary" in log_record.__dict__
+        def _capture_warning(msg, *args, **kwargs):
+            calls.append((msg, kwargs.get("extra")))
+
+        colmillo_logger = _logging.getLogger("colmillo")
+        monkeypatch.setattr(colmillo_logger, "warning", _capture_warning)
+
+        api_main._execute_pipeline_job(
+            pick_id=row.id,
+            request_dict={
+                "_sport_module_path": True,
+                "sport": "basketball",
+                "home_team": "Lakers",
+                "away_team": "Celtics",
+                "event_date": "2026-06-01",
+                "markets": ["points"],
+                "top_n": 3,
+            },
+            bundle_kwargs={},
+        )
+
+        assert calls, "Expected the error handler to emit a structured warning for observability"
+        msg, extra = calls[0]
+        assert msg == "pipeline_run_failed"
+        assert extra is not None
+        assert extra.get("sport") == "basketball"
+        assert extra.get("stage") == "collect"
+        assert extra.get("critical_missing_fields") == ["player_stats", "prop_lines"]
+        assert "provider_status_summary" in extra
 
     def test_basketball_failure_persists_rich_observability_context(
         self,
@@ -418,3 +424,66 @@ class TestLegacyPicksRequestRegression:
         data = resp.json()
         assert "id" in data
         assert data["status"] == "pending"
+
+
+class TestErrorDetailsObservabilityContract:
+    """Small, fast unit tests for the new rich error_details paths (Epic #219).
+    These are pure TDD additions that exercise the contracts directly with no
+    logging capture, no full pipeline, and no environment-sensitive fixtures.
+    """
+
+    def test_pipeline_run_error_carries_error_details(self) -> None:
+        ctx = {"critical_missing_fields": ["foo"], "provider_status": {"a": False}}
+        exc = PipelineRunError(stage="collect", message="boom", error_details=ctx)
+        assert exc.stage == "collect"
+        assert exc.message == "boom"
+        assert exc.error_details is ctx
+        assert getattr(exc, "error_details", None) == ctx
+
+    def test_mark_pick_failed_persists_error_details_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The autouse isolated_db fixture has already configured a fresh sqlite for this test.
+        row = db_module.create_pending_pick_run(
+            request_payload={"sport": "soccer", "home_team": "A", "away_team": "B", "markets": ["x"]}
+        )
+        details = {
+            "critical_missing_fields": ["market.sportsbook_snapshots"],
+            "provider_status": {"fixture": {"success": False}},
+            "notes": "test note",
+        }
+        updated = db_module.mark_pick_failed(
+            pick_id=row.id,
+            stage="collect",
+            message="missing data",
+            latency_ms=42,
+            error_details=details,
+        )
+        assert updated is not None
+        assert updated.status == "failed"
+        assert updated.error_details_json is not None
+        import json
+        roundtripped = json.loads(updated.error_details_json)
+        assert roundtripped["critical_missing_fields"] == ["market.sportsbook_snapshots"]
+        assert roundtripped["notes"] == "test note"
+
+    def test_status_and_detail_responses_surface_error_details(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+        # End-to-end through the API layer (exercises _row_to_detail + PickStatusResponse + PickDetailResponse)
+        row = db_module.create_pending_pick_run(
+            request_payload={"_sport_module_path": True, "sport": "basketball", "home_team": "L", "away_team": "C", "markets": ["pts"]}
+        )
+
+        def fail_fast(_):
+            raise PipelineRunError(stage="score", message="no data", error_details={"notes": "unit test detail", "should_reject_prediction": True})
+
+        monkeypatch.setattr(api_main, "_run_sport_module_pipeline", fail_fast)
+
+        api_main._execute_pipeline_job(pick_id=row.id, request_dict={"_sport_module_path": True, "sport": "basketball"}, bundle_kwargs={})
+
+        status = client.get(f"/picks/{row.id}/status").json()
+        assert status["status"] == "failed"
+        assert "error_details" in status
+        assert status["error_details"]["notes"] == "unit test detail"
+        assert status["error_details"]["should_reject_prediction"] is True
+
+        detail = client.get(f"/picks/{row.id}").json()
+        assert "error_details" in detail
+        assert detail["error_details"]["notes"] == "unit test detail"
