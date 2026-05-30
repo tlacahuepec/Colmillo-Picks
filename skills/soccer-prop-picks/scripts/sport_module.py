@@ -117,8 +117,7 @@ class SoccerModule:
         )
 
 
-_DEFAULT_REGISTRY = SportModuleRegistry()
-_DEFAULT_REGISTRY.register(SoccerModule())
+_DEFAULT_REGISTRY: SportModuleRegistry | None = None
 
 
 def _build_basketball_module():
@@ -135,10 +134,12 @@ def _build_basketball_module():
     game_provider = None
     stats_provider = None
     props_provider = None
+    enrichment_provider = None
 
     try:
         if config.provider == "gemini" and config.api_key:
             from llm.gemini_client import GeminiLLMClient
+            from missing_input_enrichment import GeminiMissingInputEnrichmentProvider
 
             model = os.getenv("COLMILLO_BASKETBALL_LLM_MODEL") or config.model or "gemini-2.5-flash"
             client = GeminiLLMClient(
@@ -157,6 +158,7 @@ def _build_basketball_module():
             game_provider = LLMGameProvider(config=config, client=client)
             stats_provider = LLMPlayerStatsProvider(client=client)
             props_provider = LLMPropsProvider(client=client)
+            enrichment_provider = GeminiMissingInputEnrichmentProvider(client=client, model=model)
         elif config.provider in ("xai", "grok") and config.api_key:
             from llm.grok_client import GrokLLMClient
 
@@ -182,15 +184,14 @@ def _build_basketball_module():
         game_provider=game_provider,
         stats_provider=stats_provider,
         props_provider=props_provider,
+        enrichment_provider=enrichment_provider,
     )
-
-
-_DEFAULT_REGISTRY.register(_build_basketball_module())
 
 
 def _build_baseball_module():  # noqa: E302
     """Wire MLB StatsAPI providers into the baseball module."""
     try:
+        import os
         import httpx
         from mlb_statsapi_adapter import (
             StatsAPIBallparkAdapter,
@@ -220,14 +221,41 @@ def _build_baseball_module():  # noqa: E302
             weather=StatsAPIWeatherAdapter(client=client, config=config),
             ballpark=StatsAPIBallparkAdapter(client=client, config=config),
         )
-        return BaseballModule(collection_service=service)
+        enrichment_provider = None
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
+        if gemini_api_key:
+            from llm.gemini_client import GeminiLLMClient
+            from missing_input_enrichment import GeminiMissingInputEnrichmentProvider
+
+            model = os.getenv("COLMILLO_MISSING_INPUT_LLM_MODEL") or "gemini-2.5-flash"
+            gemini_client = GeminiLLMClient(
+                api_key=gemini_api_key,
+                model=model,
+                search_grounding=True,
+                max_output_tokens=4000,
+                max_retries=1,
+                retry_delay_seconds=2.0,
+            )
+            enrichment_provider = GeminiMissingInputEnrichmentProvider(
+                client=gemini_client,
+                model=model,
+            )
+        return BaseballModule(collection_service=service, enrichment_provider=enrichment_provider)
     except Exception:
         from baseball_module import BaseballModule
         return BaseballModule()
 
 
-_DEFAULT_REGISTRY.register(_build_baseball_module())
+def _build_default_registry() -> SportModuleRegistry:
+    registry = SportModuleRegistry()
+    registry.register(SoccerModule())
+    registry.register(_build_basketball_module())
+    registry.register(_build_baseball_module())
+    return registry
 
 
 def get_sport_module(sport: str) -> SportModule:
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is None:
+        _DEFAULT_REGISTRY = _build_default_registry()
     return _DEFAULT_REGISTRY.get(sport)

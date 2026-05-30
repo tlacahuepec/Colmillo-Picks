@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from basketball_module import BasketballModule
+import pytest
+
+from basketball_module import BasketballDataQualityError, BasketballModule
 from pick_request import PickRequest
 from pipeline_runner import PipelineRunner, PipelineResult
 from sport_module import get_sport_module
@@ -179,7 +181,7 @@ class TestBasketballModuleFallback:
         scores = module.score(inputs, markets=("points",))
         assert len(scores) > 0
 
-    def test_partial_provider_failure_still_works(self) -> None:
+    def test_partial_prop_provider_failure_rejects_missing_lines_without_enrichment(self) -> None:
         module = BasketballModule(
             game_provider=_FakeGameProvider(),
             stats_provider=_FakeStatsProvider(),
@@ -189,8 +191,8 @@ class TestBasketballModuleFallback:
             home_team="Lakers", away_team="Celtics", match_date="2026-06-01",
         )
         assert len(inputs["players"]) == 3
-        scores = module.score(inputs, markets=("points",))
-        assert len(scores) > 0
+        with pytest.raises(BasketballDataQualityError, match="missing prop lines"):
+            module.score(inputs, markets=("points",))
 
 
 class TestBasketballModuleRegistered:
