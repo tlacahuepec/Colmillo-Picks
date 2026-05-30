@@ -10,6 +10,12 @@ from __future__ import annotations
 import logging
 from typing import Any, TYPE_CHECKING
 
+from missing_input_enrichment import (
+    mark_enrichment_failed,
+    merge_enriched_inputs,
+    pick_input_provenance,
+)
+
 if TYPE_CHECKING:
     from mlb_collection import MLBCollectionService
 
@@ -146,9 +152,11 @@ class BaseballModule:
         self,
         *,
         collection_service: "MLBCollectionService | None" = None,
+        enrichment_provider: Any | None = None,
         allow_deterministic_fallback: bool = False,
     ) -> None:
         self._collection_service = collection_service
+        self._enrichment_provider = enrichment_provider
         self._allow_deterministic_fallback = allow_deterministic_fallback
 
     @property
@@ -303,64 +311,172 @@ class BaseballModule:
         from baseball_scoring import score_baseball_props
 
         target_markets = tuple(markets) if markets else tuple(_BASEBALL_MARKETS)
-        players = match_inputs.get("players", [])
-        lines = match_inputs.get("lines", {})
+        enrichment_attempted = False
 
-        if _HITTER_MARKETS.intersection(target_markets) and not any(
-            _is_batter(player) for player in players if isinstance(player, dict)
-        ):
-            reason = _missing_batter_reason(match_inputs)
-            _log_scoring_rejection(
-                reason=reason,
+        while True:
+            players = match_inputs.get("players", [])
+            lines = match_inputs.get("lines", {})
+
+            if _HITTER_MARKETS.intersection(target_markets) and not any(
+                _is_batter(player) for player in players if isinstance(player, dict)
+            ):
+                if not enrichment_attempted and self._attempt_enrichment(
+                    match_inputs=match_inputs,
+                    markets=target_markets,
+                    missing_fields=["batters"],
+                ):
+                    enrichment_attempted = True
+                    continue
+                reason = _missing_batter_reason(match_inputs)
+                _log_scoring_rejection(
+                    reason=reason,
+                    match_inputs=match_inputs,
+                    markets=target_markets,
+                )
+                raise BaseballDataQualityError(
+                    _missing_batter_message(match_inputs),
+                    reason=reason,
+                )
+
+            scores: list[dict[str, Any]] = []
+            missing_lines: list[str] = []
+            for player in players:
+                if isinstance(player, dict) and "player_name" in player:
+                    entry = dict(player)
+                    name = entry["player_name"]
+                    player_lines = lines.get(name, {})
+                    player_markets: list[str] = []
+                    for market in target_markets:
+                        if not _player_supports_market(entry, market):
+                            continue
+                        has_line, line_val = _line_for_market(player_lines, market)
+                        if not has_line:
+                            missing_lines.append(f"{name}:{market}")
+                            continue
+                        entry[f"line_{market}"] = line_val
+                        if isinstance(player_lines.get(market), dict):
+                            agreement = player_lines[market].get("market_agreement")
+                            if agreement is not None:
+                                entry["market_agreement"] = agreement
+                        player_markets.append(market)
+                    if player_markets:
+                        scores.extend(score_baseball_props([entry], markets=tuple(player_markets)))
+
+            if scores:
+                return _attach_pick_provenance(scores, match_inputs)
+
+            if missing_lines and not enrichment_attempted and self._attempt_enrichment(
                 match_inputs=match_inputs,
                 markets=target_markets,
-            )
-            raise BaseballDataQualityError(
-                _missing_batter_message(match_inputs),
-                reason=reason,
-            )
+                missing_fields=[f"prop_line:{item}" for item in missing_lines[:20]],
+            ):
+                enrichment_attempted = True
+                continue
 
-        scores: list[dict[str, Any]] = []
-        missing_lines: list[str] = []
-        for player in players:
-            if isinstance(player, dict) and "player_name" in player:
-                entry = dict(player)
-                name = entry["player_name"]
-                player_lines = lines.get(name, {})
-                player_markets: list[str] = []
-                for market in target_markets:
-                    if not _player_supports_market(entry, market):
-                        continue
-                    has_line, line_val = _line_for_market(player_lines, market)
-                    if not has_line:
-                        missing_lines.append(f"{name}:{market}")
-                        continue
-                    entry[f"line_{market}"] = line_val
-                    player_markets.append(market)
-                if player_markets:
-                    scores.extend(score_baseball_props([entry], markets=tuple(player_markets)))
+            if missing_lines:
+                _log_scoring_rejection(
+                    reason="missing_prop_lines",
+                    match_inputs=match_inputs,
+                    markets=target_markets,
+                    context={"missing_lines": missing_lines[:10]},
+                )
+                raise BaseballDataQualityError(
+                    "Could not find enough match details: missing prop lines for requested baseball markets.",
+                    reason="missing_prop_lines",
+                )
 
-        if scores:
-            return scores
-
-        if missing_lines:
-            _log_scoring_rejection(
-                reason="missing_prop_lines",
-                match_inputs=match_inputs,
-                markets=target_markets,
-                context={"missing_lines": missing_lines[:10]},
-            )
-            raise BaseballDataQualityError(
-                "Could not find enough match details: missing prop lines for requested baseball markets.",
-                reason="missing_prop_lines",
-            )
-
-        return []
+            return []
 
     def explain(self, scored_pick: dict[str, Any]) -> str:
         from baseball_explainer import build_deterministic_explanation
 
         return build_deterministic_explanation(scored_pick)
+
+    def _attempt_enrichment(
+        self,
+        *,
+        match_inputs: dict[str, Any],
+        markets: tuple[str, ...],
+        missing_fields: list[str],
+    ) -> bool:
+        if self._enrichment_provider is None:
+            return False
+        logger.info(
+            "baseball_gemini_enrichment_attempt sport=baseball home_team=%s away_team=%s "
+            "match_date=%s league=%s markets=%s missing_fields=%s provider=%s model=%s",
+            match_inputs.get("home_team", ""),
+            match_inputs.get("away_team", ""),
+            match_inputs.get("match_date", ""),
+            match_inputs.get("league", "mlb"),
+            ",".join(markets),
+            ",".join(missing_fields),
+            type(self._enrichment_provider).__name__,
+            getattr(self._enrichment_provider, "model", "unknown"),
+        )
+        try:
+            enrichment = self._enrichment_provider.enrich_missing_inputs(
+                sport="baseball",
+                home_team=match_inputs.get("home_team", ""),
+                away_team=match_inputs.get("away_team", ""),
+                match_date=match_inputs.get("match_date", ""),
+                league=match_inputs.get("league", "mlb"),
+                requested_markets=markets,
+                missing_fields=missing_fields,
+                players=[p for p in match_inputs.get("players", []) if isinstance(p, dict)],
+                lines=match_inputs.get("lines", {}),
+                game={
+                    "venue": match_inputs.get("venue"),
+                    "game_time_utc": match_inputs.get("game_time_utc"),
+                    "home_probable_pitcher": match_inputs.get("home_probable_pitcher"),
+                    "away_probable_pitcher": match_inputs.get("away_probable_pitcher"),
+                },
+                official_context=match_inputs.get("collection_summary", {}),
+            )
+        except Exception as exc:
+            mark_enrichment_failed(match_inputs, reason=str(exc), missing_fields=missing_fields)
+            logger.warning(
+                "baseball_gemini_enrichment_failed sport=baseball home_team=%s away_team=%s "
+                "match_date=%s league=%s markets=%s missing_fields=%s provider=%s model=%s error=%s",
+                match_inputs.get("home_team", ""),
+                match_inputs.get("away_team", ""),
+                match_inputs.get("match_date", ""),
+                match_inputs.get("league", "mlb"),
+                ",".join(markets),
+                ",".join(missing_fields),
+                type(self._enrichment_provider).__name__,
+                getattr(self._enrichment_provider, "model", "unknown"),
+                exc,
+            )
+            return False
+
+        if not enrichment:
+            mark_enrichment_failed(match_inputs, reason="empty_enrichment", missing_fields=missing_fields)
+            logger.warning(
+                "baseball_gemini_enrichment_incomplete sport=baseball home_team=%s away_team=%s "
+                "match_date=%s league=%s markets=%s missing_fields=%s reason=empty_enrichment",
+                match_inputs.get("home_team", ""),
+                match_inputs.get("away_team", ""),
+                match_inputs.get("match_date", ""),
+                match_inputs.get("league", "mlb"),
+                ",".join(markets),
+                ",".join(missing_fields),
+            )
+            return False
+
+        merge_enriched_inputs(match_inputs, enrichment)
+        logger.info(
+            "baseball_gemini_enrichment_success sport=baseball home_team=%s away_team=%s "
+            "match_date=%s league=%s markets=%s missing_fields=%s enriched_players=%s enriched_line_players=%s",
+            match_inputs.get("home_team", ""),
+            match_inputs.get("away_team", ""),
+            match_inputs.get("match_date", ""),
+            match_inputs.get("league", "mlb"),
+            ",".join(markets),
+            ",".join(missing_fields),
+            len(enrichment.get("players", []) or []),
+            len(enrichment.get("lines", {}) or {}),
+        )
+        return True
 
     def _reject_or_fallback(
         self,
@@ -601,4 +717,25 @@ def _line_for_market(player_lines: Any, market: str) -> tuple[bool, Any]:
     except (TypeError, ValueError):
         return False, None
     return True, line_val
+
+
+def _attach_pick_provenance(
+    scores: list[dict[str, Any]],
+    match_inputs: dict[str, Any],
+) -> list[dict[str, Any]]:
+    for pick in scores:
+        player = str(pick.get("player", ""))
+        market = str(pick.get("market", ""))
+        provenance = pick_input_provenance(match_inputs, player=player, market=market)
+        if provenance:
+            pick["input_provenance"] = provenance
+        if provenance.get("player", {}).get("source") == "gemini_enriched" or provenance.get("line", {}).get("source") == "gemini_enriched":
+            explainability = pick.setdefault("explainability", {})
+            risk_flags = explainability.setdefault("risk_flags", [])
+            if "gemini_enriched_input" not in risk_flags:
+                risk_flags.append("gemini_enriched_input")
+            root_risk_flags = pick.setdefault("risk_flags", [])
+            if "gemini_enriched_input" not in root_risk_flags:
+                root_risk_flags.append("gemini_enriched_input")
+    return scores
 

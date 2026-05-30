@@ -126,4 +126,11 @@ def _render_data_quality(match_inputs: dict[str, Any], used_fallback: bool) -> s
             lines.append("Game context: unavailable")
         player_count = len(match_inputs.get("players", []))
         lines.append(f"Players analyzed: {player_count}")
+        data_quality = match_inputs.get("data_quality", {})
+        if data_quality.get("enrichment_status") == "success":
+            confidence = data_quality.get("enrichment_confidence", "unknown")
+            lines.append(f"Gemini enrichment: success (confidence: {confidence})")
+        elif data_quality.get("enrichment_status") == "failed":
+            reason = data_quality.get("enrichment_failure_reason", "unknown")
+            lines.append(f"Gemini enrichment: failed ({reason})")
     return "\n\n".join(lines)

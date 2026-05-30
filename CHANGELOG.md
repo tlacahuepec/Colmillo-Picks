@@ -21,6 +21,11 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Branch-aware CI workflow
 - GitHub release workflow
 - Changelog validation
+- Gemini-backed missing-input enrichment fallback for basketball and baseball
+
+### Changed
+- Basketball scoring now rejects missing prop lines instead of producing zero-line picks
+- Sport module registry initialization is lazy so runtime provider wiring reflects current environment
 
 ## [0.3.0] — 2026-05-20
 
