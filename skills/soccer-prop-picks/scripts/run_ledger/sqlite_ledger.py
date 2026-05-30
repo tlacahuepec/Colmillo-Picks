@@ -162,7 +162,14 @@ class SqliteRunLedger:
 
         return self._load_run(run_id)
 
-    def fail_run(self, run_id: str, *, error_summary: str, error_stage: str | None = None) -> RunContext:
+    def fail_run(
+        self,
+        run_id: str,
+        *,
+        error_summary: str,
+        error_stage: str | None = None,
+        provider_status: dict[str, Any] | None = None,
+    ) -> RunContext:
         now = datetime.now(timezone.utc)
         row = self._conn.execute("SELECT started_at FROM run_ledger WHERE id = ?", (run_id,)).fetchone()
         started_at = datetime.fromisoformat(row["started_at"])
@@ -172,6 +179,12 @@ class SqliteRunLedger:
             "UPDATE run_ledger SET status = 'failed', error_summary = ?, error_stage = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
             (error_summary, error_stage, now.isoformat(), duration_ms, run_id),
         )
+        if provider_status:
+            status_json = json.dumps(provider_status)
+            self._conn.execute(
+                "UPDATE run_ledger SET provider_status_json = ? WHERE id = ?",
+                (status_json, run_id),
+            )
         self._conn.commit()
 
         return self._load_run(run_id)

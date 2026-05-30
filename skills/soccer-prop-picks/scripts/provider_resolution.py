@@ -1,5 +1,7 @@
 """Provider resolution and fallback decisions for collect_match_inputs."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,6 +11,10 @@ _PROVIDER_KEYS = ("fixture", "lineup", "odds", "weather")
 
 class ProviderResolutionError(RuntimeError):
     """Provider data could not be resolved and fallback is disabled."""
+
+    def __init__(self, message: str, *, context: "ResolutionContext" | None = None) -> None:
+        super().__init__(message)
+        self.context = context  # Rich observability data for Epic #219 failures
 
 
 def _default_provider_status() -> dict[str, dict[str, Any]]:
@@ -100,7 +106,7 @@ def resolve_fixture(
     if not allow_fallback:
         status = context.provider_status["fixture"]
         summary = str(status.get("error_summary") or failure)
-        raise ProviderResolutionError(f"Fixture lookup failed: {summary}") from failure
+        raise ProviderResolutionError(f"Fixture lookup failed: {summary}", context=context) from failure
 
     context.critical_missing_fields.append("match")
     context.notes.append("Fixture provider unavailable; used deterministic fallback fixture metadata.")
@@ -141,7 +147,7 @@ def resolve_lineup(
     if not allow_fallback:
         status = context.provider_status["lineup"]
         summary = str(status.get("error_summary") or failure)
-        raise ProviderResolutionError(f"Lineup lookup failed: {summary}") from failure
+        raise ProviderResolutionError(f"Lineup lookup failed: {summary}", context=context) from failure
 
     context.critical_missing_fields.append("teams.projected_lineup")
     context.notes.append("Lineup provider unavailable; used deterministic projected lineups and players.")
@@ -182,7 +188,7 @@ def resolve_market(
     if not allow_fallback:
         status = context.provider_status["odds"]
         summary = str(status.get("error_summary") or failure)
-        raise ProviderResolutionError(f"Odds lookup failed: {summary}") from failure
+        raise ProviderResolutionError(f"Odds lookup failed: {summary}", context=context) from failure
 
     context.critical_missing_fields.append("market.sportsbook_snapshots")
     context.notes.append("Odds provider unavailable; used deterministic synthetic odds snapshots.")
@@ -223,7 +229,7 @@ def resolve_weather(
     if not allow_fallback:
         status = context.provider_status["weather"]
         summary = str(status.get("error_summary") or failure)
-        raise ProviderResolutionError(f"Weather lookup failed: {summary}") from failure
+        raise ProviderResolutionError(f"Weather lookup failed: {summary}", context=context) from failure
 
     context.critical_missing_fields.append("match.weather")
     context.notes.append("Weather provider unavailable; used neutral weather assumptions.")

@@ -9,6 +9,7 @@ returns ``202`` immediately. Clients then poll ``GET /picks/{id}/status`` (or
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import time
@@ -111,6 +112,7 @@ class PickStatusResponse(BaseModel):
     error_stage: str | None = None
     error_message: str | None = None
     latency_ms: int | None = None
+    error_details: dict[str, Any] | None = None  # Rich observability context for failures (Epic #219)
 
 
 class PickSummary(BaseModel):
@@ -147,6 +149,7 @@ class PickDetailResponse(BaseModel):
     latency_ms: int | None = None
     error_stage: str | None = None
     error_message: str | None = None
+    error_details: dict[str, Any] | None = None  # Rich observability context for failures (Epic #219)
     request: dict[str, Any]
     report_markdown: str
     scores: list[dict[str, Any]]
@@ -397,10 +400,18 @@ def _row_to_summary(row: db_module.PickRun) -> PickSummary:
         latency_ms=row.latency_ms,
         error_stage=row.error_stage,
         sport=getattr(row, "sport", None),
+        # error_details not in summary for now, but available in detail/status
     )
 
 
 def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
+    import json
+    error_details = None
+    if getattr(row, "error_details_json", None):
+        try:
+            error_details = json.loads(row.error_details_json)
+        except Exception:
+            error_details = None
     return PickDetailResponse(
         id=row.id,
         created_at=row.created_at,
@@ -413,6 +424,7 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
         latency_ms=row.latency_ms,
         error_stage=row.error_stage,
         error_message=row.error_message,
+        error_details=error_details,
         request=json.loads(row.request_json) if row.request_json else {},
         report_markdown=row.report_markdown or "",
         scores=json.loads(row.scores_json) if row.scores_json else [],
@@ -722,26 +734,65 @@ def _execute_pipeline_job(
             result = run_pipeline_with_payload(request=request_dict, deps=deps)
     except PipelineRunError as exc:
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
+        error_details = getattr(exc, "error_details", None)
         db_module.mark_pick_failed(
-            pick_id=pick_id, stage=exc.stage, message=exc.message, latency_ms=latency_ms
+            pick_id=pick_id,
+            stage=exc.stage,
+            message=exc.message,
+            latency_ms=latency_ms,
+            error_details=error_details,
         )
-        ledger.fail_run(run_ctx.id, error_summary=exc.message, error_stage=exc.stage)
+        provider_status = (error_details or {}).get("provider_status") or None
+        ledger.fail_run(
+            run_ctx.id,
+            error_summary=exc.message,
+            error_stage=exc.stage,
+            provider_status=provider_status,
+        )
+
+        # Structured observability log for failures (Epic #219)
+        try:
+            logger = logging.getLogger("colmillo")
+            log_extra = {
+                "sport": request_dict.get("sport"),
+                "stage": exc.stage,
+                "home_team": request_dict.get("home_team"),
+                "away_team": request_dict.get("away_team"),
+                "match_date": request_dict.get("event_date") or request_dict.get("match_date"),
+                "error_summary": exc.message,
+                "critical_missing_fields": (error_details or {}).get("critical_missing_fields"),
+                "provider_status_summary": (error_details or {}).get("provider_status"),
+            }
+            logger.warning("pipeline_run_failed", extra={k: v for k, v in log_extra.items() if v is not None})
+        except Exception:
+            pass  # logging must never break the failure path
+
         return False
     except PipelineServiceError as exc:
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         cause = exc.__cause__
         message = str(cause) if cause else str(exc)
+        error_details = getattr(exc, "error_details", None)
         db_module.mark_pick_failed(
-            pick_id=pick_id, stage=exc.stage, message=message, latency_ms=latency_ms
+            pick_id=pick_id, stage=exc.stage, message=message, latency_ms=latency_ms, error_details=error_details
         )
-        ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage)
+        provider_status = (error_details or {}).get("provider_status") if error_details else None
+        ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage, provider_status=provider_status)
         return False
     except Exception as exc:  # configuration / unexpected errors
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
+        error_details = getattr(exc, "error_details", None)
         db_module.mark_pick_failed(
-            pick_id=pick_id, stage="unknown", message=str(exc), latency_ms=latency_ms
+            pick_id=pick_id, stage="unknown", message=str(exc), latency_ms=latency_ms, error_details=error_details
         )
-        ledger.fail_run(run_ctx.id, error_summary=str(exc), error_stage="unknown")
+        provider_status = (error_details or {}).get("provider_status") if error_details else None
+        ledger.fail_run(run_ctx.id, error_summary=str(exc), error_stage="unknown", provider_status=provider_status)
+        # Log unexpected errors with any available context
+        try:
+            logger = logging.getLogger("colmillo")
+            logger.error("unexpected_pipeline_error", extra={"error": str(exc), "error_details": error_details})
+        except Exception:
+            pass
         return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
@@ -894,12 +945,20 @@ def create_app() -> FastAPI:
         row = db_module.get_pick_run(pick_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Pick not found.")
+        import json
+        error_details = None
+        if getattr(row, "error_details_json", None):
+            try:
+                error_details = json.loads(row.error_details_json)
+            except Exception:
+                error_details = None
         return PickStatusResponse(
             id=row.id,
             status=row.status,
             error_stage=row.error_stage,
             error_message=row.error_message,
             latency_ms=row.latency_ms,
+            error_details=error_details,
         )
 
     # ---- Outcomes (Story 9) ---------------------------------------------- #

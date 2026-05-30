@@ -435,31 +435,36 @@ class BaseballModule:
         except Exception as exc:
             mark_enrichment_failed(match_inputs, reason=str(exc), missing_fields=missing_fields)
             logger.warning(
-                "baseball_gemini_enrichment_failed sport=baseball home_team=%s away_team=%s "
-                "match_date=%s league=%s markets=%s missing_fields=%s provider=%s model=%s error=%s",
-                match_inputs.get("home_team", ""),
-                match_inputs.get("away_team", ""),
-                match_inputs.get("match_date", ""),
-                match_inputs.get("league", "mlb"),
-                ",".join(markets),
-                ",".join(missing_fields),
-                type(self._enrichment_provider).__name__,
-                getattr(self._enrichment_provider, "model", "unknown"),
-                exc,
+                "baseball_gemini_enrichment_failed",
+                extra={
+                    "sport": "baseball",
+                    "home_team": match_inputs.get("home_team", ""),
+                    "away_team": match_inputs.get("away_team", ""),
+                    "match_date": match_inputs.get("match_date", ""),
+                    "league": match_inputs.get("league", "mlb"),
+                    "markets": ",".join(markets),
+                    "missing_fields": ",".join(missing_fields),
+                    "provider": type(self._enrichment_provider).__name__,
+                    "model": getattr(self._enrichment_provider, "model", "unknown"),
+                    "error": str(exc),
+                },
             )
             return False
 
         if not enrichment:
             mark_enrichment_failed(match_inputs, reason="empty_enrichment", missing_fields=missing_fields)
             logger.warning(
-                "baseball_gemini_enrichment_incomplete sport=baseball home_team=%s away_team=%s "
-                "match_date=%s league=%s markets=%s missing_fields=%s reason=empty_enrichment",
-                match_inputs.get("home_team", ""),
-                match_inputs.get("away_team", ""),
-                match_inputs.get("match_date", ""),
-                match_inputs.get("league", "mlb"),
-                ",".join(markets),
-                ",".join(missing_fields),
+                "baseball_gemini_enrichment_incomplete",
+                extra={
+                    "sport": "baseball",
+                    "home_team": match_inputs.get("home_team", ""),
+                    "away_team": match_inputs.get("away_team", ""),
+                    "match_date": match_inputs.get("match_date", ""),
+                    "league": match_inputs.get("league", "mlb"),
+                    "markets": ",".join(markets),
+                    "missing_fields": ",".join(missing_fields),
+                    "reason": "empty_enrichment",
+                },
             )
             return False
 
@@ -501,13 +506,15 @@ class BaseballModule:
         )
         if self._allow_deterministic_fallback:
             logger.warning(
-                "baseball_deterministic_fallback_used reason=%s sport=baseball home_team=%s "
-                "away_team=%s match_date=%s league=%s",
-                reason,
-                home_team,
-                away_team,
-                match_date,
-                league or "mlb",
+                "baseball_deterministic_fallback_used",
+                extra={
+                    "sport": "baseball",
+                    "reason": reason,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "match_date": match_date,
+                    "league": league or "mlb",
+                },
             )
             return self._collect_placeholder(home_team, away_team, match_date, league)
         raise BaseballDataQualityError(detail, reason=reason) from error
@@ -535,18 +542,18 @@ def _log_rejection(
     error: Exception | None = None,
     context: dict[str, Any] | None = None,
 ) -> None:
-    context_text = f" context={context}" if context else ""
-    error_text = f" error={error}" if error else ""
     logger.warning(
-        "baseball_collection_rejected reason=%s sport=baseball home_team=%s away_team=%s "
-        "match_date=%s league=%s%s%s",
-        reason,
-        home_team,
-        away_team,
-        match_date,
-        league,
-        error_text,
-        context_text,
+        f"baseball_collection_rejected reason={reason}",
+        extra={
+            "sport": "baseball",
+            "reason": reason,
+            "home_team": home_team,
+            "away_team": away_team,
+            "match_date": match_date,
+            "league": league,
+            "error": str(error) if error else None,
+            "context": context,
+        },
     )
 
 
@@ -559,27 +566,27 @@ def _log_scoring_rejection(
 ) -> None:
     summary = _score_rejection_context(match_inputs, context)
     logger.warning(
-        "baseball_scoring_rejected reason=%s sport=baseball home_team=%s away_team=%s "
-        "match_date=%s league=%s markets=%s source=%s game_pk=%s venue=%s game_time_utc=%s "
-        "players=%s batters=%s pitchers=%s prop_lines=%s home_lineup_players=%s "
-        "away_lineup_players=%s context=%s",
-        reason,
-        match_inputs.get("home_team", ""),
-        match_inputs.get("away_team", ""),
-        match_inputs.get("match_date", ""),
-        match_inputs.get("league", "mlb"),
-        ",".join(markets),
-        summary.get("source", ""),
-        summary.get("game_pk", ""),
-        summary.get("venue", ""),
-        summary.get("game_time_utc", ""),
-        summary.get("player_count", 0),
-        summary.get("batter_count", 0),
-        summary.get("pitcher_count", 0),
-        summary.get("prop_line_count", 0),
-        summary.get("home_lineup_players", 0),
-        summary.get("away_lineup_players", 0),
-        summary,
+        f"baseball_scoring_rejected reason={reason}",
+        extra={
+            "sport": "baseball",
+            "reason": reason,
+            "home_team": match_inputs.get("home_team", ""),
+            "away_team": match_inputs.get("away_team", ""),
+            "match_date": match_inputs.get("match_date", ""),
+            "league": match_inputs.get("league", "mlb"),
+            "markets": ",".join(markets),
+            "source": summary.get("source", ""),
+            "game_pk": summary.get("game_pk", ""),
+            "venue": summary.get("venue", ""),
+            "game_time_utc": summary.get("game_time_utc", ""),
+            "player_count": summary.get("player_count", 0),
+            "batter_count": summary.get("batter_count", 0),
+            "pitcher_count": summary.get("pitcher_count", 0),
+            "prop_line_count": summary.get("prop_line_count", 0),
+            "home_lineup_players": summary.get("home_lineup_players", 0),
+            "away_lineup_players": summary.get("away_lineup_players", 0),
+            "context": context,
+        },
     )
 
 
