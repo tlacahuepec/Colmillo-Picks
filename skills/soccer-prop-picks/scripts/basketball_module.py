@@ -217,13 +217,15 @@ class BasketballModule:
             )
         except Exception as exc:
             logger.warning(
-                "basketball_provider_error stage=game provider=%s home_team=%s away_team=%s "
-                "match_date=%s error=%s",
-                type(self._game_provider).__name__,
-                home_team,
-                away_team,
-                match_date,
-                exc,
+                "basketball_provider_error",
+                extra={
+                    "stage": "game",
+                    "provider": type(self._game_provider).__name__,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "match_date": match_date,
+                    "error": str(exc),
+                },
             )
             return None
 
@@ -238,13 +240,15 @@ class BasketballModule:
             )
         except Exception as exc:
             logger.warning(
-                "basketball_provider_error stage=player_stats provider=%s home_team=%s away_team=%s "
-                "match_date=%s error=%s",
-                type(self._stats_provider).__name__,
-                home_team,
-                away_team,
-                match_date,
-                exc,
+                "basketball_provider_error",
+                extra={
+                    "stage": "player_stats",
+                    "provider": type(self._stats_provider).__name__,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "match_date": match_date,
+                    "error": str(exc),
+                },
             )
             return None
 
@@ -260,10 +264,13 @@ class BasketballModule:
             )
         except Exception as exc:
             logger.warning(
-                "basketball_provider_error stage=prop_lines provider=%s players=%s error=%s",
-                type(self._props_provider).__name__,
-                len(players),
-                exc,
+                "basketball_provider_error",
+                extra={
+                    "stage": "prop_lines",
+                    "provider": type(self._props_provider).__name__,
+                    "players_count": len(players) if players else 0,
+                    "error": str(exc),
+                },
             )
             return None
 
@@ -277,16 +284,18 @@ class BasketballModule:
         if self._enrichment_provider is None:
             return
         logger.info(
-            "basketball_gemini_enrichment_attempt sport=basketball home_team=%s away_team=%s "
-            "match_date=%s league=%s markets=%s missing_fields=%s provider=%s model=%s",
-            match_inputs.get("home_team", ""),
-            match_inputs.get("away_team", ""),
-            match_inputs.get("match_date", ""),
-            match_inputs.get("league", "nba"),
-            ",".join(markets),
-            ",".join(missing_fields),
-            type(self._enrichment_provider).__name__,
-            getattr(self._enrichment_provider, "model", "unknown"),
+            "basketball_gemini_enrichment_attempt",
+            extra={
+                "sport": "basketball",
+                "home_team": match_inputs.get("home_team", ""),
+                "away_team": match_inputs.get("away_team", ""),
+                "match_date": match_inputs.get("match_date", ""),
+                "league": match_inputs.get("league", "nba"),
+                "markets": ",".join(markets),
+                "missing_fields": ",".join(missing_fields),
+                "provider": type(self._enrichment_provider).__name__,
+                "model": getattr(self._enrichment_provider, "model", "unknown"),
+            },
         )
         try:
             enrichment = self._enrichment_provider.enrich_missing_inputs(
@@ -305,46 +314,53 @@ class BasketballModule:
         except Exception as exc:
             mark_enrichment_failed(match_inputs, reason=str(exc), missing_fields=missing_fields)
             logger.warning(
-                "basketball_gemini_enrichment_failed sport=basketball home_team=%s away_team=%s "
-                "match_date=%s league=%s markets=%s missing_fields=%s provider=%s model=%s error=%s",
-                match_inputs.get("home_team", ""),
-                match_inputs.get("away_team", ""),
-                match_inputs.get("match_date", ""),
-                match_inputs.get("league", "nba"),
-                ",".join(markets),
-                ",".join(missing_fields),
-                type(self._enrichment_provider).__name__,
-                getattr(self._enrichment_provider, "model", "unknown"),
-                exc,
+                "basketball_gemini_enrichment_failed",
+                extra={
+                    "sport": "basketball",
+                    "home_team": match_inputs.get("home_team", ""),
+                    "away_team": match_inputs.get("away_team", ""),
+                    "match_date": match_inputs.get("match_date", ""),
+                    "league": match_inputs.get("league", "nba"),
+                    "markets": ",".join(markets),
+                    "missing_fields": ",".join(missing_fields),
+                    "provider": type(self._enrichment_provider).__name__,
+                    "model": getattr(self._enrichment_provider, "model", "unknown"),
+                    "error": str(exc),
+                },
             )
             return
 
         if not enrichment:
             mark_enrichment_failed(match_inputs, reason="empty_enrichment", missing_fields=missing_fields)
             logger.warning(
-                "basketball_gemini_enrichment_incomplete sport=basketball home_team=%s away_team=%s "
-                "match_date=%s league=%s markets=%s missing_fields=%s reason=empty_enrichment",
-                match_inputs.get("home_team", ""),
-                match_inputs.get("away_team", ""),
-                match_inputs.get("match_date", ""),
-                match_inputs.get("league", "nba"),
-                ",".join(markets),
-                ",".join(missing_fields),
+                "basketball_gemini_enrichment_incomplete",
+                extra={
+                    "sport": "basketball",
+                    "home_team": match_inputs.get("home_team", ""),
+                    "away_team": match_inputs.get("away_team", ""),
+                    "match_date": match_inputs.get("match_date", ""),
+                    "league": match_inputs.get("league", "nba"),
+                    "markets": ",".join(markets),
+                    "missing_fields": ",".join(missing_fields),
+                    "reason": "empty_enrichment",
+                },
             )
             return
 
         merge_enriched_inputs(match_inputs, enrichment)
         logger.info(
-            "basketball_gemini_enrichment_success sport=basketball home_team=%s away_team=%s "
-            "match_date=%s league=%s markets=%s missing_fields=%s enriched_players=%s enriched_line_players=%s",
-            match_inputs.get("home_team", ""),
-            match_inputs.get("away_team", ""),
-            match_inputs.get("match_date", ""),
-            match_inputs.get("league", "nba"),
-            ",".join(markets),
-            ",".join(missing_fields),
-            len(enrichment.get("players", []) or []),
-            len(enrichment.get("lines", {}) or {}),
+            "basketball_gemini_enrichment_success",
+            extra={
+                "sport": "basketball",
+                "home_team": match_inputs.get("home_team", ""),
+                "away_team": match_inputs.get("away_team", ""),
+                "match_date": match_inputs.get("match_date", ""),
+                "league": match_inputs.get("league", "nba"),
+                "markets": ",".join(markets),
+                "missing_fields": ",".join(missing_fields),
+                "enriched_players": len(enrichment.get("players", []) or []),
+                "enriched_line_players": len(enrichment.get("lines", {}) or []),
+            },
         )
 
     @staticmethod

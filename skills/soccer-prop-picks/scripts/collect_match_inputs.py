@@ -312,7 +312,10 @@ def collect_inputs(
     if not normalized_players:
         append_players_missing(context, fallback_used=allow_fixture_fallback)
         if not allow_fixture_fallback:
-            raise ProviderResolutionError("Player lookup failed: No player-level provider data returned.")
+            raise ProviderResolutionError(
+                "Player lookup failed: No player-level provider data returned.",
+                context=context,
+            )
         fallback_players = fallback_lineup_provider.get_lineups_and_availability(fixture)["players"]
         normalized_players = [normalize_player(player, home_team["team_id"]) for player in fallback_players]
 
@@ -322,7 +325,10 @@ def collect_inputs(
     if len(normalized_snapshots) < 2:
         append_insufficient_snapshots(context, fallback_used=allow_fixture_fallback)
         if not allow_fixture_fallback:
-            raise ProviderResolutionError("Odds lookup failed: fewer than 2 sportsbook snapshots returned.")
+            raise ProviderResolutionError(
+                "Odds lookup failed: fewer than 2 sportsbook snapshots returned.",
+                context=context,
+            )
         fallback_snaps = fallback_odds_provider.get_odds_snapshots(fixture)["sportsbook_snapshots"]
         normalized_snapshots = (normalized_snapshots + fallback_snaps)[:2]
 
