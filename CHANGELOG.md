@@ -26,6 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Basketball scoring now rejects missing prop lines instead of producing zero-line picks
 - Sport module registry initialization is lazy so runtime provider wiring reflects current environment
+- Soccer collection now disables deterministic lineup, player, odds, fixture, and weather fallbacks unless demo fallback is explicitly enabled
 
 ## [0.3.0] — 2026-05-20
 

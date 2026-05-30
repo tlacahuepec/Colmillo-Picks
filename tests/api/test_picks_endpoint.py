@@ -138,9 +138,26 @@ def test_picks_returns_payload_and_report(monkeypatch: pytest.MonkeyPatch, clien
 
     assert captured["bundle_kwargs"]["use_llm"] is False
     assert captured["bundle_kwargs"]["league"] == "Serie A"
+    assert captured["bundle_kwargs"]["allow_deterministic_fallback"] is False
     assert captured["request"]["match_query"] == "juve - milan today"
     assert captured["request"]["top_n"] == 3
     assert captured["request"]["competition"] == "Serie A"
+
+
+def test_picks_can_explicitly_enable_demo_fallback(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    captured = _patch_pipeline(monkeypatch)
+
+    response = client.post(
+        "/picks",
+        json={
+            "match_query": "juve - milan today",
+            "allow_deterministic_fallback": True,
+        },
+    )
+
+    assert response.status_code == 202
+    _run_next_job()
+    assert captured["bundle_kwargs"]["allow_deterministic_fallback"] is True
 
 
 def test_picks_rejects_use_llm_without_provider(client: TestClient) -> None:
