@@ -13,7 +13,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from mlb_collection import MLBCollectionService
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("colmillo.baseball")
 
 _BASEBALL_MARKETS = {
     "hits", "total_bases", "runs", "rbi",
@@ -92,6 +92,9 @@ def _find_game(games: list[dict[str, Any]], home_team: str, away_team: str) -> d
         game_away = teams.get("away", {}).get("team", {}).get("name", "").lower()
         if home_resolved in game_home or game_home in home_resolved:
             if away_resolved in game_away or game_away in away_resolved:
+                return game
+        if home_resolved in game_away or game_away in home_resolved:
+            if away_resolved in game_home or game_home in away_resolved:
                 return game
     return None
 

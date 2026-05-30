@@ -451,3 +451,18 @@ class TestFindGame:
         result = _find_game(self._GAMES, "cubs", "mets")
         assert result is None
 
+    def test_swapped_home_away_still_finds_game(self):
+        result = _find_game(self._GAMES, "Colorado Rockies", "Los Angeles Dodgers")
+        assert result is not None
+        assert result["gamePk"] == 717001
+
+    def test_swapped_abbreviations_still_finds_game(self):
+        result = _find_game(self._GAMES, "bos", "nyy")
+        assert result is not None
+        assert result["gamePk"] == 717002
+
+    def test_swapped_partial_names_still_finds_game(self):
+        result = _find_game(self._GAMES, "rockies", "dodgers")
+        assert result is not None
+        assert result["gamePk"] == 717001
+
