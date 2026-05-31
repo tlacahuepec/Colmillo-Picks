@@ -130,6 +130,92 @@ def test_collect_inputs_rejects_missing_fixture_when_fallback_disabled() -> None
         )
 
 
+def test_collect_inputs_rejects_missing_lineup_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Lineup lookup failed:"):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=_NoneLineupProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
+def test_collect_inputs_rejects_empty_players_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Player lookup failed: No player-level provider data returned\\."):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=_EmptyPlayersProvider(),
+            odds_provider=collector.DeterministicOddsProvider(),
+            weather_provider=collector.DeterministicWeatherProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
+def test_collect_inputs_rejects_insufficient_odds_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Odds lookup failed: fewer than 2 sportsbook snapshots returned\\."):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=collector.DeterministicLineupProvider(),
+            odds_provider=_SparseOddsProvider(),
+            weather_provider=collector.DeterministicWeatherProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
+def test_collect_inputs_rejects_missing_weather_when_fallback_disabled() -> None:
+    collector = load_script_module("collect_match_inputs.py")
+
+    with pytest.raises(Exception, match="Weather lookup failed:"):
+        collector.collect_inputs(
+            collector.MatchInputRequest(home_team="Juve", away_team="Milan", match_date="2026-05-03"),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=collector.DeterministicLineupProvider(),
+            odds_provider=collector.DeterministicOddsProvider(),
+            weather_provider=_MissingWeatherProvider(),
+            allow_fixture_fallback=False,
+        )
+
+
+def test_strict_collect_failure_exposes_full_resolution_context_for_observability() -> None:
+    """Real collect_inputs path (strict mode, no deterministic fallback) must expose
+    the full ResolutionContext (critical_missing_fields, provider_status, notes)
+    so that failures can be richly logged and persisted (Epic #219 cross-sport observability).
+    This is a 'real' path test without API monkeypatching.
+    """
+    collector = load_script_module("collect_match_inputs.py")
+
+    # This combination reaches the append points for players and snapshots before strict raise
+    with pytest.raises(collector.ProviderResolutionError) as exc_info:
+        collector.collect_inputs(
+            collector.MatchInputRequest(
+                home_team="Juve", away_team="Milan", match_date="2026-05-03"
+            ),
+            fixture_provider=collector.DeterministicFixtureProvider(),
+            lineup_provider=_EmptyPlayersProvider(),  # causes players missing append
+            odds_provider=_SparseOddsProvider(),      # causes insufficient snapshots append
+            weather_provider=collector.DeterministicWeatherProvider(),
+            allow_fixture_fallback=False,
+        )
+
+    # Currently the exception is plain ProviderResolutionError without the rich context attached.
+    # This drives attaching the ResolutionContext (or the built validation dict) to the error
+    # or providing another mechanism so the pipeline/API can persist full observability data.
+    error = exc_info.value
+    # ProviderResolutionError now carries .context (the ResolutionContext) with full rich data.
+    assert hasattr(error, "context") and error.context is not None
+    ctx = error.context
+    assert "players" in ctx.critical_missing_fields or "market.sportsbook_snapshots" in ctx.critical_missing_fields
+    assert ctx.provider_status  # detailed per-provider status for observability
+
+
 def test_collect_inputs_preserves_fixture_status_in_match_payload() -> None:
     collector = load_script_module("collect_match_inputs.py")
 

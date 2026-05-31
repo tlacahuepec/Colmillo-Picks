@@ -7,14 +7,28 @@ through the weighted-factor scoring engine.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from basketball_scoring import score_basketball_props
+from missing_input_enrichment import (
+    mark_enrichment_failed,
+    merge_enriched_inputs,
+    pick_input_provenance,
+)
 
+logger = logging.getLogger("colmillo.basketball")
 
 _BASKETBALL_MARKETS = {
     "points", "rebounds", "assists", "threes",
     "steals", "blocks", "turnovers", "fantasy_score",
+}
+_SCORING_MARKETS = ("points", "rebounds", "assists", "threes")
+_MARKET_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "points": ("minutes_proj", "usage_rate", "points_avg", "points_last5"),
+    "rebounds": ("minutes_proj", "usage_rate", "rebound_avg", "rebound_last5"),
+    "assists": ("minutes_proj", "usage_rate", "assist_avg", "assist_last5"),
+    "threes": ("minutes_proj", "usage_rate", "threes_avg", "threes_last5", "three_point_attempts"),
 }
 
 _PLACEHOLDER_PLAYERS = [
@@ -52,6 +66,14 @@ _PLACEHOLDER_LINES: dict[str, dict[str, float]] = {
 }
 
 
+class BasketballDataQualityError(RuntimeError):
+    """Raised when basketball inputs are too incomplete to produce picks."""
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        self.reason = reason
+        super().__init__(message)
+
+
 class BasketballModule:
     def __init__(
         self,
@@ -59,11 +81,13 @@ class BasketballModule:
         game_provider: Any | None = None,
         stats_provider: Any | None = None,
         props_provider: Any | None = None,
+        enrichment_provider: Any | None = None,
         allow_deterministic_fallback: bool = True,
     ) -> None:
         self._game_provider = game_provider
         self._stats_provider = stats_provider
         self._props_provider = props_provider
+        self._enrichment_provider = enrichment_provider
         self._allow_fallback = allow_deterministic_fallback
 
     @property
@@ -85,9 +109,21 @@ class BasketballModule:
         players = self._fetch_player_stats(home_team, away_team, match_date)
         lines = self._fetch_prop_lines(players)
 
-        if players is None and self._allow_fallback:
+        if players is None and self._allow_fallback and self._enrichment_provider is None:
             players = list(_PLACEHOLDER_PLAYERS)
             lines = dict(_PLACEHOLDER_LINES)
+            data_quality = {
+                "source": "deterministic_fallback",
+                "enrichment_status": "not_requested",
+            }
+        else:
+            data_quality = {
+                "source": "provider",
+                "game_status": "ok" if game_ctx else "unavailable",
+                "player_status": "ok" if players else "unavailable",
+                "odds_status": "ok" if lines else "unavailable",
+                "enrichment_status": "not_requested",
+            }
 
         return {
             "home_team": home_team,
@@ -97,19 +133,40 @@ class BasketballModule:
             "game": game_ctx or {},
             "players": players or [],
             "lines": lines or {},
+            "data_quality": data_quality,
         }
 
     def score(
         self, match_inputs: dict[str, Any], *, markets: tuple[str, ...] = ()
     ) -> list[dict[str, Any]]:
-        target_markets = set(markets) if markets else {"points", "rebounds", "assists", "threes"}
-        scoring_markets = tuple(m for m in target_markets if m in ("points", "rebounds", "assists", "threes"))
+        target_markets = set(markets) if markets else set(_SCORING_MARKETS)
+        scoring_markets = tuple(m for m in target_markets if m in _SCORING_MARKETS)
 
         players = match_inputs.get("players", [])
         lines = match_inputs.get("lines", {})
         game = match_inputs.get("game", {})
 
-        player_dicts = self._build_scoring_dicts(players, lines, game)
+        missing_inputs = _find_missing_basketball_inputs(players, lines, scoring_markets)
+        if missing_inputs:
+            self._attempt_enrichment(
+                match_inputs=match_inputs,
+                markets=scoring_markets,
+                missing_fields=missing_inputs,
+            )
+            players = match_inputs.get("players", [])
+            lines = match_inputs.get("lines", {})
+            game = match_inputs.get("game", {})
+            missing_inputs = _find_missing_basketball_inputs(players, lines, scoring_markets)
+
+        if scoring_markets and missing_inputs:
+            reason = "missing_prop_lines" if any(m.startswith("prop_line:") for m in missing_inputs) else "missing_player_context"
+            _log_scoring_rejection(reason=reason, match_inputs=match_inputs, markets=scoring_markets, missing_fields=missing_inputs)
+            raise BasketballDataQualityError(
+                _basketball_missing_message(reason=reason),
+                reason=reason,
+            )
+
+        player_dicts = self._build_scoring_dicts(players, lines, game, markets=scoring_markets)
 
         if scoring_markets and player_dicts:
             scores = score_basketball_props(player_dicts, markets=scoring_markets)
@@ -136,7 +193,7 @@ class BasketballModule:
                     "explainability": {"risk_flags": ["unsupported_market"], "top_contributing_factors": []},
                 })
 
-        return scores
+        return _attach_pick_provenance(scores, match_inputs)
 
     def explain(self, scored_pick: dict[str, Any]) -> str:
         player = scored_pick.get("player", "Unknown")
@@ -158,7 +215,18 @@ class BasketballModule:
             return self._game_provider.lookup_game(
                 home_team=home_team, away_team=away_team, match_date=match_date,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "basketball_provider_error",
+                extra={
+                    "stage": "game",
+                    "provider": type(self._game_provider).__name__,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "match_date": match_date,
+                    "error": str(exc),
+                },
+            )
             return None
 
     def _fetch_player_stats(
@@ -170,7 +238,18 @@ class BasketballModule:
             return self._stats_provider.get_player_stats(
                 home_team=home_team, away_team=away_team, match_date=match_date,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "basketball_provider_error",
+                extra={
+                    "stage": "player_stats",
+                    "provider": type(self._stats_provider).__name__,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "match_date": match_date,
+                    "error": str(exc),
+                },
+            )
             return None
 
     def _fetch_prop_lines(
@@ -181,16 +260,116 @@ class BasketballModule:
         try:
             return self._props_provider.get_prop_lines(
                 players=players,
-                markets=("points", "rebounds", "assists", "threes"),
+                markets=_SCORING_MARKETS,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "basketball_provider_error",
+                extra={
+                    "stage": "prop_lines",
+                    "provider": type(self._props_provider).__name__,
+                    "players_count": len(players) if players else 0,
+                    "error": str(exc),
+                },
+            )
             return None
+
+    def _attempt_enrichment(
+        self,
+        *,
+        match_inputs: dict[str, Any],
+        markets: tuple[str, ...],
+        missing_fields: list[str],
+    ) -> None:
+        if self._enrichment_provider is None:
+            return
+        logger.info(
+            "basketball_gemini_enrichment_attempt",
+            extra={
+                "sport": "basketball",
+                "home_team": match_inputs.get("home_team", ""),
+                "away_team": match_inputs.get("away_team", ""),
+                "match_date": match_inputs.get("match_date", ""),
+                "league": match_inputs.get("league", "nba"),
+                "markets": ",".join(markets),
+                "missing_fields": ",".join(missing_fields),
+                "provider": type(self._enrichment_provider).__name__,
+                "model": getattr(self._enrichment_provider, "model", "unknown"),
+            },
+        )
+        try:
+            enrichment = self._enrichment_provider.enrich_missing_inputs(
+                sport="basketball",
+                home_team=match_inputs.get("home_team", ""),
+                away_team=match_inputs.get("away_team", ""),
+                match_date=match_inputs.get("match_date", ""),
+                league=match_inputs.get("league", "nba"),
+                requested_markets=markets,
+                missing_fields=missing_fields,
+                players=[p for p in match_inputs.get("players", []) if isinstance(p, dict)],
+                lines=match_inputs.get("lines", {}),
+                game=match_inputs.get("game", {}),
+                official_context=match_inputs.get("data_quality", {}),
+            )
+        except Exception as exc:
+            mark_enrichment_failed(match_inputs, reason=str(exc), missing_fields=missing_fields)
+            logger.warning(
+                "basketball_gemini_enrichment_failed",
+                extra={
+                    "sport": "basketball",
+                    "home_team": match_inputs.get("home_team", ""),
+                    "away_team": match_inputs.get("away_team", ""),
+                    "match_date": match_inputs.get("match_date", ""),
+                    "league": match_inputs.get("league", "nba"),
+                    "markets": ",".join(markets),
+                    "missing_fields": ",".join(missing_fields),
+                    "provider": type(self._enrichment_provider).__name__,
+                    "model": getattr(self._enrichment_provider, "model", "unknown"),
+                    "error": str(exc),
+                },
+            )
+            return
+
+        if not enrichment:
+            mark_enrichment_failed(match_inputs, reason="empty_enrichment", missing_fields=missing_fields)
+            logger.warning(
+                "basketball_gemini_enrichment_incomplete",
+                extra={
+                    "sport": "basketball",
+                    "home_team": match_inputs.get("home_team", ""),
+                    "away_team": match_inputs.get("away_team", ""),
+                    "match_date": match_inputs.get("match_date", ""),
+                    "league": match_inputs.get("league", "nba"),
+                    "markets": ",".join(markets),
+                    "missing_fields": ",".join(missing_fields),
+                    "reason": "empty_enrichment",
+                },
+            )
+            return
+
+        merge_enriched_inputs(match_inputs, enrichment)
+        logger.info(
+            "basketball_gemini_enrichment_success",
+            extra={
+                "sport": "basketball",
+                "home_team": match_inputs.get("home_team", ""),
+                "away_team": match_inputs.get("away_team", ""),
+                "match_date": match_inputs.get("match_date", ""),
+                "league": match_inputs.get("league", "nba"),
+                "markets": ",".join(markets),
+                "missing_fields": ",".join(missing_fields),
+                "enriched_players": len(enrichment.get("players", []) or []),
+                "enriched_line_players": len(enrichment.get("lines", {}) or []),
+            },
+        )
 
     @staticmethod
     def _build_scoring_dicts(
         players: list[dict[str, Any]],
         lines: dict[str, Any],
         game: dict[str, Any],
+        *,
+        markets: tuple[str, ...] = _SCORING_MARKETS,
     ) -> list[dict[str, Any]]:
         pace_factor = None
         if game.get("projected_game_pace"):
@@ -213,12 +392,13 @@ class BasketballModule:
                 else:
                     d["rest_days"] = game.get("away_rest_days")
 
-            for market in ("points", "assists", "rebounds", "threes"):
+            for market in markets:
                 line_key = f"line_{market}"
                 if line_key not in d:
                     market_data = player_lines.get(market, {})
                     if isinstance(market_data, dict):
-                        d[line_key] = market_data.get("line", 0)
+                        if market_data.get("line") is not None:
+                            d[line_key] = market_data.get("line")
                         if market_data.get("market_agreement") is not None:
                             d["market_agreement"] = market_data["market_agreement"]
                     elif isinstance(market_data, (int, float)):
@@ -226,3 +406,89 @@ class BasketballModule:
 
             dicts.append(d)
         return dicts
+
+
+def _find_missing_basketball_inputs(
+    players: Any,
+    lines: Any,
+    markets: tuple[str, ...],
+) -> list[str]:
+    player_list = [p for p in players if isinstance(p, dict)] if isinstance(players, list) else []
+    if not player_list:
+        return ["players"]
+
+    missing: list[str] = []
+    for player in player_list:
+        name = str(player.get("player_name", "")).strip() or "Unknown"
+        for market in markets:
+            for field in _MARKET_REQUIRED_FIELDS.get(market, ()):
+                if player.get(field) is None:
+                    missing.append(f"player:{name}:{field}")
+            player_lines = lines.get(name, {}) if isinstance(lines, dict) else {}
+            has_line, _ = _line_for_market(player_lines, market)
+            if not has_line:
+                missing.append(f"prop_line:{name}:{market}")
+    return missing
+
+
+def _line_for_market(player_lines: Any, market: str) -> tuple[bool, Any]:
+    if not isinstance(player_lines, dict) or market not in player_lines:
+        return False, None
+    line_val = player_lines[market]
+    if isinstance(line_val, dict):
+        line_val = line_val.get("line")
+    if line_val is None:
+        return False, None
+    try:
+        float(line_val)
+    except (TypeError, ValueError):
+        return False, None
+    return True, line_val
+
+
+def _basketball_missing_message(*, reason: str) -> str:
+    if reason == "missing_prop_lines":
+        return "Could not find enough match details: missing prop lines for requested basketball markets."
+    return "Could not find enough match details: missing basketball player context for requested markets."
+
+
+def _log_scoring_rejection(
+    *,
+    reason: str,
+    match_inputs: dict[str, Any],
+    markets: tuple[str, ...],
+    missing_fields: list[str],
+) -> None:
+    logger.warning(
+        "basketball_scoring_rejected reason=%s sport=basketball home_team=%s away_team=%s "
+        "match_date=%s league=%s markets=%s players=%s prop_line_players=%s missing_fields=%s "
+        "enrichment_status=%s",
+        reason,
+        match_inputs.get("home_team", ""),
+        match_inputs.get("away_team", ""),
+        match_inputs.get("match_date", ""),
+        match_inputs.get("league", "nba"),
+        ",".join(markets),
+        len(match_inputs.get("players", []) or []),
+        len(match_inputs.get("lines", {}) or {}),
+        ",".join(missing_fields[:20]),
+        match_inputs.get("data_quality", {}).get("enrichment_status", "unknown"),
+    )
+
+
+def _attach_pick_provenance(
+    scores: list[dict[str, Any]],
+    match_inputs: dict[str, Any],
+) -> list[dict[str, Any]]:
+    for pick in scores:
+        player = str(pick.get("player", ""))
+        market = str(pick.get("market", ""))
+        provenance = pick_input_provenance(match_inputs, player=player, market=market)
+        if provenance:
+            pick["input_provenance"] = provenance
+        if provenance.get("player", {}).get("source") == "gemini_enriched" or provenance.get("line", {}).get("source") == "gemini_enriched":
+            explainability = pick.setdefault("explainability", {})
+            risk_flags = explainability.setdefault("risk_flags", [])
+            if "gemini_enriched_input" not in risk_flags:
+                risk_flags.append("gemini_enriched_input")
+    return scores

@@ -1,5 +1,7 @@
 """Provider resolution and fallback decisions for collect_match_inputs."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,6 +11,10 @@ _PROVIDER_KEYS = ("fixture", "lineup", "odds", "weather")
 
 class ProviderResolutionError(RuntimeError):
     """Provider data could not be resolved and fallback is disabled."""
+
+    def __init__(self, message: str, *, context: "ResolutionContext" | None = None) -> None:
+        super().__init__(message)
+        self.context = context  # Rich observability data for Epic #219 failures
 
 
 def _default_provider_status() -> dict[str, dict[str, Any]]:
@@ -63,6 +69,10 @@ def _fixture_provider_label(fixture_provider: Any) -> str:
     return str(getattr(fixture_provider, "provider_label", "fixture provider"))
 
 
+def _provider_label(provider: Any, default: str) -> str:
+    return str(getattr(provider, "provider_label", default))
+
+
 def resolve_fixture(
     request: Any,
     fixture_provider: Any,
@@ -73,12 +83,17 @@ def resolve_fixture(
 ) -> dict[str, Any]:
     _record_attempt(context, "fixture")
     failure: Exception | None = None
-    try:
-        fixture = fixture_provider.lookup_fixture(request)
-    except Exception as exc:
-        _record_failure(context, "fixture", exc)
-        failure = exc
+    if fixture_provider is None:
+        failure = ProviderResolutionError("No fixture provider configured.")
+        _record_failure(context, "fixture", failure)
         fixture = None
+    else:
+        try:
+            fixture = fixture_provider.lookup_fixture(request)
+        except Exception as exc:
+            _record_failure(context, "fixture", exc)
+            failure = exc
+            fixture = None
     if fixture:
         _record_success(context, "fixture")
         return fixture
@@ -91,7 +106,7 @@ def resolve_fixture(
     if not allow_fallback:
         status = context.provider_status["fixture"]
         summary = str(status.get("error_summary") or failure)
-        raise ProviderResolutionError(f"Fixture lookup failed: {summary}") from failure
+        raise ProviderResolutionError(f"Fixture lookup failed: {summary}", context=context) from failure
 
     context.critical_missing_fields.append("match")
     context.notes.append("Fixture provider unavailable; used deterministic fallback fixture metadata.")
@@ -99,16 +114,40 @@ def resolve_fixture(
     return fallback_fixture_fn(request)
 
 
-def resolve_lineup(fixture: dict[str, Any], lineup_provider: Any, fallback_lineup_provider: Any, context: ResolutionContext) -> dict[str, Any]:
+def resolve_lineup(
+    fixture: dict[str, Any],
+    lineup_provider: Any,
+    fallback_lineup_provider: Any,
+    context: ResolutionContext,
+    *,
+    allow_fallback: bool = True,
+) -> dict[str, Any]:
     _record_attempt(context, "lineup")
-    try:
-        lineup_payload = lineup_provider.get_lineups_and_availability(fixture)
-    except Exception as exc:
-        _record_failure(context, "lineup", exc)
+    failure: Exception | None = None
+    if lineup_provider is None:
+        failure = ProviderResolutionError("No lineup provider configured.")
+        _record_failure(context, "lineup", failure)
         lineup_payload = None
+    else:
+        try:
+            lineup_payload = lineup_provider.get_lineups_and_availability(fixture)
+        except Exception as exc:
+            _record_failure(context, "lineup", exc)
+            failure = exc
+            lineup_payload = None
     if lineup_payload:
         _record_success(context, "lineup")
         return lineup_payload
+
+    if failure is None:
+        failure = ProviderResolutionError(
+            f"No {_provider_label(lineup_provider, 'lineup provider')} lineup data returned."
+        )
+        _record_failure(context, "lineup", failure)
+    if not allow_fallback:
+        status = context.provider_status["lineup"]
+        summary = str(status.get("error_summary") or failure)
+        raise ProviderResolutionError(f"Lineup lookup failed: {summary}", context=context) from failure
 
     context.critical_missing_fields.append("teams.projected_lineup")
     context.notes.append("Lineup provider unavailable; used deterministic projected lineups and players.")
@@ -116,16 +155,40 @@ def resolve_lineup(fixture: dict[str, Any], lineup_provider: Any, fallback_lineu
     return fallback_lineup_provider.get_lineups_and_availability(fixture)
 
 
-def resolve_market(fixture: dict[str, Any], odds_provider: Any, fallback_odds_provider: Any, context: ResolutionContext) -> dict[str, Any]:
+def resolve_market(
+    fixture: dict[str, Any],
+    odds_provider: Any,
+    fallback_odds_provider: Any,
+    context: ResolutionContext,
+    *,
+    allow_fallback: bool = True,
+) -> dict[str, Any]:
     _record_attempt(context, "odds")
-    try:
-        market_payload = odds_provider.get_odds_snapshots(fixture)
-    except Exception as exc:
-        _record_failure(context, "odds", exc)
+    failure: Exception | None = None
+    if odds_provider is None:
+        failure = ProviderResolutionError("No odds provider configured.")
+        _record_failure(context, "odds", failure)
         market_payload = None
+    else:
+        try:
+            market_payload = odds_provider.get_odds_snapshots(fixture)
+        except Exception as exc:
+            _record_failure(context, "odds", exc)
+            failure = exc
+            market_payload = None
     if market_payload:
         _record_success(context, "odds")
         return market_payload
+
+    if failure is None:
+        failure = ProviderResolutionError(
+            f"No {_provider_label(odds_provider, 'odds provider')} odds data returned."
+        )
+        _record_failure(context, "odds", failure)
+    if not allow_fallback:
+        status = context.provider_status["odds"]
+        summary = str(status.get("error_summary") or failure)
+        raise ProviderResolutionError(f"Odds lookup failed: {summary}", context=context) from failure
 
     context.critical_missing_fields.append("market.sportsbook_snapshots")
     context.notes.append("Odds provider unavailable; used deterministic synthetic odds snapshots.")
@@ -133,16 +196,40 @@ def resolve_market(fixture: dict[str, Any], odds_provider: Any, fallback_odds_pr
     return fallback_odds_provider.get_odds_snapshots(fixture)
 
 
-def resolve_weather(fixture: dict[str, Any], weather_provider: Any, fallback_weather_provider: Any, context: ResolutionContext) -> dict[str, Any]:
+def resolve_weather(
+    fixture: dict[str, Any],
+    weather_provider: Any,
+    fallback_weather_provider: Any,
+    context: ResolutionContext,
+    *,
+    allow_fallback: bool = True,
+) -> dict[str, Any]:
     _record_attempt(context, "weather")
-    try:
-        weather_payload = weather_provider.get_weather(fixture)
-    except Exception as exc:
-        _record_failure(context, "weather", exc)
+    failure: Exception | None = None
+    if weather_provider is None:
+        failure = ProviderResolutionError("No weather provider configured.")
+        _record_failure(context, "weather", failure)
         weather_payload = None
+    else:
+        try:
+            weather_payload = weather_provider.get_weather(fixture)
+        except Exception as exc:
+            _record_failure(context, "weather", exc)
+            failure = exc
+            weather_payload = None
     if weather_payload:
         _record_success(context, "weather")
         return weather_payload
+
+    if failure is None:
+        failure = ProviderResolutionError(
+            f"No {_provider_label(weather_provider, 'weather provider')} weather data returned."
+        )
+        _record_failure(context, "weather", failure)
+    if not allow_fallback:
+        status = context.provider_status["weather"]
+        summary = str(status.get("error_summary") or failure)
+        raise ProviderResolutionError(f"Weather lookup failed: {summary}", context=context) from failure
 
     context.critical_missing_fields.append("match.weather")
     context.notes.append("Weather provider unavailable; used neutral weather assumptions.")
@@ -157,14 +244,20 @@ def resolve_timestamp(payload: dict[str, Any], timestamp_key: str, missing_note:
     return timestamp
 
 
-def append_players_missing(context: ResolutionContext) -> None:
+def append_players_missing(context: ResolutionContext, *, fallback_used: bool = True) -> None:
     context.critical_missing_fields.append("players")
-    context.notes.append("No player-level provider data returned; used deterministic fallback players.")
+    if fallback_used:
+        context.notes.append("No player-level provider data returned; used deterministic fallback players.")
+    else:
+        context.notes.append("No player-level provider data returned; deterministic fallback disabled.")
 
 
-def append_insufficient_snapshots(context: ResolutionContext) -> None:
+def append_insufficient_snapshots(context: ResolutionContext, *, fallback_used: bool = True) -> None:
     context.critical_missing_fields.append("market.sportsbook_snapshots")
-    context.notes.append("Insufficient odds snapshots from provider; padded with deterministic fallback snapshots.")
+    if fallback_used:
+        context.notes.append("Insufficient odds snapshots from provider; padded with deterministic fallback snapshots.")
+    else:
+        context.notes.append("Insufficient odds snapshots from provider; deterministic fallback disabled.")
 
 
 def build_validation(context: ResolutionContext) -> dict[str, Any]:

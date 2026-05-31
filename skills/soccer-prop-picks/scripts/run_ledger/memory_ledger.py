@@ -51,12 +51,21 @@ class InMemoryRunLedger:
         ctx.duration_ms = max(0, round((now - ctx.started_at).total_seconds() * 1000))
         return ctx
 
-    def fail_run(self, run_id: str, *, error_summary: str, error_stage: str | None = None) -> RunContext:
+    def fail_run(
+        self,
+        run_id: str,
+        *,
+        error_summary: str,
+        error_stage: str | None = None,
+        provider_status: dict[str, Any] | None = None,
+    ) -> RunContext:
         ctx = self._runs[run_id]
         now = datetime.now(timezone.utc)
         ctx.status = "failed"
         ctx.error_summary = error_summary
         ctx.error_stage = error_stage
+        if provider_status:
+            ctx.provider_status = dict(provider_status)
         ctx.completed_at = now
         ctx.duration_ms = max(0, round((now - ctx.started_at).total_seconds() * 1000))
         return ctx

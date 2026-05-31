@@ -15,9 +15,10 @@ from sport_module import SportModule
 
 
 class PipelineRunError(RuntimeError):
-    def __init__(self, stage: str, message: str):
+    def __init__(self, stage: str, message: str, error_details: dict[str, Any] | None = None):
         self.stage = stage
         self.message = message
+        self.error_details = error_details
         super().__init__(f"Pipeline failed at '{stage}': {message}")
 
 

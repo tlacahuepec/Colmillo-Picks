@@ -79,3 +79,24 @@ def test_resolve_fixture_records_failure_status_and_fallback_on_exception() -> N
     assert context.provider_status["fixture"]["success"] is False
     assert context.provider_status["fixture"]["fallback_used"] is True
     assert context.provider_status["fixture"]["error_summary"] == "fixture timeout"
+
+
+def test_provider_resolution_error_accepts_optional_context_for_observability() -> None:
+    """Covers ProviderResolutionError.__init__ signature (incl. the forward-ref
+    context: "ResolutionContext" | None) and attachment of rich context for
+    Epic #219 cross-sport failure observability. This test would have caught
+    the annotation evaluation TypeError on import.
+    """
+    resolution = load_script_module("provider_resolution.py")
+
+    err_no_ctx = resolution.ProviderResolutionError("no context provided")
+    assert err_no_ctx.context is None
+    assert str(err_no_ctx) == "no context provided"
+
+    ctx = resolution.ResolutionContext(
+        critical_missing_fields=["players"],
+        notes=["unit test context"],
+    )
+    err_with_ctx = resolution.ProviderResolutionError("with context", context=ctx)
+    assert err_with_ctx.context is ctx
+    assert err_with_ctx.context.critical_missing_fields == ["players"]

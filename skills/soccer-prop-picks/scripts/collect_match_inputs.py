@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from normalizers import normalize_match_date, normalize_player, normalize_snapshots, normalize_team_name, normalize_weather
 from payload_builder import build_payload, build_teams_payload
 from provider_resolution import (
+    ProviderResolutionError,
     ResolutionContext,
     append_insufficient_snapshots,
     append_players_missing,
@@ -247,10 +248,11 @@ def collect_inputs(
     allow_fixture_fallback: bool = True,
 ) -> dict[str, Any]:
     """Return normalized schema-compatible match inputs with transparent fallbacks."""
-    fixture_provider = fixture_provider or _default_fixture_provider()
-    lineup_provider = lineup_provider or DeterministicLineupProvider()
-    odds_provider = odds_provider or _default_odds_provider()
-    weather_provider = weather_provider or DeterministicWeatherProvider()
+    if allow_fixture_fallback:
+        fixture_provider = fixture_provider or _default_fixture_provider()
+        lineup_provider = lineup_provider or DeterministicLineupProvider()
+        odds_provider = odds_provider or _default_odds_provider()
+        weather_provider = weather_provider or DeterministicWeatherProvider()
 
     fallback_lineup_provider = DeterministicLineupProvider()
     fallback_odds_provider = DeterministicOddsProvider()
@@ -264,9 +266,27 @@ def collect_inputs(
         context,
         allow_fallback=allow_fixture_fallback,
     )
-    lineup_payload = resolve_lineup(fixture, lineup_provider, fallback_lineup_provider, context)
-    market_payload = resolve_market(fixture, odds_provider, fallback_odds_provider, context)
-    weather_payload = resolve_weather(fixture, weather_provider, fallback_weather_provider, context)
+    lineup_payload = resolve_lineup(
+        fixture,
+        lineup_provider,
+        fallback_lineup_provider,
+        context,
+        allow_fallback=allow_fixture_fallback,
+    )
+    market_payload = resolve_market(
+        fixture,
+        odds_provider,
+        fallback_odds_provider,
+        context,
+        allow_fallback=allow_fixture_fallback,
+    )
+    weather_payload = resolve_weather(
+        fixture,
+        weather_provider,
+        fallback_weather_provider,
+        context,
+        allow_fallback=allow_fixture_fallback,
+    )
 
     lineup_ts = resolve_timestamp(
         lineup_payload,
@@ -290,7 +310,12 @@ def collect_inputs(
     normalized_players: list[dict[str, Any]] = [normalize_player(player, home_team["team_id"]) for player in players]
 
     if not normalized_players:
-        append_players_missing(context)
+        append_players_missing(context, fallback_used=allow_fixture_fallback)
+        if not allow_fixture_fallback:
+            raise ProviderResolutionError(
+                "Player lookup failed: No player-level provider data returned.",
+                context=context,
+            )
         fallback_players = fallback_lineup_provider.get_lineups_and_availability(fixture)["players"]
         normalized_players = [normalize_player(player, home_team["team_id"]) for player in fallback_players]
 
@@ -298,7 +323,12 @@ def collect_inputs(
     normalized_snapshots = normalize_snapshots(snapshots, market_ts)
 
     if len(normalized_snapshots) < 2:
-        append_insufficient_snapshots(context)
+        append_insufficient_snapshots(context, fallback_used=allow_fixture_fallback)
+        if not allow_fixture_fallback:
+            raise ProviderResolutionError(
+                "Odds lookup failed: fewer than 2 sportsbook snapshots returned.",
+                context=context,
+            )
         fallback_snaps = fallback_odds_provider.get_odds_snapshots(fixture)["sportsbook_snapshots"]
         normalized_snapshots = (normalized_snapshots + fallback_snaps)[:2]
 
@@ -336,7 +366,7 @@ def main() -> None:
     parser.add_argument(
         "--strict-fixture",
         action="store_true",
-        help="Reject instead of using deterministic fallback when fixture lookup fails",
+        help="Reject instead of using deterministic fallback data when provider lookup fails",
     )
     args = parser.parse_args()
 

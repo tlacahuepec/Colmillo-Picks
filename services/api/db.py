@@ -57,6 +57,7 @@ class PickRun(Base):
     status = Column(String(16), nullable=False, default=PICK_STATUS_PENDING)
     error_stage = Column(String(64), nullable=True)
     error_message = Column(Text, nullable=True)
+    error_details_json = Column(Text, nullable=True)  # Rich observability context for failures (Epic #219)
     sport = Column(String(32), nullable=True)
     league = Column(String(64), nullable=True)
     markets_json = Column(Text, nullable=True)
@@ -129,6 +130,7 @@ def _ensure_added_columns(engine: Engine) -> None:
             ("status", f"VARCHAR(16) NOT NULL DEFAULT '{PICK_STATUS_PENDING}'"),
             ("error_stage", "VARCHAR(64)"),
             ("error_message", "TEXT"),
+            ("error_details_json", "TEXT"),  # Rich observability context for failures (Epic #219)
             ("sport", "VARCHAR(32)"),
             ("league", "VARCHAR(64)"),
             ("markets_json", "TEXT"),
@@ -379,8 +381,13 @@ def mark_pick_failed(
     stage: str,
     message: str,
     latency_ms: int,
+    error_details: dict[str, Any] | None = None,
 ) -> PickRun | None:
-    """Update a pending row with failure metadata."""
+    """Update a pending row with failure metadata.
+    error_details carries rich observability context (provider_status, critical_missing_fields, etc.)
+    for Epic #219 cross-sport failure surfacing.
+    """
+    import json
     with session_scope() as session:
         row = session.get(PickRun, pick_id)
         if row is None:
@@ -388,6 +395,8 @@ def mark_pick_failed(
         row.status = PICK_STATUS_FAILED
         row.error_stage = stage[:64]
         row.error_message = message
+        if error_details:
+            row.error_details_json = json.dumps(error_details, default=str)
         row.latency_ms = latency_ms
         session.add(row)
         session.flush()

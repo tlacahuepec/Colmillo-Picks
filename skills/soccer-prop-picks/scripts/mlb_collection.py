@@ -121,20 +121,26 @@ class MLBCollectionService:
         try:
             result = self._pitchers.get_probable_pitchers(game_pk=game_pk)
             if not result.meta.available:
-                logger.warning("Pitchers unavailable for game %d: %s", game_pk, result.meta.error_message)
+                logger.warning(
+                    "mlb_pitchers_unavailable",
+                    extra={"game_pk": game_pk, "error_message": result.meta.error_message},
+                )
             return result
         except Exception as exc:
-            logger.warning("Pitchers call failed for game %d: %s", game_pk, exc)
+            logger.warning("mlb_pitchers_call_failed", extra={"game_pk": game_pk, "error": str(exc)})
             return None
 
     def _safe_call_lineups(self, game_pk: int) -> MLBLineupsResult | None:
         try:
             result = self._lineups.get_lineups(game_pk=game_pk)
             if not result.meta.available:
-                logger.warning("Lineups unavailable for game %d: %s", game_pk, result.meta.error_message)
+                logger.warning(
+                    "mlb_lineups_unavailable",
+                    extra={"game_pk": game_pk, "error_message": result.meta.error_message},
+                )
             return result
         except Exception as exc:
-            logger.warning("Lineups call failed for game %d: %s", game_pk, exc)
+            logger.warning("mlb_lineups_call_failed", extra={"game_pk": game_pk, "error": str(exc)})
             return None
 
     def _safe_call_bullpen(self, team_id: int | None, date: str) -> BullpenResult | None:
@@ -143,14 +149,14 @@ class MLBCollectionService:
         try:
             return self._bullpen.get_bullpen_state(team_id=team_id, date=date)
         except Exception as exc:
-            logger.warning("Bullpen call failed for team %s: %s", team_id, exc)
+            logger.warning("mlb_bullpen_call_failed", extra={"team_id": team_id, "error": str(exc)})
             return None
 
     def _safe_call_weather(self, game_pk: int, game_time_utc: str) -> MLBWeatherResult | None:
         try:
             return self._weather.get_weather(game_pk=game_pk, game_time_utc=game_time_utc)
         except Exception as exc:
-            logger.warning("Weather call failed for game %d: %s", game_pk, exc)
+            logger.warning("mlb_weather_call_failed", extra={"game_pk": game_pk, "error": str(exc)})
             return None
 
     def _safe_call_ballpark(self, venue_id: int | None) -> BallparkResult | None:
@@ -159,7 +165,7 @@ class MLBCollectionService:
         try:
             return self._ballpark.get_ballpark(venue_id=venue_id)
         except Exception as exc:
-            logger.warning("Ballpark call failed for venue %s: %s", venue_id, exc)
+            logger.warning("mlb_ballpark_call_failed", extra={"venue_id": venue_id, "error": str(exc)})
             return None
 
     def _aggregate_status(
