@@ -26,7 +26,9 @@ class OpenAILLMClient(LLMClient):
         self._retry_delay_seconds = retry_delay_seconds
         self._sleep = sleep_fn
 
-    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
+    def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
+    ) -> dict:
         attempts = self._max_retries + 1
         for attempt in range(1, attempts + 1):
             try:

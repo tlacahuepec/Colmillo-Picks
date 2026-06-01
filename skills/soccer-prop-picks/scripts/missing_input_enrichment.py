@@ -8,10 +8,14 @@ module decides that official inputs are incomplete.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from enrichment_selection import EnrichmentCandidate, select_best_enrichment
 from llm.client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 class MissingInputEnrichmentError(RuntimeError):
@@ -47,6 +51,122 @@ class GeminiMissingInputEnrichmentProvider:
         game: dict[str, Any],
         official_context: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        result, sources = self._single_enrichment_attempt(
+            sport=sport,
+            home_team=home_team,
+            away_team=away_team,
+            match_date=match_date,
+            league=league,
+            requested_markets=requested_markets,
+            missing_fields=missing_fields,
+            players=players,
+            lines=lines,
+            game=game,
+            official_context=official_context,
+            temperature=None,
+        )
+        self.last_sources = sources
+        return result
+
+    def enrich_missing_inputs_best_of_n(
+        self,
+        *,
+        sport: str,
+        home_team: str,
+        away_team: str,
+        match_date: str,
+        league: str | None,
+        requested_markets: tuple[str, ...],
+        missing_fields: list[str],
+        players: list[dict[str, Any]],
+        lines: dict[str, Any],
+        game: dict[str, Any],
+        official_context: dict[str, Any] | None = None,
+        n_attempts: int = 3,
+        temperatures: tuple[float | None, ...] = (None, 0.7, 1.0),
+        required_fields_map: dict[str, tuple[str, ...]] | None = None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        candidates: list[EnrichmentCandidate] = []
+        actual_attempts = min(n_attempts, len(temperatures))
+
+        for i in range(actual_attempts):
+            temp = temperatures[i]
+            try:
+                result, sources = self._single_enrichment_attempt(
+                    sport=sport,
+                    home_team=home_team,
+                    away_team=away_team,
+                    match_date=match_date,
+                    league=league,
+                    requested_markets=requested_markets,
+                    missing_fields=missing_fields,
+                    players=players,
+                    lines=lines,
+                    game=game,
+                    official_context=official_context,
+                    temperature=temp,
+                )
+                if result is not None:
+                    candidates.append(
+                        EnrichmentCandidate(attempt=i + 1, temperature=temp, result=result, sources=sources)
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "best_of_n_attempt_failed attempt=%d/%d temperature=%s error=%s",
+                    i + 1,
+                    actual_attempts,
+                    temp,
+                    str(exc),
+                )
+
+        if not candidates:
+            return None, {
+                "strategy": "best_of_n",
+                "n_attempts": actual_attempts,
+                "successful_attempts": 0,
+                "winner_attempt": 0,
+                "winner_temperature": None,
+                "selection_reason": "all_attempts_failed",
+                "populated_field_count": 0,
+                "avg_confidence": 0.0,
+                "critical_null_count": 0,
+            }
+
+        winner, decision = select_best_enrichment(
+            candidates,
+            required_fields=required_fields_map,
+            requested_markets=requested_markets,
+        )
+        self.last_sources = winner.sources
+        metadata = {
+            "strategy": "best_of_n",
+            "n_attempts": actual_attempts,
+            "successful_attempts": len(candidates),
+            "winner_attempt": decision.attempt,
+            "winner_temperature": decision.temperature,
+            "selection_reason": decision.reason,
+            "populated_field_count": decision.populated_field_count,
+            "avg_confidence": decision.avg_confidence,
+            "critical_null_count": decision.critical_null_count,
+        }
+        return winner.result, metadata
+
+    def _single_enrichment_attempt(
+        self,
+        *,
+        sport: str,
+        home_team: str,
+        away_team: str,
+        match_date: str,
+        league: str | None,
+        requested_markets: tuple[str, ...],
+        missing_fields: list[str],
+        players: list[dict[str, Any]],
+        lines: dict[str, Any],
+        game: dict[str, Any],
+        official_context: dict[str, Any] | None,
+        temperature: float | None,
+    ) -> tuple[dict[str, Any] | None, list[Any]]:
         result = self._client.generate_structured(
             system_prompt=self._build_system_prompt(),
             user_prompt=self._build_user_prompt(
@@ -63,9 +183,11 @@ class GeminiMissingInputEnrichmentProvider:
                 official_context=official_context or {},
             ),
             schema={},
+            temperature=temperature,
         )
-        self.last_sources = list(getattr(self._client, "last_sources", []))
-        return _map_enrichment_response(result, fallback_sources=self.last_sources)
+        sources = list(getattr(self._client, "last_sources", []))
+        mapped = _map_enrichment_response(result, fallback_sources=sources)
+        return mapped, sources
 
     @staticmethod
     def _build_system_prompt() -> str:

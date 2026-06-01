@@ -298,18 +298,8 @@ class BasketballModule:
             },
         )
         try:
-            enrichment = self._enrichment_provider.enrich_missing_inputs(
-                sport="basketball",
-                home_team=match_inputs.get("home_team", ""),
-                away_team=match_inputs.get("away_team", ""),
-                match_date=match_inputs.get("match_date", ""),
-                league=match_inputs.get("league", "nba"),
-                requested_markets=markets,
-                missing_fields=missing_fields,
-                players=[p for p in match_inputs.get("players", []) if isinstance(p, dict)],
-                lines=match_inputs.get("lines", {}),
-                game=match_inputs.get("game", {}),
-                official_context=match_inputs.get("data_quality", {}),
+            enrichment, decision_metadata = self._run_best_of_n_enrichment(
+                match_inputs=match_inputs, markets=markets, missing_fields=missing_fields
             )
         except Exception as exc:
             mark_enrichment_failed(match_inputs, reason=str(exc), missing_fields=missing_fields)
@@ -348,6 +338,9 @@ class BasketballModule:
             return
 
         merge_enriched_inputs(match_inputs, enrichment)
+        data_quality = match_inputs.setdefault("data_quality", {})
+        if isinstance(data_quality, dict) and decision_metadata:
+            data_quality["enrichment_decision"] = decision_metadata
         logger.info(
             "basketball_gemini_enrichment_success",
             extra={
@@ -360,8 +353,39 @@ class BasketballModule:
                 "missing_fields": ",".join(missing_fields),
                 "enriched_players": len(enrichment.get("players", []) or []),
                 "enriched_line_players": len(enrichment.get("lines", {}) or []),
+                "enrichment_attempt_used": decision_metadata.get("winner_attempt") if decision_metadata else 1,
+                "enrichment_temperature_used": decision_metadata.get("winner_temperature") if decision_metadata else None,
+                "enrichment_selection_reason": decision_metadata.get("selection_reason") if decision_metadata else "single_shot",
+                "enrichment_total_attempts": decision_metadata.get("n_attempts") if decision_metadata else 1,
             },
         )
+
+    def _run_best_of_n_enrichment(
+        self,
+        *,
+        match_inputs: dict[str, Any],
+        markets: tuple[str, ...],
+        missing_fields: list[str],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        common_kwargs: dict[str, Any] = {
+            "sport": "basketball",
+            "home_team": match_inputs.get("home_team", ""),
+            "away_team": match_inputs.get("away_team", ""),
+            "match_date": match_inputs.get("match_date", ""),
+            "league": match_inputs.get("league", "nba"),
+            "requested_markets": markets,
+            "missing_fields": missing_fields,
+            "players": [p for p in match_inputs.get("players", []) if isinstance(p, dict)],
+            "lines": match_inputs.get("lines", {}),
+            "game": match_inputs.get("game", {}),
+            "official_context": match_inputs.get("data_quality", {}),
+        }
+        if hasattr(self._enrichment_provider, "enrich_missing_inputs_best_of_n"):
+            return self._enrichment_provider.enrich_missing_inputs_best_of_n(
+                **common_kwargs,
+                required_fields_map=_MARKET_REQUIRED_FIELDS,
+            )
+        return self._enrichment_provider.enrich_missing_inputs(**common_kwargs), None
 
     @staticmethod
     def _build_scoring_dicts(
