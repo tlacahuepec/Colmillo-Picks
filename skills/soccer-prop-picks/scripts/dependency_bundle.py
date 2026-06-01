@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 
 from availability import DeterministicMockAvailabilityAdapter, PrizePicksAdapter
-from collect_match_inputs import MatchInputRequest, collect_inputs
+from collect_match_inputs import DeterministicWeatherProvider, MatchInputRequest, collect_inputs
 from llm_fixture_provider import LLMFixtureProvider
 from llm_lineup_provider import LLMLineupProvider
 from llm_odds_provider import LLMOddsProvider
@@ -259,6 +259,7 @@ def build_dependency_bundle(
             fixture_provider=fixture_provider,
             lineup_provider=lineup_provider,
             odds_provider=odds_provider,
+            weather_provider=DeterministicWeatherProvider(),
             allow_fixture_fallback=allow_deterministic_fallback,
         ),
         "score_props": score_props,

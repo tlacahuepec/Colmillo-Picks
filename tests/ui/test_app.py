@@ -445,3 +445,12 @@ class TestFormatUtcToLocal:
 
         assert _format_utc_to_local("not-a-date") == "not-a-date"
         assert _format_utc_to_local("") == ""
+
+    def test_respects_colmillo_timezone_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from services.ui.app import _format_utc_to_local
+
+        monkeypatch.setenv("COLMILLO_TIMEZONE", "America/Chicago")
+
+        result = _format_utc_to_local("2026-06-01T18:00:00Z")
+
+        assert result == "Jun 01, 01:00 PM"
