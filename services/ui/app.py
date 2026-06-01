@@ -419,18 +419,22 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
                 st.caption(_format_suggested_match(match))
             with run_col:
                 if st.button("Run", key=f"run_suggested_{sport}_{index}"):
-                    try:
-                        payload = _build_payload_from_suggested_match(
-                            match,
-                            top_n=suggestion_top_n,
-                            use_llm_enrichment=suggestion_explain,
-                            allow_fallback=suggestion_fallback,
-                        )
-                    except ValueError as exc:
-                        st.error(str(exc), icon="\u26a0\ufe0f")
-                        return True
-                    _submit_pick_and_render(client, payload)
-                    return True
+                    st.session_state["_run_suggested_match"] = match
+
+    pending_match = st.session_state.pop("_run_suggested_match", None)
+    if pending_match:
+        try:
+            payload = _build_payload_from_suggested_match(
+                pending_match,
+                top_n=suggestion_top_n,
+                use_llm_enrichment=suggestion_explain,
+                allow_fallback=suggestion_fallback,
+            )
+        except ValueError as exc:
+            st.error(str(exc), icon="\u26a0\ufe0f")
+            return True
+        _submit_pick_and_render(client, payload)
+        return True
 
     return False
 
