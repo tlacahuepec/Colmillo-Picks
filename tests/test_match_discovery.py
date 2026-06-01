@@ -171,3 +171,30 @@ def test_discover_matches_filters_out_wrong_date_matches() -> None:
     matches = result["results"]["soccer"]["matches"]
     assert len(matches) == 1
     assert matches[0]["home_team"] == "Arsenal"
+
+
+def test_discover_matches_preserves_informational_error_from_llm() -> None:
+    """When the LLM returns matches with a per-sport informational note, it is preserved."""
+    response = {
+        "sports": {
+            "soccer": {
+                "matches": [
+                    {
+                        "home_team": "Norway",
+                        "away_team": "Sweden",
+                        "event_date": "2026-06-01",
+                        "kickoff_utc": "2026-06-01T18:00:00Z",
+                        "importance": "medium",
+                    },
+                ],
+                "error": "Limited verifiable match information available for 2026-06-01.",
+            }
+        },
+    }
+    client = MatchDiscoveryClient(client=_FakeLLMClient({"soccer": response}))
+
+    result = client.discover_matches(date_utc="2026-06-01", sports=["soccer"], limit_per_sport=5)
+
+    soccer = result["results"]["soccer"]
+    assert len(soccer["matches"]) == 1
+    assert soccer["error"] == "Limited verifiable match information available for 2026-06-01."
