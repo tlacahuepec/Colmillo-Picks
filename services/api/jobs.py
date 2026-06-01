@@ -23,3 +23,27 @@ def mark_job_done(job_id: str) -> None:
 
 def mark_job_failed(job_id: str, message: str) -> None:
     db.mark_job_finished(job_id=job_id, success=False, error_message=message)
+
+
+# --------------------------------------------------------------------------- #
+# Slate queue helpers (Issue #212)                                             #
+# --------------------------------------------------------------------------- #
+
+
+def enqueue_slate_run(slate_id: str, request_dict: dict[str, Any]) -> None:
+    db.enqueue_slate_job(slate_id=slate_id, request_dict=request_dict)
+
+
+def dequeue_slate_run() -> tuple[str, dict[str, Any], str] | None:
+    job = db.dequeue_slate_job()
+    if job is None:
+        return None
+    return job.slate_id, json.loads(job.request_json), job.id
+
+
+def mark_slate_job_done(job_id: str) -> None:
+    db.mark_slate_job_finished(job_id=job_id, success=True)
+
+
+def mark_slate_job_failed(job_id: str, message: str) -> None:
+    db.mark_slate_job_finished(job_id=job_id, success=False, error_message=message)
