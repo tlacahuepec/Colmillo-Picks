@@ -14,6 +14,7 @@ Configure with environment variables:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from datetime import date as _date, datetime as _datetime
@@ -41,9 +42,14 @@ def _format_utc_to_local(utc_str: str) -> str:
         return utc_str
     try:
         dt = _datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
-        local_dt = dt.astimezone()
+        tz_name = os.getenv("COLMILLO_TIMEZONE")
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            local_dt = dt.astimezone(ZoneInfo(tz_name))
+        else:
+            local_dt = dt.astimezone()
         return local_dt.strftime("%b %d, %I:%M %p")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, KeyError):
         return utc_str
 
 
