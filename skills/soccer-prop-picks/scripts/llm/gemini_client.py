@@ -119,7 +119,9 @@ class GeminiLLMClient(LLMClient):
             print("[grounding-debug] Falling back to web_search_queries as source indicators", file=sys.stderr)
         return sources
 
-    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
+    def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
+    ) -> dict:
         prompt = f"{system_prompt}\n\n{user_prompt}\n\nRespond with valid JSON only."
         attempts = self._max_retries + 1
 
@@ -129,6 +131,8 @@ class GeminiLLMClient(LLMClient):
                     "max_output_tokens": self._max_output_tokens,
                     "thinking_config": {"thinking_budget": 0},
                 }
+                if temperature is not None:
+                    config["temperature"] = temperature
                 if self._search_grounding:
                     config["tools"] = [{"google_search": {}}]
                 else:

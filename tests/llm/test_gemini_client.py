@@ -496,6 +496,51 @@ def test_gemini_client_last_sources_resets_between_calls() -> None:
     assert client.last_sources == []
 
 
+def test_gemini_client_passes_temperature_when_provided() -> None:
+    captured_config: dict = {}
+
+    class _CapturingClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, *, model, contents, config):
+            captured_config.update(config)
+            return _FakeResponse('{"ok": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_CapturingClient,
+    )
+    client.generate_structured(
+        system_prompt="x", user_prompt="y", schema={}, temperature=0.7,
+    )
+
+    assert "temperature" in captured_config
+    assert captured_config["temperature"] == 0.7
+
+
+def test_gemini_client_omits_temperature_when_none() -> None:
+    captured_config: dict = {}
+
+    class _CapturingClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, *, model, contents, config):
+            captured_config.update(config)
+            return _FakeResponse('{"ok": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_CapturingClient,
+    )
+    client.generate_structured(
+        system_prompt="x", user_prompt="y", schema={},
+    )
+
+    assert "temperature" not in captured_config
+
+
 def test_gemini_client_extracts_sources_from_search_entry_point_fallback() -> None:
     class _FakeSearchEntryPoint:
         def __init__(self):

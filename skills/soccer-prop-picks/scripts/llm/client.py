@@ -11,7 +11,9 @@ class GroundingSource:
 
 
 class LLMClient(Protocol):
-    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
+    def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
+    ) -> dict:
         """Generate a structured object that satisfies the provided JSON schema."""
 
 
