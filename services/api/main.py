@@ -1066,11 +1066,19 @@ def create_app() -> FastAPI:
     # ---- Match Discovery ------------------------------------------------- #
     @app.post("/matches/discover", response_model=MatchDiscoveryResponse)
     def discover_matches(payload: MatchDiscoveryRequest) -> MatchDiscoveryResponse:
+        import time as _time
+
         from match_discovery import (
             MatchDiscoveryError,
             MatchDiscoveryValidationError,
             validate_match_discovery_inputs,
         )
+
+        logger.info(
+            "match_discovery_started",
+            extra={"date": payload.date, "sports": payload.sports, "limit_per_sport": payload.limit_per_sport},
+        )
+        t0 = _time.perf_counter()
 
         try:
             sports = validate_match_discovery_inputs(
@@ -1085,9 +1093,34 @@ def create_app() -> FastAPI:
                 limit_per_sport=payload.limit_per_sport,
             )
         except MatchDiscoveryValidationError as exc:
+            latency_ms = int((_time.perf_counter() - t0) * 1000)
+            logger.warning(
+                "match_discovery_failed",
+                extra={"error": "; ".join(exc.errors), "latency_ms": latency_ms},
+            )
             raise HTTPException(status_code=400, detail="; ".join(exc.errors)) from exc
         except MatchDiscoveryError as exc:
+            latency_ms = int((_time.perf_counter() - t0) * 1000)
+            logger.warning(
+                "match_discovery_failed",
+                extra={"error": str(exc), "latency_ms": latency_ms},
+            )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        latency_ms = int((_time.perf_counter() - t0) * 1000)
+        total_matches = sum(
+            len(sport_result.get("matches", []))
+            for sport_result in result.get("results", {}).values()
+        )
+        logger.info(
+            "match_discovery_completed",
+            extra={
+                "date": payload.date,
+                "sports": payload.sports,
+                "total_matches": total_matches,
+                "latency_ms": latency_ms,
+            },
+        )
 
         return MatchDiscoveryResponse(**result)
 

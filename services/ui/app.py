@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from datetime import date as _date
+from datetime import date as _date, datetime as _datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,17 @@ from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient  # 
 
 
 PAGES = ("Generate", "History")
+
+
+def _format_utc_to_local(utc_str: str) -> str:
+    if not utc_str:
+        return utc_str
+    try:
+        dt = _datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        local_dt = dt.astimezone()
+        return local_dt.strftime("%b %d, %I:%M %p")
+    except (ValueError, TypeError):
+        return utc_str
 
 
 def _construct_match_query(home_team: str, away_team: str, date: str) -> str:
@@ -142,7 +153,7 @@ def _format_suggested_match(match: dict[str, Any]) -> str:
     home = str(match.get("home_team", "")).strip() or "Unknown"
     away = str(match.get("away_team", "")).strip() or "Unknown"
     competition = match.get("competition") or match.get("league") or "competition unknown"
-    kickoff = match.get("kickoff_utc") or "kickoff unknown"
+    kickoff = _format_utc_to_local(match.get("kickoff_utc") or "") or "kickoff unknown"
     importance = match.get("importance") or "importance unknown"
     data_quality = match.get("data_quality") if isinstance(match.get("data_quality"), dict) else {}
     confidence = data_quality.get("confidence", "unknown")
@@ -365,7 +376,8 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
                 sports=discovery_sports,
                 limit_per_sport=limit_per_sport,
             )
-            st.session_state["match_discovery_results"] = client.discover_matches(**payload)
+            with st.spinner("Discovering matches..."):
+                st.session_state["match_discovery_results"] = client.discover_matches(**payload)
             st.session_state.pop("match_discovery_error", None)
         except APIError as exc:
             st.session_state["match_discovery_error"] = f"API returned {exc.status_code}: {exc.detail}"
