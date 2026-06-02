@@ -61,7 +61,17 @@ class TestBasketballAPIAcceptance:
         assert body["status"] == "pending"
         assert "id" in body
 
-    def test_basketball_request_executes_successfully(self, client: TestClient) -> None:
+    def test_basketball_request_executes_successfully(
+        self, monkeypatch: pytest.MonkeyPatch, client: TestClient,
+    ) -> None:
+        import sport_module as sm_mod
+        from basketball_module import BasketballModule
+
+        registry = sm_mod.SportModuleRegistry()
+        registry.register(sm_mod.SoccerModule())
+        registry.register(BasketballModule(allow_deterministic_fallback=True))
+        monkeypatch.setattr(sm_mod, "_DEFAULT_REGISTRY", registry)
+
         response = client.post(
             "/picks",
             json={
@@ -83,7 +93,17 @@ class TestBasketballAPIAcceptance:
             assert "market" in pick
             assert "score" in pick
 
-    def test_basketball_with_specific_markets(self, client: TestClient) -> None:
+    def test_basketball_with_specific_markets(
+        self, monkeypatch: pytest.MonkeyPatch, client: TestClient,
+    ) -> None:
+        import sport_module as sm_mod
+        from basketball_module import BasketballModule
+
+        registry = sm_mod.SportModuleRegistry()
+        registry.register(sm_mod.SoccerModule())
+        registry.register(BasketballModule(allow_deterministic_fallback=True))
+        monkeypatch.setattr(sm_mod, "_DEFAULT_REGISTRY", registry)
+
         response = client.post(
             "/picks",
             json={
@@ -142,3 +162,23 @@ class TestBasketballAPIAcceptance:
             },
         )
         assert response.status_code in (400, 422)
+
+    def test_basketball_no_placeholder_data_by_default(self, client: TestClient) -> None:
+        response = client.post(
+            "/picks",
+            json={
+                "sport": "basketball",
+                "home_team": "Lakers",
+                "away_team": "Celtics",
+                "event_date": "2026-06-15",
+                "league": "nba",
+            },
+        )
+        assert response.status_code == 202
+        pick_id = response.json()["id"]
+        _run_next_job()
+
+        detail = client.get(f"/picks/{pick_id}").json()
+        assert detail["status"] == "failed"
+        assert "Could not find enough match details" in detail["error_message"]
+        assert detail["scores"] == []
