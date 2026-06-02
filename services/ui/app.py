@@ -60,6 +60,22 @@ def _format_utc_to_local(utc_str: str) -> str:
         return utc_str
 
 
+def _format_utc_to_local(utc_str: str) -> str:
+    if not utc_str:
+        return utc_str
+    try:
+        dt = _datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        tz_name = os.getenv("COLMILLO_TIMEZONE")
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            local_dt = dt.astimezone(ZoneInfo(tz_name))
+        else:
+            local_dt = dt.astimezone()
+        return local_dt.strftime("%b %d, %I:%M %p")
+    except (ValueError, TypeError, KeyError):
+        return utc_str
+
+
 def _construct_match_query(home_team: str, away_team: str, date: str) -> str:
     home = home_team.strip() if home_team else ""
     away = away_team.strip() if away_team else ""
