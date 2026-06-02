@@ -682,6 +682,10 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
     )
 
 
+def _filter_zero_line_scores(scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [s for s in scores if s.get("line")]
+
+
 def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     """Execute non-soccer sports via PipelineRunner + SportModule."""
     from pick_request import PickRequest
@@ -716,7 +720,7 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
-        "scores": pipeline_result.scores,
+        "scores": _filter_zero_line_scores(pipeline_result.scores),
         "match_inputs": pipeline_result.match_inputs,
         "steps": pipeline_result.steps,
         "report_markdown": report_md,
@@ -863,6 +867,8 @@ def _execute_pipeline_job(
             pass
         return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
+    if request_dict.get("_sport_module_path") and "scores" in result:
+        result["scores"] = _filter_zero_line_scores(result["scores"])
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
     for step in result.get("steps", []):
         ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
