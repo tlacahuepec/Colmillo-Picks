@@ -230,3 +230,102 @@ def test_discover_matches_posts_date_sports_and_limit(
     )
 
     assert response["results"]["soccer"]["matches"][0]["home_team"] == "Arsenal"
+
+
+# --------------------------------------------------------------------------- #
+# Slate client methods (Issue #213)                                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_create_slate_posts_payload_and_returns_accepted(client: PicksAPIClient) -> None:
+    accepted = client.create_slate({
+        "date": "2026-06-01",
+        "sports": ["soccer"],
+        "max_matches_per_sport": 3,
+        "top_n": 10,
+    })
+
+    assert accepted["id"]
+    assert accepted["status"] == "pending"
+    assert "created_at" in accepted
+
+
+def test_get_slate_returns_detail(client: PicksAPIClient) -> None:
+    accepted = client.create_slate({
+        "date": "2026-06-01",
+        "sports": ["soccer"],
+        "max_matches_per_sport": 3,
+        "top_n": 10,
+    })
+
+    detail = client.get_slate(accepted["id"])
+
+    assert detail["id"] == accepted["id"]
+    assert detail["status"] in ("pending", "queued", "running", "success", "failed")
+    assert "candidates" in detail
+    assert "match_runs" in detail
+
+
+def test_get_slate_status_returns_status(client: PicksAPIClient) -> None:
+    accepted = client.create_slate({
+        "date": "2026-06-01",
+        "sports": ["soccer"],
+        "max_matches_per_sport": 3,
+        "top_n": 10,
+    })
+
+    status = client.get_slate_status(accepted["id"])
+
+    assert status["id"] == accepted["id"]
+    assert status["status"] in ("pending", "queued", "running", "success", "failed")
+
+
+def test_wait_for_slate_polls_until_terminal(client: PicksAPIClient) -> None:
+    from services.api import db as db_mod
+
+    accepted = client.create_slate({
+        "date": "2026-06-01",
+        "sports": ["soccer"],
+        "max_matches_per_sport": 3,
+        "top_n": 5,
+    })
+    db_mod.mark_slate_success(
+        slate_id=accepted["id"],
+        candidates=[],
+        match_runs=[],
+        latency_ms=100,
+        discovery_latency_ms=50,
+        matches_attempted=0,
+        matches_succeeded=0,
+    )
+
+    final = client.wait_for_slate(
+        accepted["id"], timeout_seconds=5.0, poll_interval_seconds=0.0
+    )
+
+    assert final["status"] == "success"
+
+
+def test_wait_for_slate_raises_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.ui.api_client import SlateTimeoutError
+
+    monkeypatch.setenv("COLMILLO_API_KEY", _TEST_API_KEY)
+    monkeypatch.setenv("COLMILLO_RATE_LIMIT_PER_HOUR", "0")
+    monkeypatch.delenv("COLMILLO_UI_ORIGIN", raising=False)
+    monkeypatch.setattr(api_main, "_run_next_queued_slate_job", lambda: None)
+
+    transport = _build_test_transport(api_main.create_app())
+    config = APIClientConfig(base_url="http://testserver", api_key=_TEST_API_KEY)
+    no_worker_client = PicksAPIClient(config, transport=transport)
+
+    accepted = no_worker_client.create_slate({
+        "date": "2026-06-01",
+        "sports": ["soccer"],
+        "max_matches_per_sport": 3,
+        "top_n": 5,
+    })
+
+    with pytest.raises(SlateTimeoutError):
+        no_worker_client.wait_for_slate(
+            accepted["id"], timeout_seconds=0.01, poll_interval_seconds=0.0
+        )

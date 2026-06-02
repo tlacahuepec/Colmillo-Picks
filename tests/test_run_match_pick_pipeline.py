@@ -645,6 +645,47 @@ def test_build_dependency_bundle_collect_inputs_rejects_missing_fixture_by_defau
         )
 
 
+def test_build_dependency_bundle_collect_inputs_never_fails_on_weather(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = load_script_module("run_match_pick_pipeline.py")
+    monkeypatch.delenv("SOCCER_FIXTURE_PROVIDER", raising=False)
+
+    class _FixtureProvider:
+        provider_label = "LLM"
+
+        def lookup_fixture(self, request):
+            return None
+
+    import dependency_bundle
+    monkeypatch.setattr(dependency_bundle, "_build_llm_fixture_provider", lambda **kw: _FixtureProvider())
+    monkeypatch.setattr(dependency_bundle, "_build_llm_lineup_provider", lambda **kw: None)
+    monkeypatch.setattr(dependency_bundle, "_build_llm_odds_provider", lambda **kw: None)
+
+    deps = pipeline.build_dependency_bundle(
+        use_llm=False,
+        llm_provider=None,
+        llm_model=None,
+        fixture_provider_name="llm",
+        fixture_llm_provider="openai-compatible",
+        fixture_llm_model="m",
+        fixture_llm_base_url="https://x.test/v1",
+        allow_deterministic_fallback=False,
+    )
+
+    try:
+        deps["collect_inputs"](
+            pipeline.MatchInputRequest(
+                home_team="Norway",
+                away_team="Sweden",
+                match_date="2026-06-01",
+                competition="International Friendly",
+            )
+        )
+    except Exception as exc:
+        assert "Weather" not in str(exc), f"Weather should never block pipeline: {exc}"
+
+
 def test_main_reports_pipeline_service_cause(monkeypatch: pytest.MonkeyPatch) -> None:
     pipeline = load_script_module("run_match_pick_pipeline.py")
 

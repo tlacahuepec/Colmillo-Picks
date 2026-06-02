@@ -571,3 +571,29 @@ def test_gemini_client_extracts_sources_from_search_entry_point_fallback() -> No
     assert len(client.last_sources) == 2
     assert client.last_sources[0].url == "https://www.bbc.com/sport/football"
     assert client.last_sources[1].url == "https://www.transfermarkt.com/bayern"
+
+
+class TestJsonRepair:
+    def test_repairs_trailing_comma_in_object(self) -> None:
+        from llm.gemini_client import _repair_json
+
+        text = '{"a": 1, "b": 2,}'
+        assert _repair_json(text) == {"a": 1, "b": 2}
+
+    def test_repairs_trailing_comma_in_array(self) -> None:
+        from llm.gemini_client import _repair_json
+
+        text = '{"items": [1, 2, 3,]}'
+        assert _repair_json(text) == {"items": [1, 2, 3]}
+
+    def test_returns_none_on_unfixable_json(self) -> None:
+        from llm.gemini_client import _repair_json
+
+        assert _repair_json("not json at all") is None
+
+    def test_handles_nested_trailing_commas(self) -> None:
+        from llm.gemini_client import _repair_json
+
+        text = '{"a": {"b": 1,}, "c": [1,],}'
+        result = _repair_json(text)
+        assert result == {"a": {"b": 1}, "c": [1]}

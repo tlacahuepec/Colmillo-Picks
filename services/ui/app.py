@@ -14,9 +14,10 @@ Configure with environment variables:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
-from datetime import date as _date
+from datetime import date as _date, datetime as _datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,10 +31,33 @@ load_dotenv(_REPO_ROOT / ".env")
 
 import streamlit as st  # noqa: E402
 
-from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient  # noqa: E402
+from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient, SlateTimeoutError  # noqa: E402
+from services.ui.best_today_helpers import (  # noqa: E402
+    build_slate_payload,
+    format_match_run_summary,
+    format_slate_candidate_row,
+    render_no_candidates_message,
+    render_partial_failure_summary,
+)
 
 
-PAGES = ("Generate", "History")
+PAGES = ("Generate", "History", "Best Today")
+
+
+def _format_utc_to_local(utc_str: str) -> str:
+    if not utc_str:
+        return utc_str
+    try:
+        dt = _datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        tz_name = os.getenv("COLMILLO_TIMEZONE")
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            local_dt = dt.astimezone(ZoneInfo(tz_name))
+        else:
+            local_dt = dt.astimezone()
+        return local_dt.strftime("%b %d, %I:%M %p")
+    except (ValueError, TypeError, KeyError):
+        return utc_str
 
 
 def _construct_match_query(home_team: str, away_team: str, date: str) -> str:
@@ -142,7 +166,7 @@ def _format_suggested_match(match: dict[str, Any]) -> str:
     home = str(match.get("home_team", "")).strip() or "Unknown"
     away = str(match.get("away_team", "")).strip() or "Unknown"
     competition = match.get("competition") or match.get("league") or "competition unknown"
-    kickoff = match.get("kickoff_utc") or "kickoff unknown"
+    kickoff = _format_utc_to_local(match.get("kickoff_utc") or "") or "kickoff unknown"
     importance = match.get("importance") or "importance unknown"
     data_quality = match.get("data_quality") if isinstance(match.get("data_quality"), dict) else {}
     confidence = data_quality.get("confidence", "unknown")
@@ -365,7 +389,8 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
                 sports=discovery_sports,
                 limit_per_sport=limit_per_sport,
             )
-            st.session_state["match_discovery_results"] = client.discover_matches(**payload)
+            with st.spinner("Discovering matches..."):
+                st.session_state["match_discovery_results"] = client.discover_matches(**payload)
             st.session_state.pop("match_discovery_error", None)
         except APIError as exc:
             st.session_state["match_discovery_error"] = f"API returned {exc.status_code}: {exc.detail}"
@@ -394,18 +419,22 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
                 st.caption(_format_suggested_match(match))
             with run_col:
                 if st.button("Run", key=f"run_suggested_{sport}_{index}"):
-                    try:
-                        payload = _build_payload_from_suggested_match(
-                            match,
-                            top_n=suggestion_top_n,
-                            use_llm_enrichment=suggestion_explain,
-                            allow_fallback=suggestion_fallback,
-                        )
-                    except ValueError as exc:
-                        st.error(str(exc), icon="\u26a0\ufe0f")
-                        return True
-                    _submit_pick_and_render(client, payload)
-                    return True
+                    st.session_state["_run_suggested_match"] = match
+
+    pending_match = st.session_state.pop("_run_suggested_match", None)
+    if pending_match:
+        try:
+            payload = _build_payload_from_suggested_match(
+                pending_match,
+                top_n=suggestion_top_n,
+                use_llm_enrichment=suggestion_explain,
+                allow_fallback=suggestion_fallback,
+            )
+        except ValueError as exc:
+            st.error(str(exc), icon="\u26a0\ufe0f")
+            return True
+        _submit_pick_and_render(client, payload)
+        return True
 
     return False
 
@@ -675,6 +704,127 @@ def _render_hit_rate_panel(client: PicksAPIClient) -> None:
         )
 
 
+def render_best_today_page(client: PicksAPIClient) -> None:
+    st.title("Best Today")
+    st.caption("Generate a ranked cross-sport slate of today's best prop picks.")
+
+    with st.form("best_today_form"):
+        col_date, col_sports = st.columns([1, 2])
+        with col_date:
+            slate_date = st.date_input("Date", value=_date.today(), key="slate_date")
+        with col_sports:
+            slate_sports = st.multiselect(
+                "Sports",
+                options=["Soccer", "Basketball", "Baseball"],
+                default=["Soccer", "Basketball", "Baseball"],
+                key="slate_sports",
+            )
+
+        col_max, col_top = st.columns(2)
+        with col_max:
+            max_matches = st.slider(
+                "Max matches per sport", min_value=1, max_value=5, value=3, key="slate_max_matches"
+            )
+        with col_top:
+            top_n = st.slider(
+                "Top N candidates", min_value=1, max_value=20, value=10, key="slate_top_n"
+            )
+
+        submitted = st.form_submit_button("Generate Best Today", type="primary")
+
+    if not submitted:
+        return
+
+    normalized_sports = [s.lower() for s in slate_sports] if slate_sports else []
+    try:
+        payload = build_slate_payload(
+            date=slate_date.isoformat(),
+            sports=normalized_sports,
+            max_matches_per_sport=max_matches,
+            top_n=top_n,
+        )
+    except ValueError as exc:
+        st.error(str(exc), icon="\u26a0\ufe0f")
+        return
+
+    with st.spinner("Submitting slate request..."):
+        try:
+            accepted = client.create_slate(payload)
+        except APIError as exc:
+            st.error(f"API error {exc.status_code}: {exc.detail}", icon="\U0001f6d1")
+            return
+        except Exception as exc:
+            st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
+            return
+
+    slate_id = accepted.get("id", "")
+    st.info(f"Slate `{slate_id}` accepted. Running pipelines...", icon="\u23f3")
+
+    try:
+        with st.spinner("Waiting for slate to complete..."):
+            client.wait_for_slate(slate_id, timeout_seconds=300.0, poll_interval_seconds=2.0)
+    except SlateTimeoutError:
+        st.warning("Slate generation timed out. Showing partial results.", icon="\u23f1\ufe0f")
+    except APIError as exc:
+        st.error(f"Status polling failed: {exc.detail}", icon="\U0001f6d1")
+        return
+    except Exception as exc:
+        st.error(f"Polling error: {exc}", icon="\U0001f6d1")
+        return
+
+    try:
+        detail = client.get_slate(slate_id)
+    except APIError as exc:
+        st.error(f"Failed to fetch slate detail: {exc.detail}", icon="\U0001f6d1")
+        return
+
+    _render_slate_results(detail)
+
+
+def _render_slate_results(detail: dict[str, Any]) -> None:
+    status = detail.get("status", "?")
+    if status == "failed":
+        st.error(
+            f"Slate failed at stage **{detail.get('error_stage', '?')}**: "
+            f"{detail.get('error_message', 'unknown error')}",
+            icon="\U0001f6d1",
+        )
+        return
+
+    st.success(f"Slate complete — status: **{status}**", icon="\u2705")
+
+    with st.expander("Timing & Metadata", expanded=False):
+        col_latency, col_discovery, col_matches = st.columns(3)
+        with col_latency:
+            st.metric("Total latency", f"{detail.get('latency_ms', '?')} ms")
+        with col_discovery:
+            st.metric("Discovery latency", f"{detail.get('discovery_latency_ms', '?')} ms")
+        with col_matches:
+            attempted = detail.get("matches_attempted", 0)
+            succeeded = detail.get("matches_succeeded", 0)
+            st.metric("Matches", f"{succeeded}/{attempted}")
+
+    candidates = detail.get("candidates", [])
+    match_runs = detail.get("match_runs", [])
+
+    if not candidates:
+        st.warning(render_no_candidates_message(), icon="\u26a0\ufe0f")
+    else:
+        st.subheader("Ranked Candidates")
+        for candidate in candidates:
+            st.text(format_slate_candidate_row(candidate))
+
+    partial_failures = render_partial_failure_summary(match_runs)
+    if partial_failures:
+        st.subheader("Partial Failures")
+        st.markdown(partial_failures)
+
+    if match_runs:
+        with st.expander("Match Run Details", expanded=False):
+            for run in match_runs:
+                st.text(format_match_run_summary(run))
+
+
 def main() -> None:
     st.set_page_config(page_title="Colmillo-Picks", layout="wide")
     config = APIClientConfig.from_env()
@@ -683,8 +833,10 @@ def main() -> None:
     client = _get_client()
     if page == "Generate":
         render_generate_page(client)
-    else:
+    elif page == "History":
         render_history_page(client)
+    else:
+        render_best_today_page(client)
 
 
 if __name__ == "__main__":  # pragma: no cover - streamlit entry point

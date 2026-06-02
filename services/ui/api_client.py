@@ -31,6 +31,10 @@ class PickTimeoutError(RuntimeError):
     """Raised when ``wait_for_pick`` polls past its deadline."""
 
 
+class SlateTimeoutError(RuntimeError):
+    """Raised when ``wait_for_slate`` polls past its deadline."""
+
+
 @dataclass(frozen=True)
 class APIClientConfig:
     base_url: str
@@ -140,6 +144,37 @@ class PicksAPIClient:
         if platforms:
             payload["platforms"] = platforms
         return self._request("POST", f"/picks/{pick_id}/availability", json=payload)
+
+    # Slate methods (Issue #213) ----------------------------------------------- #
+
+    def create_slate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/slates", json=payload)
+
+    def get_slate(self, slate_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/slates/{slate_id}")
+
+    def get_slate_status(self, slate_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/slates/{slate_id}/status")
+
+    def wait_for_slate(
+        self,
+        slate_id: str,
+        *,
+        timeout_seconds: float = 180.0,
+        poll_interval_seconds: float = 1.5,
+        sleep=time.sleep,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            status = self.get_slate_status(slate_id)
+            if status.get("status") in TERMINAL_STATUSES:
+                return status
+            if time.monotonic() >= deadline:
+                raise SlateTimeoutError(
+                    f"Slate {slate_id} did not finish within {timeout_seconds}s "
+                    f"(last status: {status.get('status')})"
+                )
+            sleep(poll_interval_seconds)
 
     # Internals ------------------------------------------------------------- #
 
