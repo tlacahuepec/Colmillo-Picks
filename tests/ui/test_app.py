@@ -428,3 +428,29 @@ class TestSuggestedMatches:
             "sports": ["soccer", "baseball"],
             "limit_per_sport": 3,
         }
+
+
+class TestFormatUtcToLocal:
+    def test_converts_utc_to_readable_local_time(self) -> None:
+        from services.ui.app import _format_utc_to_local
+
+        result = _format_utc_to_local("2026-06-01T17:00:00Z")
+
+        assert "Jun 01" in result
+        assert "Z" not in result
+        assert "T" not in result
+
+    def test_falls_back_to_raw_string_on_invalid_input(self) -> None:
+        from services.ui.app import _format_utc_to_local
+
+        assert _format_utc_to_local("not-a-date") == "not-a-date"
+        assert _format_utc_to_local("") == ""
+
+    def test_respects_colmillo_timezone_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from services.ui.app import _format_utc_to_local
+
+        monkeypatch.setenv("COLMILLO_TIMEZONE", "America/Chicago")
+
+        result = _format_utc_to_local("2026-06-01T18:00:00Z")
+
+        assert result == "Jun 01, 01:00 PM"

@@ -345,3 +345,24 @@ class TestDegradedInput:
             )
         assert len(results) == 1
         assert results[0]["confidence"] in ("high", "medium", "low")
+
+
+class TestZeroLineRejection:
+    """Defense-in-depth: scoring must never produce picks with line=0 or missing line."""
+
+    def test_zero_line_player_excluded_from_results(self) -> None:
+        player = _batter_player(line_hits=0)
+        results = score_baseball_props([player], markets=("hits",))
+        assert results == []
+
+    def test_missing_line_key_excluded_from_results(self) -> None:
+        player = _batter_player()
+        del player["line_hits"]
+        results = score_baseball_props([player], markets=("hits",))
+        assert results == []
+
+    def test_valid_nonzero_line_still_scores(self) -> None:
+        player = _batter_player(line_hits=1.5)
+        results = score_baseball_props([player], markets=("hits",))
+        assert len(results) == 1
+        assert results[0]["line"] == 1.5

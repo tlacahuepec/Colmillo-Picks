@@ -133,6 +133,42 @@ class TestBaseballAPIAcceptance:
         )
         assert response.status_code == 400
 
+    def test_api_never_returns_zero_line_picks_in_scores(
+        self, monkeypatch: pytest.MonkeyPatch, client: TestClient
+    ) -> None:
+        def fake_sport_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "scores": [
+                    {"player": "BadPick", "market": "hits", "line": 0, "score": 0.5},
+                    {"player": "GoodPick", "market": "hits", "line": 1.5, "score": 0.8},
+                ],
+                "match_inputs": {"home_team": "NYY", "away_team": "BOS"},
+                "steps": [{"name": "collect", "status": "success", "duration_ms": 10}],
+                "report_markdown": "# Report",
+                "trace": {"llm_status": "not_requested"},
+            }
+
+        monkeypatch.setattr(api_main, "_run_sport_module_pipeline", fake_sport_pipeline)
+
+        response = client.post(
+            "/picks",
+            json={
+                "sport": "baseball",
+                "home_team": "Yankees",
+                "away_team": "Red Sox",
+                "event_date": "2026-06-15",
+                "league": "mlb",
+            },
+        )
+        assert response.status_code == 202
+        pick_id = response.json()["id"]
+        _run_next_job()
+
+        detail = client.get(f"/picks/{pick_id}").json()
+        assert detail["status"] == "success"
+        for score in detail["scores"]:
+            assert score.get("line") != 0, f"Zero-line pick leaked to API: {score}"
+
     def test_soccer_still_works(
         self, monkeypatch: pytest.MonkeyPatch, client: TestClient
     ) -> None:

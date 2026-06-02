@@ -100,6 +100,40 @@ class PickJob(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class SlateRun(Base):
+    """One row per ``POST /slates`` invocation."""
+
+    __tablename__ = "slate_runs"
+
+    id = Column(String(36), primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String(16), nullable=False, default=PICK_STATUS_PENDING)
+    request_json = Column(Text, nullable=False)
+    candidates_json = Column(Text, nullable=False, default="[]")
+    match_runs_json = Column(Text, nullable=False, default="[]")
+    latency_ms = Column(Integer, nullable=True)
+    discovery_latency_ms = Column(Integer, nullable=True)
+    error_stage = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    matches_attempted = Column(Integer, nullable=True)
+    matches_succeeded = Column(Integer, nullable=True)
+
+
+class SlateJob(Base):
+    """Queue row associated with one slate run."""
+
+    __tablename__ = "slate_jobs"
+
+    id = Column(String(36), primary_key=True)
+    slate_id = Column(String(36), nullable=False, index=True)
+    request_json = Column(Text, nullable=False)
+    state = Column(String(16), nullable=False, default=PICK_STATUS_QUEUED)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+
 # Module-level engine/session factory; rebuilt by ``configure_engine`` so tests
 # can swap in an in-memory database without restarting the app.
 _engine: Engine | None = None
@@ -555,5 +589,165 @@ def list_unresolved_picks(*, settled_before: datetime) -> list[PickRun]:
                 ~outcome_exists,
             )
             .order_by(PickRun.scheduled_kickoff_utc.asc())
+            .all()
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Slate CRUD helpers (Issue #212)                                              #
+# --------------------------------------------------------------------------- #
+
+
+def create_pending_slate_run(*, request_payload: dict[str, Any]) -> SlateRun:
+    row = SlateRun(
+        id=str(uuid.uuid4()),
+        created_at=datetime.now(timezone.utc),
+        status=PICK_STATUS_PENDING,
+        request_json=json.dumps(_safe_request_payload(request_payload), default=str),
+        candidates_json="[]",
+        match_runs_json="[]",
+    )
+    with session_scope() as session:
+        session.add(row)
+    return row
+
+
+def enqueue_slate_job(*, slate_id: str, request_dict: dict[str, Any]) -> SlateJob:
+    now = datetime.now(timezone.utc)
+    job = SlateJob(
+        id=str(uuid.uuid4()),
+        slate_id=slate_id,
+        request_json=json.dumps(request_dict, default=str),
+        state=PICK_STATUS_QUEUED,
+        attempts=0,
+        last_error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    with session_scope() as session:
+        row = session.get(SlateRun, slate_id)
+        if row is not None:
+            row.status = PICK_STATUS_QUEUED
+            session.add(row)
+        session.add(job)
+    return job
+
+
+def dequeue_slate_job() -> SlateJob | None:
+    with session_scope() as session:
+        now = datetime.now(timezone.utc)
+        claimed = session.execute(
+            text(
+                """
+                UPDATE slate_jobs
+                SET state = :running_state,
+                    attempts = attempts + 1,
+                    updated_at = :updated_at
+                WHERE id = (
+                    SELECT id
+                    FROM slate_jobs
+                    WHERE state = :queued_state
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "running_state": PICK_STATUS_RUNNING,
+                "queued_state": PICK_STATUS_QUEUED,
+                "updated_at": now,
+            },
+        ).first()
+        if claimed is None:
+            return None
+
+        job = session.get(SlateJob, str(claimed.id))
+        if job is None:
+            return None
+
+        row = session.get(SlateRun, job.slate_id)
+        if row is not None:
+            row.status = PICK_STATUS_RUNNING
+            session.add(row)
+        session.add(job)
+        session.flush()
+        session.refresh(job)
+        return job
+
+
+def mark_slate_success(
+    *,
+    slate_id: str,
+    candidates: list[dict[str, Any]],
+    match_runs: list[dict[str, Any]],
+    latency_ms: int,
+    discovery_latency_ms: int,
+    matches_attempted: int,
+    matches_succeeded: int,
+) -> SlateRun | None:
+    with session_scope() as session:
+        row = session.get(SlateRun, slate_id)
+        if row is None:
+            return None
+        row.status = PICK_STATUS_SUCCESS
+        row.candidates_json = json.dumps(candidates, default=str)
+        row.match_runs_json = json.dumps(match_runs, default=str)
+        row.latency_ms = latency_ms
+        row.discovery_latency_ms = discovery_latency_ms
+        row.matches_attempted = matches_attempted
+        row.matches_succeeded = matches_succeeded
+        row.error_stage = None
+        row.error_message = None
+        session.add(row)
+        session.flush()
+        session.refresh(row)
+        return row
+
+
+def mark_slate_failed(
+    *,
+    slate_id: str,
+    stage: str,
+    message: str,
+    latency_ms: int,
+) -> SlateRun | None:
+    with session_scope() as session:
+        row = session.get(SlateRun, slate_id)
+        if row is None:
+            return None
+        row.status = PICK_STATUS_FAILED
+        row.error_stage = stage[:64]
+        row.error_message = message
+        row.latency_ms = latency_ms
+        session.add(row)
+        session.flush()
+        session.refresh(row)
+        return row
+
+
+def mark_slate_job_finished(*, job_id: str, success: bool, error_message: str | None = None) -> None:
+    with session_scope() as session:
+        job = session.get(SlateJob, job_id)
+        if job is None:
+            return
+        job.state = PICK_STATUS_SUCCESS if success else PICK_STATUS_FAILED
+        job.last_error = error_message
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+
+
+def get_slate_run(slate_id: str) -> SlateRun | None:
+    with session_scope() as session:
+        return session.get(SlateRun, slate_id)
+
+
+def list_slate_runs(*, limit: int, offset: int) -> list[SlateRun]:
+    with session_scope() as session:
+        return list(
+            session.query(SlateRun)
+            .order_by(SlateRun.created_at.desc())
+            .limit(limit)
+            .offset(offset)
             .all()
         )

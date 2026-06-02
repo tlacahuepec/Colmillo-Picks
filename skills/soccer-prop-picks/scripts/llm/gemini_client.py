@@ -11,6 +11,17 @@ _DEFAULT_MODEL = "gemini-2.5-flash"
 _DEBUG_GROUNDING = __import__("os").environ.get("COLMILLO_DEBUG_GROUNDING", "").strip().lower() in ("1", "true", "yes")
 
 _MARKDOWN_JSON_FENCE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
+_TRAILING_COMMA = re.compile(r",\s*([}\]])")
+
+
+def _repair_json(text: str) -> dict | None:
+    """Attempt to fix common LLM JSON errors (trailing commas) and parse."""
+    repaired = _TRAILING_COMMA.sub(r"\1", text)
+    try:
+        result = json.loads(repaired)
+        return result if isinstance(result, dict) else None
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 def _extract_json_text(raw: str) -> str:
@@ -35,9 +46,18 @@ def _parse_first_json_object(text: str) -> dict:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
+            repaired = _repair_json(text)
+            if repaired is not None:
+                return repaired
             match = re.search(r"\{.*\}", text, flags=re.DOTALL)
             if match:
-                return json.loads(match.group(0))
+                extracted = match.group(0)
+                try:
+                    return json.loads(extracted)
+                except json.JSONDecodeError:
+                    repaired_extracted = _repair_json(extracted)
+                    if repaired_extracted is not None:
+                        return repaired_extracted
             raise
 
 
@@ -119,7 +139,9 @@ class GeminiLLMClient(LLMClient):
             print("[grounding-debug] Falling back to web_search_queries as source indicators", file=sys.stderr)
         return sources
 
-    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
+    def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
+    ) -> dict:
         prompt = f"{system_prompt}\n\n{user_prompt}\n\nRespond with valid JSON only."
         attempts = self._max_retries + 1
 
@@ -129,6 +151,8 @@ class GeminiLLMClient(LLMClient):
                     "max_output_tokens": self._max_output_tokens,
                     "thinking_config": {"thinking_budget": 0},
                 }
+                if temperature is not None:
+                    config["temperature"] = temperature
                 if self._search_grounding:
                     config["tools"] = [{"google_search": {}}]
                 else:

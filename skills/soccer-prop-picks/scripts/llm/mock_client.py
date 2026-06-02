@@ -15,6 +15,8 @@ class DeterministicMockLLMClient(LLMClient):
             "reasons": ["mock_reason"],
         }
 
-    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
-        _ = (system_prompt, user_prompt, schema)
+    def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
+    ) -> dict:
+        _ = (system_prompt, user_prompt, schema, temperature)
         return deepcopy(self._fixture)
