@@ -97,7 +97,9 @@ def _score_market_candidate(
     thresholds = calibration.get("confidence_thresholds", {"high": 0.76, "medium": 0.60})
     confidence = _determine_confidence(overall_score, risk_flags, thresholds)
 
-    line = player.get(f"line_{market}", 0)
+    line = player.get(f"line_{market}")
+    if not line:
+        return None
     direction = _resolve_direction(player, market, line)
 
     return {
