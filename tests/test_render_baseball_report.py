@@ -224,6 +224,62 @@ class TestResponsibleGaming:
             assert not re.search(pattern, report_lower), f"Banned word '{word}' found in report"
 
 
+class TestZeroLineFiltering:
+    """Defense-in-depth: renderer must never show picks with line=0."""
+
+    def test_zero_line_pick_excluded_from_rendered_table(self) -> None:
+        picks = [
+            {
+                "player": "BadPick",
+                "market": "hits",
+                "direction": "over",
+                "line": 0,
+                "score": 0.5,
+                "confidence": "low",
+                "risk_flags": ["missing_data"],
+                "top_factors": [],
+                "explanation": "",
+            },
+            {
+                "player": "GoodPick",
+                "market": "hits",
+                "direction": "over",
+                "line": 1.5,
+                "score": 0.8,
+                "confidence": "high",
+                "risk_flags": [],
+                "top_factors": [],
+                "explanation": "",
+            },
+        ]
+        report = render_baseball_report(
+            match_context=_sample_match_context(),
+            picks=picks,
+        )
+        assert "GoodPick" in report
+        assert "BadPick" not in report.split("Recommended Picks")[1].split("NO-BET")[0] if "NO-BET" in report else "BadPick" not in report.split("Recommended Picks")[1]
+
+    def test_all_zero_line_picks_renders_no_picks_message(self) -> None:
+        picks = [
+            {
+                "player": "BadPick",
+                "market": "hits",
+                "direction": "over",
+                "line": 0,
+                "score": 0.5,
+                "confidence": "low",
+                "risk_flags": ["missing_data"],
+                "top_factors": [],
+                "explanation": "",
+            },
+        ]
+        report = render_baseball_report(
+            match_context=_sample_match_context(),
+            picks=picks,
+        )
+        assert "no actionable picks" in report.lower()
+
+
 class TestBaseballTerminology:
     def test_uses_baseball_terminology(self):
         ctx = _sample_match_context()

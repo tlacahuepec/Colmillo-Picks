@@ -106,7 +106,9 @@ def _score_market_candidate(
     confidence = _determine_confidence(overall_score, risk_flags, thresholds)
 
     line_key = f"line_{market}"
-    line = player.get(line_key, 0)
+    line = player.get(line_key)
+    if not line:
+        return None
     direction = _resolve_direction(player, market, line)
 
     top_k = config.get("global", {}).get("top_k", 5)

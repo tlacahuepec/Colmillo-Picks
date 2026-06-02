@@ -153,3 +153,54 @@ class TestPipelineRunnerErrors:
         with pytest.raises(PipelineRunError) as exc_info:
             runner.run(request=request, module=module)
         assert exc_info.value.stage == "score"
+
+    def test_collect_error_forwards_reason_to_error_details(self) -> None:
+        class ReasonedError(RuntimeError):
+            def __init__(self, msg: str, *, reason: str) -> None:
+                self.reason = reason
+                super().__init__(msg)
+
+        class FailingWithReasonModule(FakeSportModule):
+            def collect_inputs(self, **kwargs: Any) -> dict[str, Any]:
+                raise ReasonedError("Missing data", reason="missing_prop_lines")
+
+        module = FailingWithReasonModule()
+        request = PickRequest(
+            sport="fake_sport",
+            event_date="2026-06-01",
+            home_team="A",
+            away_team="B",
+            markets=("metric_x",),
+        )
+        runner = PipelineRunner()
+        with pytest.raises(PipelineRunError) as exc_info:
+            runner.run(request=request, module=module)
+        assert exc_info.value.stage == "collect"
+        assert exc_info.value.error_details is not None
+        assert exc_info.value.error_details["reason"] == "missing_prop_lines"
+        assert exc_info.value.error_details["sport"] == "fake_sport"
+
+    def test_score_error_forwards_reason_to_error_details(self) -> None:
+        class ReasonedError(RuntimeError):
+            def __init__(self, msg: str, *, reason: str) -> None:
+                self.reason = reason
+                super().__init__(msg)
+
+        class FailingScorerWithReasonModule(FakeSportModule):
+            def score(self, match_inputs: dict[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
+                raise ReasonedError("Hitter data missing", reason="hitter_inputs_unavailable")
+
+        module = FailingScorerWithReasonModule()
+        request = PickRequest(
+            sport="fake_sport",
+            event_date="2026-06-01",
+            home_team="A",
+            away_team="B",
+            markets=("metric_x",),
+        )
+        runner = PipelineRunner()
+        with pytest.raises(PipelineRunError) as exc_info:
+            runner.run(request=request, module=module)
+        assert exc_info.value.stage == "score"
+        assert exc_info.value.error_details is not None
+        assert exc_info.value.error_details["reason"] == "hitter_inputs_unavailable"
