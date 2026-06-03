@@ -867,16 +867,29 @@ def _execute_pipeline_job(
             pass
         return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
-    db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
-    for step in result.get("steps", []):
-        ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
-    ledger.save_picks(run_ctx.id, result.get("scores", []))
-    failed_steps = [s for s in result.get("steps", []) if s["status"] == "failed"]
-    if failed_steps:
-        reasons = [f"{s['name']} failed" for s in failed_steps]
-        ledger.partial_run(run_ctx.id, reasons=reasons)
-    else:
-        ledger.complete_run(run_ctx.id)
+
+    try:
+        db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
+    except Exception as exc:
+        _logger = logging.getLogger("colmillo")
+        _logger.error("mark_pick_success_failed", extra={"pick_id": pick_id, "error": str(exc)})
+        ledger.fail_run(run_ctx.id, error_summary=f"post-success persistence: {exc}", error_stage="persistence")
+        return False
+
+    try:
+        for step in result.get("steps", []):
+            ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
+        ledger.save_picks(run_ctx.id, result.get("scores", []))
+        failed_steps = [s for s in result.get("steps", []) if s["status"] == "failed"]
+        if failed_steps:
+            reasons = [f"{s['name']} failed" for s in failed_steps]
+            ledger.partial_run(run_ctx.id, reasons=reasons)
+        else:
+            ledger.complete_run(run_ctx.id)
+    except Exception as exc:
+        _logger = logging.getLogger("colmillo")
+        _logger.error("ledger_post_success_failed", extra={"pick_id": pick_id, "error": str(exc)})
+
     return True
 
 
