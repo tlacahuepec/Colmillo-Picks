@@ -34,7 +34,9 @@ class GrokLLMClient(LLMClient):
             urlopen_fn=urlopen_fn,
         )
 
-    def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
+    def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
+    ) -> dict:
         attempts = self._max_retries + 1
         last_exc: Exception | None = None
         for attempt in range(1, attempts + 1):

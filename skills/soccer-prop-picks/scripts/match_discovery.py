@@ -227,6 +227,8 @@ def _normalize_sport_result(
         if isinstance(item, dict)
     ]
 
+    matches = [m for m in matches if _matches_requested_date(m, date_utc)]
+
     data_quality = sport_payload.get("data_quality")
     if not isinstance(data_quality, dict):
         data_quality = {"status": "ok" if matches else "empty"}
@@ -247,6 +249,17 @@ def _extract_sport_payload(raw: dict[str, Any], sport: str) -> dict[str, Any]:
         payload = grouped.get(sport, {})
         return payload if isinstance(payload, dict) else {}
     return raw
+
+
+def _matches_requested_date(match: dict[str, Any], date_utc: str) -> bool:
+    """Return True if the match's event_date or kickoff_utc falls on the requested date."""
+    event_date = match.get("event_date", "")
+    if event_date and event_date != date_utc:
+        return False
+    kickoff = match.get("kickoff_utc", "")
+    if kickoff and not kickoff.startswith(date_utc):
+        return False
+    return True
 
 
 def _normalize_match(

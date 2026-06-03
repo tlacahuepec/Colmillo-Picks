@@ -414,23 +414,8 @@ class BaseballModule:
             getattr(self._enrichment_provider, "model", "unknown"),
         )
         try:
-            enrichment = self._enrichment_provider.enrich_missing_inputs(
-                sport="baseball",
-                home_team=match_inputs.get("home_team", ""),
-                away_team=match_inputs.get("away_team", ""),
-                match_date=match_inputs.get("match_date", ""),
-                league=match_inputs.get("league", "mlb"),
-                requested_markets=markets,
-                missing_fields=missing_fields,
-                players=[p for p in match_inputs.get("players", []) if isinstance(p, dict)],
-                lines=match_inputs.get("lines", {}),
-                game={
-                    "venue": match_inputs.get("venue"),
-                    "game_time_utc": match_inputs.get("game_time_utc"),
-                    "home_probable_pitcher": match_inputs.get("home_probable_pitcher"),
-                    "away_probable_pitcher": match_inputs.get("away_probable_pitcher"),
-                },
-                official_context=match_inputs.get("collection_summary", {}),
+            enrichment, decision_metadata = self._run_best_of_n_enrichment(
+                match_inputs=match_inputs, markets=markets, missing_fields=missing_fields
             )
         except Exception as exc:
             mark_enrichment_failed(match_inputs, reason=str(exc), missing_fields=missing_fields)
@@ -469,6 +454,9 @@ class BaseballModule:
             return False
 
         merge_enriched_inputs(match_inputs, enrichment)
+        data_quality = match_inputs.setdefault("data_quality", {})
+        if isinstance(data_quality, dict) and decision_metadata:
+            data_quality["enrichment_decision"] = decision_metadata
         logger.info(
             "baseball_gemini_enrichment_success sport=baseball home_team=%s away_team=%s "
             "match_date=%s league=%s markets=%s missing_fields=%s enriched_players=%s enriched_line_players=%s",
@@ -482,6 +470,35 @@ class BaseballModule:
             len(enrichment.get("lines", {}) or {}),
         )
         return True
+
+    def _run_best_of_n_enrichment(
+        self,
+        *,
+        match_inputs: dict[str, Any],
+        markets: tuple[str, ...],
+        missing_fields: list[str],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        common_kwargs: dict[str, Any] = {
+            "sport": "baseball",
+            "home_team": match_inputs.get("home_team", ""),
+            "away_team": match_inputs.get("away_team", ""),
+            "match_date": match_inputs.get("match_date", ""),
+            "league": match_inputs.get("league", "mlb"),
+            "requested_markets": markets,
+            "missing_fields": missing_fields,
+            "players": [p for p in match_inputs.get("players", []) if isinstance(p, dict)],
+            "lines": match_inputs.get("lines", {}),
+            "game": {
+                "venue": match_inputs.get("venue"),
+                "game_time_utc": match_inputs.get("game_time_utc"),
+                "home_probable_pitcher": match_inputs.get("home_probable_pitcher"),
+                "away_probable_pitcher": match_inputs.get("away_probable_pitcher"),
+            },
+            "official_context": match_inputs.get("collection_summary", {}),
+        }
+        if hasattr(self._enrichment_provider, "enrich_missing_inputs_best_of_n"):
+            return self._enrichment_provider.enrich_missing_inputs_best_of_n(**common_kwargs)
+        return self._enrichment_provider.enrich_missing_inputs(**common_kwargs), None
 
     def _reject_or_fallback(
         self,

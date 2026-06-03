@@ -132,3 +132,69 @@ def test_discover_matches_validates_sports_and_limit() -> None:
 
     with pytest.raises(MatchDiscoveryValidationError, match="limit_per_sport"):
         client.discover_matches(date_utc="2026-06-01", sports=["soccer"], limit_per_sport=6)
+
+
+def test_discover_matches_filters_out_wrong_date_matches() -> None:
+    response = {
+        "sports": {
+            "soccer": {
+                "matches": [
+                    {
+                        "home_team": "Arsenal",
+                        "away_team": "Liverpool",
+                        "event_date": "2026-06-01",
+                        "kickoff_utc": "2026-06-01T19:00:00Z",
+                        "importance": "high",
+                    },
+                    {
+                        "home_team": "Barca",
+                        "away_team": "Madrid",
+                        "event_date": "2026-06-02",
+                        "kickoff_utc": "2026-06-02T20:00:00Z",
+                        "importance": "high",
+                    },
+                    {
+                        "home_team": "Bayern",
+                        "away_team": "Dortmund",
+                        "event_date": "2026-05-31",
+                        "kickoff_utc": "2026-05-31T18:00:00Z",
+                        "importance": "high",
+                    },
+                ]
+            }
+        },
+    }
+    client = MatchDiscoveryClient(client=_FakeLLMClient({"soccer": response}))
+
+    result = client.discover_matches(date_utc="2026-06-01", sports=["soccer"], limit_per_sport=5)
+
+    matches = result["results"]["soccer"]["matches"]
+    assert len(matches) == 1
+    assert matches[0]["home_team"] == "Arsenal"
+
+
+def test_discover_matches_preserves_informational_error_from_llm() -> None:
+    """When the LLM returns matches with a per-sport informational note, it is preserved."""
+    response = {
+        "sports": {
+            "soccer": {
+                "matches": [
+                    {
+                        "home_team": "Norway",
+                        "away_team": "Sweden",
+                        "event_date": "2026-06-01",
+                        "kickoff_utc": "2026-06-01T18:00:00Z",
+                        "importance": "medium",
+                    },
+                ],
+                "error": "Limited verifiable match information available for 2026-06-01.",
+            }
+        },
+    }
+    client = MatchDiscoveryClient(client=_FakeLLMClient({"soccer": response}))
+
+    result = client.discover_matches(date_utc="2026-06-01", sports=["soccer"], limit_per_sport=5)
+
+    soccer = result["results"]["soccer"]
+    assert len(soccer["matches"]) == 1
+    assert soccer["error"] == "Limited verifiable match information available for 2026-06-01."

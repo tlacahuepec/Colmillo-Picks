@@ -44,7 +44,8 @@ class PipelineRunner:
             )
         except Exception as exc:
             steps.append({"name": "collect", "status": "failed", "duration_ms": _elapsed(t0)})
-            raise PipelineRunError(stage="collect", message=str(exc)) from exc
+            error_details = {"reason": exc.reason, "sport": getattr(module, "sport_id", None)} if hasattr(exc, "reason") else None
+            raise PipelineRunError(stage="collect", message=str(exc), error_details=error_details) from exc
         steps.append({"name": "collect", "status": "success", "duration_ms": _elapsed(t0)})
 
         t0 = perf_counter()
@@ -52,7 +53,8 @@ class PipelineRunner:
             scores = module.score(match_inputs, markets=request.markets)
         except Exception as exc:
             steps.append({"name": "score", "status": "failed", "duration_ms": _elapsed(t0)})
-            raise PipelineRunError(stage="score", message=str(exc)) from exc
+            error_details = {"reason": exc.reason, "sport": getattr(module, "sport_id", None)} if hasattr(exc, "reason") else None
+            raise PipelineRunError(stage="score", message=str(exc), error_details=error_details) from exc
         steps.append({"name": "score", "status": "success", "duration_ms": _elapsed(t0)})
 
         ranked = sorted(scores, key=lambda s: s.get("score", 0), reverse=True)

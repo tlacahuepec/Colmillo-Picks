@@ -24,8 +24,20 @@ def render_baseball_report(
     no_bet_picks: list[dict[str, Any]] | None = None,
     provider_statuses: list[dict[str, Any]] | None = None,
 ) -> str:
-    no_bet_picks = no_bet_picks or []
+    no_bet_picks = list(no_bet_picks or [])
     provider_statuses = provider_statuses or []
+
+    valid_picks: list[dict[str, Any]] = []
+    for pick in picks:
+        if not pick.get("line"):
+            no_bet_picks.append({
+                "player": pick.get("player", "Unknown"),
+                "market": pick.get("market", "unknown"),
+                "reason": "zero_line_data_gap",
+            })
+        else:
+            valid_picks.append(pick)
+    picks = valid_picks
 
     sections: list[str] = []
     sections.append(_render_matchup_summary(match_context))

@@ -266,6 +266,74 @@ class MatchDiscoveryResponse(BaseModel):
     results: dict[str, SportDiscoveryResult]
 
 
+class SlateRequest(BaseModel):
+    """Request body for ``POST /slates``."""
+
+    date: str = Field(..., description="YYYY-MM-DD")
+    sports: list[str] = Field(
+        default_factory=lambda: ["soccer", "basketball", "baseball"], min_length=1
+    )
+    max_matches_per_sport: int = Field(3, ge=1, le=5)
+    top_n: int = Field(10, ge=1, le=20)
+    llm_provider: str | None = None
+    llm_model: str | None = None
+
+
+class SlateAcceptedResponse(BaseModel):
+    id: str
+    status: str
+    created_at: datetime
+
+
+class SlateStatusResponse(BaseModel):
+    id: str
+    status: str
+    error_stage: str | None = None
+    error_message: str | None = None
+    latency_ms: int | None = None
+
+
+class SlateMatchRunSummary(BaseModel):
+    sport: str
+    home_team: str = ""
+    away_team: str = ""
+    event_date: str = ""
+    status: str
+    error_stage: str | None = None
+    error_message: str | None = None
+    pick_count: int = 0
+    latency_ms: int | None = None
+
+
+class SlateRankedCandidate(BaseModel):
+    rank: int = 0
+    sport: str
+    player: str
+    market: str
+    line: Any = None
+    direction: str
+    confidence: str
+    normalized_score: float
+    risk_flags: list[str] = Field(default_factory=list)
+    availability_status: str = "unknown"
+    source_match: dict[str, Any] = Field(default_factory=dict)
+
+
+class SlateDetailResponse(BaseModel):
+    id: str
+    created_at: datetime
+    status: str
+    request: dict[str, Any]
+    candidates: list[SlateRankedCandidate] = Field(default_factory=list)
+    match_runs: list[SlateMatchRunSummary] = Field(default_factory=list)
+    matches_attempted: int | None = None
+    matches_succeeded: int | None = None
+    latency_ms: int | None = None
+    discovery_latency_ms: int | None = None
+    error_stage: str | None = None
+    error_message: str | None = None
+
+
 class RunSummary(BaseModel):
     """Lightweight row used by ``GET /runs`` listings."""
 
@@ -614,6 +682,10 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
     )
 
 
+def _filter_zero_line_scores(scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [s for s in scores if s.get("line")]
+
+
 def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     """Execute non-soccer sports via PipelineRunner + SportModule."""
     from pick_request import PickRequest
@@ -648,7 +720,7 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
-        "scores": pipeline_result.scores,
+        "scores": _filter_zero_line_scores(pipeline_result.scores),
         "match_inputs": pipeline_result.match_inputs,
         "steps": pipeline_result.steps,
         "report_markdown": report_md,
@@ -795,6 +867,8 @@ def _execute_pipeline_job(
             pass
         return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
+    if request_dict.get("_sport_module_path") and "scores" in result:
+        result["scores"] = _filter_zero_line_scores(result["scores"])
     db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
     for step in result.get("steps", []):
         ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
@@ -827,6 +901,116 @@ def _run_next_queued_job(
         jobs_module.mark_job_done(job_id)
     else:
         jobs_module.mark_job_failed(job_id, "pipeline execution failed")
+
+
+def _run_next_queued_slate_job() -> None:
+    """Background task: dequeue and execute the next queued slate job."""
+    item = jobs_module.dequeue_slate_run()
+    if item is None:
+        return
+    slate_id, request_dict, job_id = item
+
+    from services.api.slate_orchestration import (
+        execute_slate_job,
+    )
+
+    try:
+        deps = _build_slate_deps(request_dict)
+        result = execute_slate_job(request_dict=request_dict, deps=deps)
+
+        candidates_dicts = [
+            {
+                "rank": idx + 1,
+                "sport": c.sport,
+                "player": c.player,
+                "market": c.market,
+                "line": c.line,
+                "direction": c.direction,
+                "confidence": c.confidence,
+                "normalized_score": c.normalized_score,
+                "risk_flags": list(c.risk_flags),
+                "availability_status": c.availability_status,
+                "source_match": c.source_match,
+            }
+            for idx, c in enumerate(result.candidates)
+        ]
+
+        if not result.candidates and result.matches_attempted > 0:
+            db_module.mark_slate_failed(
+                slate_id=slate_id,
+                stage="aggregation",
+                message=f"No viable candidates produced from {result.matches_attempted} attempted matches",
+                latency_ms=result.latency_ms,
+            )
+        else:
+            db_module.mark_slate_success(
+                slate_id=slate_id,
+                candidates=candidates_dicts,
+                match_runs=result.match_runs,
+                latency_ms=result.latency_ms,
+                discovery_latency_ms=result.discovery_latency_ms,
+                matches_attempted=result.matches_attempted,
+                matches_succeeded=result.matches_succeeded,
+            )
+        jobs_module.mark_slate_job_done(job_id)
+    except Exception as exc:
+        db_module.mark_slate_failed(
+            slate_id=slate_id,
+            stage="discovery",
+            message=str(exc)[:500],
+            latency_ms=0,
+        )
+        jobs_module.mark_slate_job_failed(job_id, str(exc)[:500])
+
+
+def _build_slate_deps(request_dict: dict[str, Any]):
+    from match_discovery import MatchDiscoveryClient
+    from services.api.slate_orchestration import SlateOrchestrationDeps
+    from sport_module import get_sport_module
+
+    discovery_client = MatchDiscoveryClient.from_env(
+        provider=request_dict.get("llm_provider"),
+        model=request_dict.get("llm_model"),
+    )
+
+    def discover(*, date_utc: str, sports: list[str], limit_per_sport: int) -> dict[str, Any]:
+        return discovery_client.discover_matches(
+            date_utc=date_utc, sports=sports, limit_per_sport=limit_per_sport
+        )
+
+    def run_pipeline(
+        *, sport: str, home_team: str, away_team: str, event_date: str, markets: tuple[str, ...]
+    ) -> list[dict[str, Any]]:
+        module = get_sport_module(sport)
+        match_inputs = module.collect_inputs(
+            home_team=home_team, away_team=away_team, match_date=event_date
+        )
+        return module.score(match_inputs, markets=markets)
+
+    return SlateOrchestrationDeps(
+        discover_matches=discover,
+        run_match_pipeline=run_pipeline,
+    )
+
+
+def _slate_row_to_detail(row: Any) -> SlateDetailResponse:
+    request = json.loads(row.request_json) if row.request_json else {}
+    candidates = json.loads(row.candidates_json) if row.candidates_json else []
+    match_runs = json.loads(row.match_runs_json) if row.match_runs_json else []
+    return SlateDetailResponse(
+        id=row.id,
+        created_at=row.created_at,
+        status=row.status,
+        request=request,
+        candidates=[SlateRankedCandidate(**c) for c in candidates],
+        match_runs=[SlateMatchRunSummary(**m) for m in match_runs],
+        matches_attempted=row.matches_attempted,
+        matches_succeeded=row.matches_succeeded,
+        latency_ms=row.latency_ms,
+        discovery_latency_ms=row.discovery_latency_ms,
+        error_stage=row.error_stage,
+        error_message=row.error_message,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -888,11 +1072,19 @@ def create_app() -> FastAPI:
     # ---- Match Discovery ------------------------------------------------- #
     @app.post("/matches/discover", response_model=MatchDiscoveryResponse)
     def discover_matches(payload: MatchDiscoveryRequest) -> MatchDiscoveryResponse:
+        import time as _time
+
         from match_discovery import (
             MatchDiscoveryError,
             MatchDiscoveryValidationError,
             validate_match_discovery_inputs,
         )
+
+        logger.info(
+            "match_discovery_started",
+            extra={"date": payload.date, "sports": payload.sports, "limit_per_sport": payload.limit_per_sport},
+        )
+        t0 = _time.perf_counter()
 
         try:
             sports = validate_match_discovery_inputs(
@@ -907,9 +1099,34 @@ def create_app() -> FastAPI:
                 limit_per_sport=payload.limit_per_sport,
             )
         except MatchDiscoveryValidationError as exc:
+            latency_ms = int((_time.perf_counter() - t0) * 1000)
+            logger.warning(
+                "match_discovery_failed",
+                extra={"error": "; ".join(exc.errors), "latency_ms": latency_ms},
+            )
             raise HTTPException(status_code=400, detail="; ".join(exc.errors)) from exc
         except MatchDiscoveryError as exc:
+            latency_ms = int((_time.perf_counter() - t0) * 1000)
+            logger.warning(
+                "match_discovery_failed",
+                extra={"error": str(exc), "latency_ms": latency_ms},
+            )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        latency_ms = int((_time.perf_counter() - t0) * 1000)
+        total_matches = sum(
+            len(sport_result.get("matches", []))
+            for sport_result in result.get("results", {}).values()
+        )
+        logger.info(
+            "match_discovery_completed",
+            extra={
+                "date": payload.date,
+                "sports": payload.sports,
+                "total_matches": total_matches,
+                "latency_ms": latency_ms,
+            },
+        )
 
         return MatchDiscoveryResponse(**result)
 
@@ -1114,6 +1331,54 @@ def create_app() -> FastAPI:
                 )
                 for p in picks
             ],
+        )
+
+    # ---- Slates (async) -------------------------------------------------- #
+
+    _SUPPORTED_SLATE_SPORTS = {"soccer", "basketball", "baseball"}
+
+    @app.post("/slates", response_model=SlateAcceptedResponse, status_code=202)
+    def create_slate(payload: SlateRequest, background_tasks: BackgroundTasks) -> SlateAcceptedResponse:
+        try:
+            datetime.strptime(payload.date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"Invalid date '{payload.date}'. Expected YYYY-MM-DD.")
+
+        unsupported = set(s.lower() for s in payload.sports) - _SUPPORTED_SLATE_SPORTS
+        if unsupported:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported sport(s): {sorted(unsupported)}. Supported: {sorted(_SUPPORTED_SLATE_SPORTS)}",
+            )
+
+        request_dict = payload.model_dump()
+        row = db_module.create_pending_slate_run(request_payload=request_dict)
+        jobs_module.enqueue_slate_run(row.id, request_dict)
+
+        worker_mode = os.getenv("COLMILLO_WORKER_MODE", "").lower()
+        if worker_mode != "external":
+            background_tasks.add_task(_run_next_queued_slate_job)
+
+        return SlateAcceptedResponse(id=row.id, status=row.status, created_at=row.created_at)
+
+    @app.get("/slates/{slate_id}", response_model=SlateDetailResponse)
+    def get_slate(slate_id: str) -> SlateDetailResponse:
+        row = db_module.get_slate_run(slate_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Slate not found.")
+        return _slate_row_to_detail(row)
+
+    @app.get("/slates/{slate_id}/status", response_model=SlateStatusResponse)
+    def get_slate_status(slate_id: str) -> SlateStatusResponse:
+        row = db_module.get_slate_run(slate_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Slate not found.")
+        return SlateStatusResponse(
+            id=row.id,
+            status=row.status,
+            error_stage=row.error_stage,
+            error_message=row.error_message,
+            latency_ms=row.latency_ms,
         )
 
     return app

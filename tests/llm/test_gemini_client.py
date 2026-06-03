@@ -496,6 +496,51 @@ def test_gemini_client_last_sources_resets_between_calls() -> None:
     assert client.last_sources == []
 
 
+def test_gemini_client_passes_temperature_when_provided() -> None:
+    captured_config: dict = {}
+
+    class _CapturingClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, *, model, contents, config):
+            captured_config.update(config)
+            return _FakeResponse('{"ok": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_CapturingClient,
+    )
+    client.generate_structured(
+        system_prompt="x", user_prompt="y", schema={}, temperature=0.7,
+    )
+
+    assert "temperature" in captured_config
+    assert captured_config["temperature"] == 0.7
+
+
+def test_gemini_client_omits_temperature_when_none() -> None:
+    captured_config: dict = {}
+
+    class _CapturingClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, *, model, contents, config):
+            captured_config.update(config)
+            return _FakeResponse('{"ok": true}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_CapturingClient,
+    )
+    client.generate_structured(
+        system_prompt="x", user_prompt="y", schema={},
+    )
+
+    assert "temperature" not in captured_config
+
+
 def test_gemini_client_extracts_sources_from_search_entry_point_fallback() -> None:
     class _FakeSearchEntryPoint:
         def __init__(self):
@@ -526,3 +571,29 @@ def test_gemini_client_extracts_sources_from_search_entry_point_fallback() -> No
     assert len(client.last_sources) == 2
     assert client.last_sources[0].url == "https://www.bbc.com/sport/football"
     assert client.last_sources[1].url == "https://www.transfermarkt.com/bayern"
+
+
+class TestJsonRepair:
+    def test_repairs_trailing_comma_in_object(self) -> None:
+        from llm.gemini_client import _repair_json
+
+        text = '{"a": 1, "b": 2,}'
+        assert _repair_json(text) == {"a": 1, "b": 2}
+
+    def test_repairs_trailing_comma_in_array(self) -> None:
+        from llm.gemini_client import _repair_json
+
+        text = '{"items": [1, 2, 3,]}'
+        assert _repair_json(text) == {"items": [1, 2, 3]}
+
+    def test_returns_none_on_unfixable_json(self) -> None:
+        from llm.gemini_client import _repair_json
+
+        assert _repair_json("not json at all") is None
+
+    def test_handles_nested_trailing_commas(self) -> None:
+        from llm.gemini_client import _repair_json
+
+        text = '{"a": {"b": 1,}, "c": [1,],}'
+        result = _repair_json(text)
+        assert result == {"a": {"b": 1}, "c": [1]}
