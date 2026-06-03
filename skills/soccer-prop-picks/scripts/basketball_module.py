@@ -82,7 +82,7 @@ class BasketballModule:
         stats_provider: Any | None = None,
         props_provider: Any | None = None,
         enrichment_provider: Any | None = None,
-        allow_deterministic_fallback: bool = True,
+        allow_deterministic_fallback: bool = False,
     ) -> None:
         self._game_provider = game_provider
         self._stats_provider = stats_provider
@@ -116,6 +116,11 @@ class BasketballModule:
                 "source": "deterministic_fallback",
                 "enrichment_status": "not_requested",
             }
+        elif players is None and not self._allow_fallback:
+            raise BasketballDataQualityError(
+                "Could not find enough match details: no player data available for this game.",
+                reason="no_player_data",
+            )
         else:
             data_quality = {
                 "source": "provider",

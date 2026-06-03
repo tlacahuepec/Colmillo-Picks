@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from basketball_module import BasketballModule
+import logging
+from typing import Any
+
+import pytest
+
+from basketball_module import BasketballModule, BasketballDataQualityError
 from pick_request import PickRequest
 from pipeline_runner import PipelineRunner, PipelineResult
 from sport_module import SportModule, SportModuleRegistry
@@ -46,7 +51,7 @@ class TestBasketballModuleRegistry:
 
 class TestBasketballPlaceholderScoring:
     def test_collect_inputs_returns_structured_data(self) -> None:
-        module = BasketballModule()
+        module = BasketballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="Lakers",
             away_team="Celtics",
@@ -59,7 +64,7 @@ class TestBasketballPlaceholderScoring:
         assert len(inputs["players"]) > 0
 
     def test_score_returns_valid_picks(self) -> None:
-        module = BasketballModule()
+        module = BasketballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="Lakers",
             away_team="Celtics",
@@ -77,7 +82,7 @@ class TestBasketballPlaceholderScoring:
             assert pick["market"] in ("points", "assists")
 
     def test_score_all_markets_when_none_specified(self) -> None:
-        module = BasketballModule()
+        module = BasketballModule(allow_deterministic_fallback=True)
         inputs = module.collect_inputs(
             home_team="Lakers",
             away_team="Celtics",
@@ -105,7 +110,7 @@ class TestBasketballPlaceholderScoring:
 
 class TestBasketballPipelineIntegration:
     def test_basketball_request_runs_through_pipeline(self) -> None:
-        module = BasketballModule()
+        module = BasketballModule(allow_deterministic_fallback=True)
         request = PickRequest(
             sport="basketball",
             event_date="2026-06-01",
@@ -135,3 +140,37 @@ class TestBasketballPipelineIntegration:
         result = runner.run(request=request, module=soccer_module)
         assert result.status == "success"
         assert len(result.scores) > 0
+
+
+class TestBasketballHardening:
+    def test_fallback_disabled_by_default(self) -> None:
+        module = BasketballModule()
+        assert module._allow_fallback is False
+
+    def test_provider_failure_raises_when_no_fallback(self) -> None:
+        module = BasketballModule(allow_deterministic_fallback=False)
+        with pytest.raises(BasketballDataQualityError, match="Could not find enough match details"):
+            module.collect_inputs(
+                home_team="Lakers",
+                away_team="Celtics",
+                match_date="2026-06-01",
+            )
+
+    def test_provider_exception_logged_with_context(self, caplog: pytest.LogCaptureFixture) -> None:
+        class _FailingGameProvider:
+            def lookup_game(self, **kwargs: Any) -> None:
+                raise RuntimeError("API timeout")
+
+        module = BasketballModule(
+            game_provider=_FailingGameProvider(),
+            allow_deterministic_fallback=True,
+        )
+        with caplog.at_level(logging.WARNING):
+            module.collect_inputs(
+                home_team="Lakers",
+                away_team="Celtics",
+                match_date="2026-06-01",
+            )
+
+        assert any("basketball_provider_error" in r.message for r in caplog.records)
+        assert any("API timeout" in str(getattr(r, "error", "")) for r in caplog.records)
