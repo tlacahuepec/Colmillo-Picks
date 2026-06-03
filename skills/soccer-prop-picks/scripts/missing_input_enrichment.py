@@ -35,6 +35,7 @@ class GeminiMissingInputEnrichmentProvider:
         self._client = client
         self.model = model or "gemini"
         self.last_sources: list[Any] = []
+        self.last_grounding_metadata = None
 
     def enrich_missing_inputs(
         self,
@@ -66,6 +67,7 @@ class GeminiMissingInputEnrichmentProvider:
             temperature=None,
         )
         self.last_sources = sources
+        self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
         return result
 
     def enrich_missing_inputs_best_of_n(

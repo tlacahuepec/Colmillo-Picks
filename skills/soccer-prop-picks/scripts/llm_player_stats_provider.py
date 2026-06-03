@@ -21,6 +21,7 @@ class LLMPlayerStatsProvider:
     def __init__(self, *, client: LLMClient) -> None:
         self._client = client
         self.last_sources: list = []
+        self.last_grounding_metadata = None
 
     def get_player_stats(
         self, *, home_team: str, away_team: str, match_date: str,
@@ -35,6 +36,7 @@ class LLMPlayerStatsProvider:
                 schema={},
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
+            self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
             if debug:
                 print(
                     f"[player-stats-llm-debug] response: {json.dumps(result, default=str)[:2000]}",
