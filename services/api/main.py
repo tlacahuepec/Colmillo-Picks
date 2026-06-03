@@ -867,6 +867,8 @@ def _execute_pipeline_job(
             pass
         return False
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
+    if request_dict.get("_sport_module_path") and "scores" in result:
+        result["scores"] = _filter_zero_line_scores(result["scores"])
 
     try:
         db_module.mark_pick_success(pick_id=pick_id, result=result, latency_ms=latency_ms)
