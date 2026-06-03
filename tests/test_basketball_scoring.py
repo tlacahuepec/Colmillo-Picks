@@ -145,3 +145,24 @@ def _player_input(
     d["line_rebounds"] = line_rebounds
     d["line_threes"] = line_threes
     return d
+
+
+class TestZeroLineRejection:
+    """Defense-in-depth: scoring must never produce picks with line=0 or missing line."""
+
+    def test_zero_line_player_excluded(self) -> None:
+        player = _player_input(line_points=0)
+        results = score_basketball_props([player], markets=("points",))
+        assert results == []
+
+    def test_missing_line_key_excluded(self) -> None:
+        player = _player_input()
+        del player["line_points"]
+        results = score_basketball_props([player], markets=("points",))
+        assert results == []
+
+    def test_valid_nonzero_line_still_scores(self) -> None:
+        player = _player_input(line_points=25.5)
+        results = score_basketball_props([player], markets=("points",))
+        assert len(results) == 1
+        assert results[0]["line"] == 25.5

@@ -197,7 +197,17 @@ class TestBaseballAPIAcceptance:
         detail = client.get(f"/picks/{pick_id}").json()
         assert detail["status"] == "success"
 
-    def test_basketball_still_works(self, client: TestClient) -> None:
+    def test_basketball_still_works(
+        self, monkeypatch: pytest.MonkeyPatch, client: TestClient,
+    ) -> None:
+        import sport_module as sm_mod
+        from basketball_module import BasketballModule
+
+        registry = sm_mod.SportModuleRegistry()
+        registry.register(sm_mod.SoccerModule())
+        registry.register(BasketballModule(allow_deterministic_fallback=True))
+        monkeypatch.setattr(sm_mod, "_DEFAULT_REGISTRY", registry)
+
         response = client.post(
             "/picks",
             json={
