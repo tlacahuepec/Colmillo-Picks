@@ -584,3 +584,72 @@ class TestBestOfNEnrichment:
         assert "populated_field_count" in metadata
         assert "avg_confidence" in metadata
         assert "critical_null_count" in metadata
+
+
+class TestBasketballEnrichmentPrompt:
+    """Verify basketball-specific prompt content for improved enrichment."""
+
+    def test_system_prompt_includes_basketball_field_names(self) -> None:
+        """System prompt mentions usage_rate, minutes_proj, etc. for basketball."""
+        from missing_input_enrichment import GeminiMissingInputEnrichmentProvider
+
+        prompt = GeminiMissingInputEnrichmentProvider._build_system_prompt(sport="basketball")
+        assert "usage_rate" in prompt
+        assert "minutes_proj" in prompt
+        assert "threes_avg" in prompt
+        assert "three_point_attempts" in prompt
+
+    def test_system_prompt_generic_for_other_sports(self) -> None:
+        """System prompt does NOT include basketball guidance for baseball."""
+        from missing_input_enrichment import GeminiMissingInputEnrichmentProvider
+
+        prompt = GeminiMissingInputEnrichmentProvider._build_system_prompt(sport="baseball")
+        assert "usage_rate" not in prompt
+        assert "minutes_proj" not in prompt
+
+    def test_user_prompt_includes_explicit_field_schema_for_basketball(self) -> None:
+        """User prompt required_json_shape has concrete basketball fields."""
+        from missing_input_enrichment import GeminiMissingInputEnrichmentProvider
+        import json
+
+        prompt_str = GeminiMissingInputEnrichmentProvider._build_user_prompt(
+            sport="basketball",
+            home_team="LAL",
+            away_team="BOS",
+            match_date="2026-06-01",
+            league="nba",
+            requested_markets=("points", "threes"),
+            missing_fields=["player:LeBron:usage_rate"],
+            players=[{"player_name": "LeBron", "team": "LAL"}],
+            lines={},
+            game={},
+            official_context={},
+        )
+        prompt = json.loads(prompt_str)
+        player_shape = prompt["required_json_shape"]["players"][0]
+        assert "usage_rate" in player_shape
+        assert "minutes_proj" in player_shape
+        assert "three_point_attempts" in player_shape
+
+    def test_user_prompt_generic_for_non_basketball(self) -> None:
+        """Non-basketball sports keep generic schema."""
+        from missing_input_enrichment import GeminiMissingInputEnrichmentProvider
+        import json
+
+        prompt_str = GeminiMissingInputEnrichmentProvider._build_user_prompt(
+            sport="baseball",
+            home_team="NYY",
+            away_team="BOS",
+            match_date="2026-06-01",
+            league="mlb",
+            requested_markets=("strikeouts",),
+            missing_fields=["player:Judge:hr_avg"],
+            players=[{"player_name": "Judge", "team": "NYY"}],
+            lines={},
+            game={},
+            official_context={},
+        )
+        prompt = json.loads(prompt_str)
+        player_shape = prompt["required_json_shape"]["players"][0]
+        assert "all_required_stats" in player_shape
+        assert "usage_rate" not in player_shape

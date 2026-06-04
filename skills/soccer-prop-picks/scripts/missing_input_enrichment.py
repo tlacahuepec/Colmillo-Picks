@@ -170,7 +170,7 @@ class GeminiMissingInputEnrichmentProvider:
         temperature: float | None,
     ) -> tuple[dict[str, Any] | None, list[Any]]:
         result = self._client.generate_structured(
-            system_prompt=self._build_system_prompt(),
+            system_prompt=self._build_system_prompt(sport=sport),
             user_prompt=self._build_user_prompt(
                 sport=sport,
                 home_team=home_team,
@@ -192,13 +192,28 @@ class GeminiMissingInputEnrichmentProvider:
         return mapped, sources
 
     @staticmethod
-    def _build_system_prompt() -> str:
-        return (
+    def _build_system_prompt(*, sport: str = "generic") -> str:
+        base = (
             "You enrich missing sports betting-analysis inputs after official providers were tried first. "
             "Return exactly one JSON object. Use search-grounded, source-labeled data only. "
             "Never invent betting prop lines; include line source metadata for each line or leave it unknown. "
             "Use null for unverified values. Do not include markdown or prose."
         )
+        if sport == "basketball":
+            base += (
+                "\n\nBASKETBALL-SPECIFIC GUIDANCE:\n"
+                "The scoring engine requires these exact numeric fields per player:\n"
+                "- minutes_proj: Projected minutes for this game (typically 20-38 for starters)\n"
+                "- usage_rate: Fraction of team possessions used while on court (decimal 0.15-0.35, NOT percentage)\n"
+                "- points_avg / points_last5: Season and last-5-game scoring averages\n"
+                "- rebound_avg / rebound_last5: Season and last-5-game rebounding averages\n"
+                "- assist_avg / assist_last5: Season and last-5-game assist averages\n"
+                "- threes_avg / threes_last5: Season and last-5-game three-pointers made averages\n"
+                "- three_point_attempts: Season average 3PA per game\n\n"
+                "Search basketball-reference.com, nba.com/stats, or equivalent sources. "
+                "Return numeric values (not strings). Use null ONLY when no source can verify the value."
+            )
+        return base
 
     @staticmethod
     def _build_user_prompt(
@@ -239,6 +254,24 @@ class GeminiMissingInputEnrichmentProvider:
                     "retrieved_at_utc": "ISO-8601 timestamp",
                     "players": [
                         {
+                            "player_name": "full name (must match exactly)",
+                            "team": "3-letter team code (e.g., LAL, BOS, OKC)",
+                            "position": "PG|SG|SF|PF|C",
+                            "minutes_proj": "float: projected minutes (20-38 typical for starters)",
+                            "usage_rate": "float: 0.15-0.35 range (decimal, not percentage)",
+                            "points_avg": "float: season ppg",
+                            "points_last5": "float: last 5 games ppg",
+                            "rebound_avg": "float: season rpg",
+                            "rebound_last5": "float: last 5 games rpg",
+                            "assist_avg": "float: season apg",
+                            "assist_last5": "float: last 5 games apg",
+                            "threes_avg": "float: season 3PM per game",
+                            "threes_last5": "float: last 5 games 3PM per game",
+                            "three_point_attempts": "float: season 3PA per game",
+                            "sources": [{"label": "source name", "url": "source URL"}],
+                        }
+                    ] if sport == "basketball" else [
+                        {
                             "player_name": "full name",
                             "team": "team code or official team",
                             "position": "position",
@@ -266,7 +299,11 @@ class GeminiMissingInputEnrichmentProvider:
                     "Every prop line must include source or sources metadata.",
                     "Do not fabricate PrizePicks, sportsbook, lineup, injury, or stat values.",
                     "If required data cannot be verified, leave it absent or null.",
-                ],
+                ] + ([
+                    "usage_rate must be expressed as a decimal (e.g., 0.28), not a percentage (e.g., 28).",
+                    "minutes_proj should reflect current rotation status and recent minutes pattern.",
+                    "last5 averages should be from the 5 most recent games actually played.",
+                ] if sport == "basketball" else []),
             },
             sort_keys=True,
             default=str,

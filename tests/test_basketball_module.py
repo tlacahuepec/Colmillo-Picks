@@ -174,3 +174,133 @@ class TestBasketballHardening:
 
         assert any("basketball_provider_error" in r.message for r in caplog.records)
         assert any("API timeout" in str(getattr(r, "error", "")) for r in caplog.records)
+
+
+def _complete_player(name: str, team: str = "LAL") -> dict[str, Any]:
+    """Build a player dict with all required fields for all markets."""
+    return {
+        "player_name": name,
+        "team": team,
+        "position": "SF",
+        "minutes_proj": 34.0,
+        "usage_rate": 0.28,
+        "points_avg": 25.0,
+        "points_last5": 26.0,
+        "rebound_avg": 7.0,
+        "rebound_last5": 7.5,
+        "assist_avg": 6.0,
+        "assist_last5": 6.5,
+        "threes_avg": 2.5,
+        "threes_last5": 2.8,
+        "three_point_attempts": 6.0,
+    }
+
+
+def _incomplete_player(name: str, team: str = "BOS", missing: tuple[str, ...] = ("usage_rate",)) -> dict[str, Any]:
+    """Build a player dict missing specified fields."""
+    p = _complete_player(name, team)
+    for field in missing:
+        p.pop(field, None)
+    return p
+
+
+def _make_match_inputs(
+    players: list[dict[str, Any]],
+    lines: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build match_inputs dict suitable for score()."""
+    if lines is None:
+        lines = {
+            p["player_name"]: {"points": 25.5, "rebounds": 7.5, "assists": 6.5, "threes": 2.5}
+            for p in players
+        }
+    return {
+        "home_team": "LAL",
+        "away_team": "BOS",
+        "match_date": "2026-06-01",
+        "league": "nba",
+        "game": {},
+        "players": players,
+        "lines": lines,
+        "data_quality": {"source": "provider", "enrichment_status": "success"},
+    }
+
+
+class TestPerPlayerExclusion:
+    """Test that partial player data excludes only incomplete players."""
+
+    def test_score_succeeds_with_some_players_missing_data(self) -> None:
+        """2 complete + 1 incomplete player should produce scores for 2 players only."""
+        players = [
+            _complete_player("LeBron James", "LAL"),
+            _complete_player("Anthony Davis", "LAL"),
+            _incomplete_player("Donte DiVincenzo", "BOS", missing=("usage_rate",)),
+        ]
+        module = BasketballModule()
+        inputs = _make_match_inputs(players)
+        scores = module.score(inputs, markets=("points",))
+        scored_players = {s["player"] for s in scores}
+        assert "LeBron James" in scored_players
+        assert "Anthony Davis" in scored_players
+        assert "Donte DiVincenzo" not in scored_players
+
+    def test_excluded_player_not_in_results(self) -> None:
+        """Player missing usage_rate excluded from all markets."""
+        players = [
+            _complete_player("LeBron James", "LAL"),
+            _incomplete_player("Donte DiVincenzo", "BOS", missing=("usage_rate",)),
+        ]
+        module = BasketballModule()
+        inputs = _make_match_inputs(players)
+        scores = module.score(inputs, markets=("points", "rebounds", "assists", "threes"))
+        scored_players = {s["player"] for s in scores}
+        assert "LeBron James" in scored_players
+        assert "Donte DiVincenzo" not in scored_players
+
+    def test_player_excluded_from_threes_but_scored_for_points(self) -> None:
+        """Player missing three_point_attempts excluded from threes but scored for points."""
+        player = _complete_player("Victor Wembanyama", "SAS")
+        player.pop("three_point_attempts")
+        players = [player]
+        module = BasketballModule()
+        inputs = _make_match_inputs(players)
+        scores = module.score(inputs, markets=("points", "threes"))
+        scored_markets = {s["market"] for s in scores if s["player"] == "Victor Wembanyama"}
+        assert "points" in scored_markets
+        assert "threes" not in scored_markets
+
+    def test_all_players_excluded_raises_data_quality_error(self) -> None:
+        """When no player has complete data for any market, still raises."""
+        players = [
+            _incomplete_player("Player A", "LAL", missing=("usage_rate",)),
+            _incomplete_player("Player B", "BOS", missing=("usage_rate",)),
+        ]
+        module = BasketballModule()
+        inputs = _make_match_inputs(players)
+        with pytest.raises(BasketballDataQualityError, match="missing basketball player context"):
+            module.score(inputs, markets=("points",))
+
+    def test_exclusion_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """basketball_players_excluded_from_scoring event emitted."""
+        players = [
+            _complete_player("LeBron James", "LAL"),
+            _incomplete_player("Donte DiVincenzo", "BOS", missing=("usage_rate",)),
+        ]
+        module = BasketballModule()
+        inputs = _make_match_inputs(players)
+        with caplog.at_level(logging.INFO, logger="colmillo.basketball"):
+            module.score(inputs, markets=("points",))
+        assert any("basketball_players_excluded" in r.message for r in caplog.records)
+
+    def test_excluded_players_in_data_quality(self) -> None:
+        """match_inputs data_quality tracks excluded players."""
+        players = [
+            _complete_player("LeBron James", "LAL"),
+            _incomplete_player("Donte DiVincenzo", "BOS", missing=("usage_rate",)),
+        ]
+        module = BasketballModule()
+        inputs = _make_match_inputs(players)
+        module.score(inputs, markets=("points",))
+        excluded = inputs["data_quality"].get("excluded_players")
+        assert excluded is not None
+        assert "Donte DiVincenzo" in str(excluded)
