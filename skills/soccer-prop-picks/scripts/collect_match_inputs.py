@@ -342,6 +342,24 @@ def collect_inputs(
         "odds": [{"url": s.url, "title": s.title} for s in getattr(odds_provider, "last_sources", [])],
     }
 
+    grounding_detail = {}
+    for key, provider in [("fixture", fixture_provider), ("lineup", lineup_provider), ("odds", odds_provider)]:
+        metadata = getattr(provider, "last_grounding_metadata", None)
+        if metadata is not None:
+            grounding_detail[key] = {
+                "sources": [{"url": s.url, "title": s.title} for s in metadata.sources],
+                "supports": [
+                    {
+                        "start_index": sup.start_index,
+                        "end_index": sup.end_index,
+                        "text": sup.text,
+                        "source_indices": list(sup.source_indices),
+                    }
+                    for sup in metadata.supports
+                ],
+                "web_search_queries": list(metadata.web_search_queries),
+            }
+
     result = build_payload(
         request=request,
         fixture=fixture,
@@ -354,6 +372,8 @@ def collect_inputs(
         default_kickoff_utc=default_kickoff_utc,
     )
     result["sources"] = sources
+    if grounding_detail:
+        result["grounding_detail"] = grounding_detail
     return result
 
 

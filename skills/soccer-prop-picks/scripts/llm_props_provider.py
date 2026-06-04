@@ -22,6 +22,7 @@ class LLMPropsProvider:
     def __init__(self, *, client: LLMClient) -> None:
         self._client = client
         self.last_sources: list = []
+        self.last_grounding_metadata = None
 
     def get_prop_lines(
         self,
@@ -37,6 +38,7 @@ class LLMPropsProvider:
                 schema={},
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
+            self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
             if debug:
                 print(
                     f"[props-llm-debug] response: {json.dumps(result, default=str)[:2000]}",

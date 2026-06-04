@@ -26,6 +26,7 @@ class LLMLineupProvider:
     def __init__(self, *, client: LLMClient) -> None:
         self._client = client
         self.last_sources: list = []
+        self.last_grounding_metadata = None
 
     def get_lineups_and_availability(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
         debug = os.getenv("COLMILLO_LINEUP_LLM_DEBUG", "").strip() not in ("", "0", "false")
@@ -36,6 +37,7 @@ class LLMLineupProvider:
                 schema={},
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
+            self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
             if debug:
                 print(f"[lineup-llm-debug] response: {json.dumps(result, default=str)[:2000]}", file=sys.stderr)
             return self._map_response(result, fixture)

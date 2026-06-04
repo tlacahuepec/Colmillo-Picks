@@ -21,6 +21,7 @@ class LLMOddsProvider:
     def __init__(self, *, client: LLMClient) -> None:
         self._client = client
         self.last_sources: list = []
+        self.last_grounding_metadata = None
 
     def get_odds_snapshots(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
         debug = os.getenv("COLMILLO_ODDS_LLM_DEBUG", "").strip() not in ("", "0", "false")
@@ -31,6 +32,7 @@ class LLMOddsProvider:
                 schema={},
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
+            self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
             if debug:
                 print(f"[odds-llm-debug] response: {json.dumps(result, default=str)[:2000]}", file=sys.stderr)
             return self._map_response(result)
