@@ -224,6 +224,18 @@ class AvailabilityCheckResponse(BaseModel):
     checked_at: str
 
 
+class BatchAvailabilityRequest(BaseModel):
+    candidates: list[dict[str, Any]] = Field(..., min_length=1)
+    platforms: list[str] = Field(default_factory=lambda: ["prizepicks"])
+
+
+class BatchAvailabilityResponse(BaseModel):
+    badges: list[AvailabilityBadge]
+    fallback_mode: bool
+    fallback_reason: str
+    checked_at: str
+
+
 class MatchDiscoveryRequest(BaseModel):
     date: str = Field(..., description="YYYY-MM-DD date to discover matches for.")
     sports: list[str] = Field(default_factory=lambda: ["soccer"], min_length=1)
@@ -317,6 +329,7 @@ class SlateRankedCandidate(BaseModel):
     risk_flags: list[str] = Field(default_factory=list)
     availability_status: str = "unknown"
     source_match: dict[str, Any] = Field(default_factory=dict)
+    source_pick: dict[str, Any] = Field(default_factory=dict)
 
 
 class SlateDetailResponse(BaseModel):
@@ -944,6 +957,7 @@ def _run_next_queued_slate_job() -> None:
                 "risk_flags": list(c.risk_flags),
                 "availability_status": c.availability_status,
                 "source_match": c.source_match,
+                "source_pick": dict(c.source_pick) if c.source_pick else {},
             }
             for idx, c in enumerate(result.candidates)
         ]
@@ -1272,6 +1286,29 @@ def create_app() -> FastAPI:
 
         return AvailabilityCheckResponse(
             pick_id=pick_id,
+            badges=badges,
+            fallback_mode=False,
+            fallback_reason="",
+            checked_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    # ---- Batch Availability (slate candidates) ----------------------------- #
+    @app.post(
+        "/availability/check-batch",
+        response_model=BatchAvailabilityResponse,
+    )
+    def check_availability_batch(payload: BatchAvailabilityRequest) -> BatchAvailabilityResponse:
+        try:
+            badges = _check_availability_for_picks(payload.candidates, payload.platforms)
+        except Exception as exc:
+            return BatchAvailabilityResponse(
+                badges=[],
+                fallback_mode=True,
+                fallback_reason=f"Adapter error: {exc}",
+                checked_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+        return BatchAvailabilityResponse(
             badges=badges,
             fallback_mode=False,
             fallback_reason="",

@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from services.ui.best_today_helpers import (
+    build_availability_batch_payload,
     build_slate_payload,
+    clear_slate_cache,
+    confidence_color,
+    format_risk_flags_markdown,
     format_slate_candidate_row,
     format_match_run_summary,
+    format_source_pick_detail,
+    match_badges_to_candidates,
     render_no_candidates_message,
     render_partial_failure_summary,
+    should_render_cached_slate,
+    store_slate_result,
 )
 
 
@@ -146,3 +154,171 @@ class TestRenderPartialFailureSummary:
         text = render_partial_failure_summary(match_runs)
 
         assert text == ""
+
+
+class TestSessionStateCaching:
+    def test_store_slate_result_sets_key(self) -> None:
+        session = {}
+        detail = {"id": "abc", "status": "success", "candidates": []}
+
+        store_slate_result(session, detail)
+
+        assert session["last_slate_detail"] == detail
+
+    def test_clear_slate_cache_removes_key(self) -> None:
+        session = {"last_slate_detail": {"id": "abc"}}
+
+        clear_slate_cache(session)
+
+        assert "last_slate_detail" not in session
+
+    def test_clear_slate_cache_no_op_when_empty(self) -> None:
+        session = {}
+
+        clear_slate_cache(session)
+
+        assert "last_slate_detail" not in session
+
+    def test_should_render_cached_returns_false_when_empty(self) -> None:
+        session = {}
+
+        assert should_render_cached_slate(session) is False
+
+    def test_should_render_cached_returns_true_when_present(self) -> None:
+        session = {"last_slate_detail": {"id": "abc", "status": "success"}}
+
+        assert should_render_cached_slate(session) is True
+
+
+class TestConfidenceColor:
+    def test_high_is_green(self) -> None:
+        assert confidence_color("high") == "green"
+
+    def test_medium_is_orange(self) -> None:
+        assert confidence_color("medium") == "orange"
+
+    def test_low_is_red(self) -> None:
+        assert confidence_color("low") == "red"
+
+    def test_unknown_defaults_to_gray(self) -> None:
+        assert confidence_color("unknown") == "gray"
+
+    def test_case_insensitive(self) -> None:
+        assert confidence_color("HIGH") == "green"
+
+
+class TestFormatRiskFlagsMarkdown:
+    def test_empty_list_returns_empty_string(self) -> None:
+        assert format_risk_flags_markdown([]) == ""
+
+    def test_single_flag(self) -> None:
+        result = format_risk_flags_markdown(["missing_data"])
+        assert "missing_data" in result
+
+    def test_multiple_flags(self) -> None:
+        result = format_risk_flags_markdown(["missing_data", "low_sample"])
+        assert "missing_data" in result
+        assert "low_sample" in result
+
+
+class TestBuildAvailabilityBatchPayload:
+    def test_extracts_player_market_line(self) -> None:
+        candidates = [
+            {"rank": 1, "player": "Saka", "market": "passes", "line": 50.5, "direction": "over"},
+            {"rank": 2, "player": "LeBron", "market": "points", "line": 25.5, "direction": "over"},
+        ]
+
+        payload = build_availability_batch_payload(candidates)
+
+        assert payload == [
+            {"player": "Saka", "market": "passes", "line": 50.5},
+            {"player": "LeBron", "market": "points", "line": 25.5},
+        ]
+
+    def test_skips_candidates_without_player(self) -> None:
+        candidates = [
+            {"rank": 1, "player": "", "market": "passes", "line": 50.5},
+            {"rank": 2, "player": "Saka", "market": "passes", "line": 50.5},
+        ]
+
+        payload = build_availability_batch_payload(candidates)
+
+        assert len(payload) == 1
+        assert payload[0]["player"] == "Saka"
+
+    def test_handles_none_line(self) -> None:
+        candidates = [{"rank": 1, "player": "Saka", "market": "passes", "line": None}]
+
+        payload = build_availability_batch_payload(candidates)
+
+        assert payload[0]["line"] == 0.0
+
+
+class TestMatchBadgesToCandidates:
+    def test_maps_by_player_and_market(self) -> None:
+        badges = [
+            {"player": "Saka", "market": "passes", "status": "available", "platform": "prizepicks"},
+            {"player": "LeBron", "market": "points", "status": "unavailable", "platform": "prizepicks"},
+        ]
+        candidates = [
+            {"rank": 1, "player": "Saka", "market": "passes"},
+            {"rank": 2, "player": "LeBron", "market": "points"},
+        ]
+
+        result = match_badges_to_candidates(badges, candidates)
+
+        assert result[0]["status"] == "available"
+        assert result[1]["status"] == "unavailable"
+
+    def test_returns_none_for_unmatched_candidates(self) -> None:
+        badges = [
+            {"player": "Saka", "market": "passes", "status": "available", "platform": "prizepicks"},
+        ]
+        candidates = [
+            {"rank": 1, "player": "Saka", "market": "passes"},
+            {"rank": 2, "player": "LeBron", "market": "points"},
+        ]
+
+        result = match_badges_to_candidates(badges, candidates)
+
+        assert result[0]["status"] == "available"
+        assert result.get(1) is None
+
+    def test_empty_badges_returns_empty_dict(self) -> None:
+        result = match_badges_to_candidates([], [{"rank": 1, "player": "Saka", "market": "passes"}])
+
+        assert result == {}
+
+
+class TestFormatSourcePickDetail:
+    def test_returns_empty_string_for_empty_dict(self) -> None:
+        assert format_source_pick_detail({}) == ""
+
+    def test_formats_reasoning(self) -> None:
+        source_pick = {
+            "llm_rationale": "Strong recent form with 55+ passes in last 3 games.",
+            "score": 0.85,
+            "factors": {"recent_form": 0.9, "matchup": 0.8},
+        }
+
+        result = format_source_pick_detail(source_pick)
+
+        assert "Strong recent form" in result
+        assert "0.85" in result
+
+    def test_formats_factors(self) -> None:
+        source_pick = {
+            "factors": {"recent_form": 0.9, "venue": 0.7, "matchup": 0.8},
+        }
+
+        result = format_source_pick_detail(source_pick)
+
+        assert "recent_form" in result
+        assert "0.9" in result
+
+    def test_handles_missing_fields_gracefully(self) -> None:
+        source_pick = {"score": 0.5}
+
+        result = format_source_pick_detail(source_pick)
+
+        assert "0.5" in result

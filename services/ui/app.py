@@ -34,10 +34,15 @@ import streamlit as st  # noqa: E402
 from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient, SlateTimeoutError  # noqa: E402
 from services.ui.best_today_helpers import (  # noqa: E402
     build_slate_payload,
+    clear_slate_cache,
+    confidence_color,
     format_match_run_summary,
-    format_slate_candidate_row,
+    format_risk_flags_markdown,
+    format_source_pick_detail,
     render_no_candidates_message,
     render_partial_failure_summary,
+    should_render_cached_slate,
+    store_slate_result,
 )
 
 
@@ -748,6 +753,12 @@ def render_best_today_page(client: PicksAPIClient) -> None:
 
         submitted = st.form_submit_button("Generate Best Today", type="primary")
 
+    if submitted:
+        clear_slate_cache(st.session_state)
+    elif should_render_cached_slate(st.session_state):
+        _render_slate_results(st.session_state["last_slate_detail"], client)
+        return
+
     if not submitted:
         return
 
@@ -794,10 +805,71 @@ def render_best_today_page(client: PicksAPIClient) -> None:
         st.error(f"Failed to fetch slate detail: {exc.detail}", icon="\U0001f6d1")
         return
 
-    _render_slate_results(detail)
+    store_slate_result(st.session_state, detail)
+    _render_slate_results(detail, client)
 
 
-def _render_slate_results(detail: dict[str, Any]) -> None:
+def _render_candidate_card(candidate: dict[str, Any], badge: dict[str, Any] | None = None) -> None:
+    from services.ui.availability_badges import classify_badge
+
+    rank = candidate.get("rank", "?")
+    sport = candidate.get("sport", "?")
+    player = candidate.get("player", "Unknown")
+    market = candidate.get("market", "?")
+    line = candidate.get("line")
+    direction = candidate.get("direction", "?")
+    conf = candidate.get("confidence", "unknown")
+    score = candidate.get("normalized_score", 0)
+    risk_flags = candidate.get("risk_flags", [])
+    source_match = candidate.get("source_match", {})
+    home = source_match.get("home_team", "")
+    away = source_match.get("away_team", "")
+
+    line_str = f" {line}" if line is not None else ""
+    match_str = f"{home} v {away}" if home and away else ""
+    color = confidence_color(conf)
+
+    with st.container(border=True):
+        cols = st.columns([0.4, 0.8, 2.5, 1, 1, 1, 1.5])
+        with cols[0]:
+            st.markdown(f"**#{rank}**")
+        with cols[1]:
+            st.markdown(f"**{sport}**")
+        with cols[2]:
+            st.markdown(f"**{player}** — {market}{line_str} {direction}")
+            if match_str:
+                st.caption(match_str)
+        with cols[3]:
+            st.metric("Score", f"{score:.0f}")
+        with cols[4]:
+            st.markdown(f":{color}[{conf}]")
+        with cols[5]:
+            if badge:
+                badge_status = classify_badge(
+                    platform_status=badge.get("status", "unknown"),
+                    platform_line=badge.get("platform_line"),
+                    recommended_line=badge.get("line", 0),
+                )
+                st.markdown(f"{badge_status.icon} {badge_status.label}")
+            else:
+                st.markdown(":gray[—]")
+        with cols[6]:
+            flags_md = format_risk_flags_markdown(risk_flags)
+            if flags_md:
+                st.markdown(flags_md)
+        source_pick = candidate.get("source_pick", {})
+        if source_pick:
+            with st.expander(f"Details: {player} — {market}", expanded=False):
+                detail_md = format_source_pick_detail(source_pick)
+                if detail_md:
+                    st.markdown(detail_md)
+                else:
+                    st.caption("No additional detail available.")
+
+
+def _render_slate_results(detail: dict[str, Any], client: PicksAPIClient) -> None:
+    from services.ui.best_today_helpers import build_availability_batch_payload, match_badges_to_candidates
+
     status = detail.get("status", "?")
     if status == "failed":
         st.error(
@@ -827,8 +899,24 @@ def _render_slate_results(detail: dict[str, Any]) -> None:
         st.warning(render_no_candidates_message(), icon="\u26a0\ufe0f")
     else:
         st.subheader("Ranked Candidates")
-        for candidate in candidates:
-            st.text(format_slate_candidate_row(candidate))
+
+        slate_id = detail.get("id", "")
+        avail_cache_key = f"slate_availability_{slate_id}"
+        if st.button("Check Availability", key=f"avail_btn_{slate_id}"):
+            batch_payload = build_availability_batch_payload(candidates)
+            try:
+                avail_result = client.check_availability_batch(batch_payload)
+                st.session_state[avail_cache_key] = avail_result
+            except Exception as exc:
+                st.warning(f"Availability check failed: {exc}", icon="\u26a0\ufe0f")
+
+        avail_data = st.session_state.get(avail_cache_key)
+        badge_map: dict[int, dict[str, Any]] = {}
+        if avail_data and not avail_data.get("fallback_mode"):
+            badge_map = match_badges_to_candidates(avail_data.get("badges", []), candidates)
+
+        for idx, candidate in enumerate(candidates):
+            _render_candidate_card(candidate, badge=badge_map.get(idx))
 
     partial_failures = render_partial_failure_summary(match_runs)
     if partial_failures:

@@ -77,6 +77,48 @@ class TestPostSlates:
 
         assert response.status_code in (400, 422)
 
+
+class TestBatchAvailability:
+    def test_returns_badges_for_candidates(self, client: TestClient) -> None:
+        response = client.post(
+            "/availability/check-batch",
+            json={
+                "candidates": [
+                    {"player": "Saka", "market": "passes", "line": 50.5},
+                    {"player": "LeBron", "market": "points", "line": 25.5},
+                ],
+                "platforms": ["prizepicks"],
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "badges" in body
+        assert "checked_at" in body
+        assert body["fallback_mode"] is False
+
+    def test_returns_badges_matching_candidates(self, client: TestClient) -> None:
+        response = client.post(
+            "/availability/check-batch",
+            json={
+                "candidates": [{"player": "Saka", "market": "passes", "line": 50.5}],
+            },
+        )
+
+        body = response.json()
+        badges = body["badges"]
+        assert len(badges) >= 1
+        assert badges[0]["player"] == "Saka"
+        assert badges[0]["market"] == "passes"
+
+    def test_rejects_empty_candidates(self, client: TestClient) -> None:
+        response = client.post(
+            "/availability/check-batch",
+            json={"candidates": []},
+        )
+
+        assert response.status_code == 422
+
     def test_validates_max_matches_per_sport_bounds(self, client: TestClient) -> None:
         response = client.post(
             "/slates",
