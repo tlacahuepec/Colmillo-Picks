@@ -5,7 +5,7 @@ import re
 from time import sleep
 from typing import Any, Callable
 
-from llm.client import GroundingMetadataResult, GroundingSource, GroundingSupport, LLMClient, LLMError
+from llm.client import GroundingMetadataResult, GroundingSource, GroundingSupport, LLMClient, LLMError, TokenUsage
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
 _DEBUG_GROUNDING = __import__("os").environ.get("COLMILLO_DEBUG_GROUNDING", "").strip().lower() in ("1", "true", "yes")
@@ -86,6 +86,8 @@ class GeminiLLMClient(LLMClient):
         self._sleep = sleep_fn
         self._last_sources: list[GroundingSource] = []
         self._last_grounding_metadata: GroundingMetadataResult | None = None
+        self._last_token_usage: TokenUsage | None = None
+        self._cumulative_tokens: list[int] = [0, 0, 0]
 
         if client_factory is not None:
             self._client = client_factory(api_key=api_key)
@@ -101,6 +103,21 @@ class GeminiLLMClient(LLMClient):
     @property
     def last_grounding_metadata(self) -> GroundingMetadataResult | None:
         return self._last_grounding_metadata
+
+    @property
+    def last_token_usage(self) -> TokenUsage | None:
+        return self._last_token_usage
+
+    @property
+    def cumulative_token_usage(self) -> TokenUsage:
+        return TokenUsage(
+            prompt_tokens=self._cumulative_tokens[0],
+            completion_tokens=self._cumulative_tokens[1],
+            total_tokens=self._cumulative_tokens[2],
+        )
+
+    def reset_cumulative_tokens(self) -> None:
+        self._cumulative_tokens = [0, 0, 0]
 
     def _extract_grounding_metadata(self, response: Any) -> GroundingMetadataResult | None:
         if not self._search_grounding:
@@ -219,6 +236,21 @@ class GeminiLLMClient(LLMClient):
                     self._last_sources = list(self._last_grounding_metadata.sources)
                 else:
                     self._last_sources = []
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    prompt = getattr(usage, "prompt_token_count", 0) or 0
+                    completion = getattr(usage, "candidates_token_count", 0) or 0
+                    total = getattr(usage, "total_token_count", 0) or 0
+                    self._last_token_usage = TokenUsage(
+                        prompt_tokens=prompt,
+                        completion_tokens=completion,
+                        total_tokens=total,
+                    )
+                    self._cumulative_tokens[0] += prompt
+                    self._cumulative_tokens[1] += completion
+                    self._cumulative_tokens[2] += total
+                else:
+                    self._last_token_usage = None
                 return parsed
             except json.JSONDecodeError as exc:
                 if attempt >= attempts:

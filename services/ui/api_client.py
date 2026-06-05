@@ -164,6 +164,9 @@ class PicksAPIClient:
     def get_slate_status(self, slate_id: str) -> dict[str, Any]:
         return self._request("GET", f"/slates/{slate_id}/status")
 
+    def list_slates(self, limit: int = 10, offset: int = 0) -> dict[str, Any]:
+        return self._request("GET", "/slates", params={"limit": limit, "offset": offset})
+
     def wait_for_slate(
         self,
         slate_id: str,

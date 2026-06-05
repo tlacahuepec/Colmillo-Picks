@@ -7,14 +7,18 @@ from services.ui.best_today_helpers import (
     build_slate_payload,
     clear_slate_cache,
     confidence_color,
+    format_kickoff_local,
     format_risk_flags_markdown,
     format_slate_candidate_row,
+    format_slate_list_item,
     format_match_run_summary,
     format_source_pick_detail,
+    format_token_summary,
     match_badges_to_candidates,
     render_no_candidates_message,
     render_partial_failure_summary,
     should_render_cached_slate,
+    slate_status_icon,
     store_slate_result,
 )
 
@@ -322,3 +326,89 @@ class TestFormatSourcePickDetail:
         result = format_source_pick_detail(source_pick)
 
         assert "0.5" in result
+
+
+class TestFormatKickoffLocal:
+    def test_valid_utc_string_returns_local_time(self) -> None:
+        result = format_kickoff_local("2026-06-04T19:30:00Z")
+
+        assert result != "—"
+        assert "Jun" in result or "06" in result
+        assert ":" in result
+
+    def test_none_returns_dash(self) -> None:
+        assert format_kickoff_local(None) == "—"
+
+    def test_invalid_string_returns_dash(self) -> None:
+        assert format_kickoff_local("not-a-date") == "—"
+
+    def test_empty_string_returns_dash(self) -> None:
+        assert format_kickoff_local("") == "—"
+
+    def test_iso_format_without_z_suffix(self) -> None:
+        result = format_kickoff_local("2026-06-04T19:30:00+00:00")
+
+        assert result != "—"
+        assert ":" in result
+
+
+class TestFormatTokenSummary:
+    def test_all_values(self) -> None:
+        result = format_token_summary(5000, 1500, 6500)
+
+        assert "5,000 prompt" in result
+        assert "1,500 completion" in result
+        assert "6,500 total" in result
+
+    def test_none_total_returns_empty(self) -> None:
+        assert format_token_summary(100, 50, None) == ""
+
+    def test_only_total(self) -> None:
+        result = format_token_summary(None, None, 6500)
+
+        assert "6,500 total" in result
+        assert "prompt" not in result
+
+
+class TestSlateStatusIcon:
+    def test_success(self) -> None:
+        assert slate_status_icon("success") == "\u2705"
+
+    def test_failed(self) -> None:
+        assert slate_status_icon("failed") == "\u274c"
+
+    def test_pending(self) -> None:
+        assert slate_status_icon("pending") == "\u23f3"
+
+    def test_unknown_returns_question_mark(self) -> None:
+        assert slate_status_icon("weird") == "\u2753"
+
+
+class TestFormatSlateListItem:
+    def test_formats_complete_item(self) -> None:
+        slate = {
+            "id": "abc-123",
+            "status": "success",
+            "request": {"date": "2026-06-01", "sports": ["soccer", "basketball"]},
+            "latency_ms": 3000,
+        }
+
+        result = format_slate_list_item(slate)
+
+        assert "2026-06-01" in result
+        assert "soccer" in result
+        assert "success" in result
+        assert "3000ms" in result
+
+    def test_formats_pending_item(self) -> None:
+        slate = {
+            "id": "def-456",
+            "status": "pending",
+            "request": {"date": "2026-06-02", "sports": ["baseball"]},
+            "latency_ms": None,
+        }
+
+        result = format_slate_list_item(slate)
+
+        assert "2026-06-02" in result
+        assert "pending" in result

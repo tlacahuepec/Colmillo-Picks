@@ -5,6 +5,7 @@ Kept separate from the Streamlit runtime so they can be unit-tested directly.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 _DEFAULT_SPORTS = ["soccer", "basketball", "baseball"]
@@ -162,3 +163,60 @@ def format_source_pick_detail(source_pick: dict[str, Any]) -> str:
         factor_parts = [f"{k}: {v}" for k, v in factors.items()]
         lines.append(f"**Factors:** {', '.join(factor_parts)}")
     return "\n\n".join(lines)
+
+
+def format_kickoff_local(kickoff_utc: str | None) -> str:
+    if not kickoff_utc:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
+        local_dt = dt.astimezone()
+        try:
+            return local_dt.strftime("%b %-d, %-I:%M %p")
+        except ValueError:
+            return local_dt.strftime("%b %#d, %#I:%M %p")
+    except (ValueError, OSError):
+        return "—"
+
+
+def format_token_summary(
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    total_tokens: int | None,
+) -> str:
+    if total_tokens is None:
+        return ""
+    parts: list[str] = []
+    if prompt_tokens is not None:
+        parts.append(f"{prompt_tokens:,} prompt")
+    if completion_tokens is not None:
+        parts.append(f"{completion_tokens:,} completion")
+    total_str = f"{total_tokens:,} total"
+    if parts:
+        return f"Tokens: {' + '.join(parts)} = {total_str}"
+    return f"Tokens: {total_str}"
+
+
+_STATUS_ICONS: dict[str, str] = {
+    "pending": "\u23f3",
+    "queued": "\u23f3",
+    "running": "\u26a1",
+    "success": "\u2705",
+    "failed": "\u274c",
+}
+
+
+def slate_status_icon(status: str) -> str:
+    return _STATUS_ICONS.get(status.lower(), "\u2753")
+
+
+def format_slate_list_item(slate: dict[str, Any]) -> str:
+    status = slate.get("status", "?")
+    icon = slate_status_icon(status)
+    request = slate.get("request", {})
+    date = request.get("date", "?")
+    sports = request.get("sports", [])
+    sports_str = ", ".join(sports) if sports else "all"
+    latency = slate.get("latency_ms")
+    latency_str = f" ({latency}ms)" if latency else ""
+    return f"{icon} {date} — {sports_str} [{status}]{latency_str}"

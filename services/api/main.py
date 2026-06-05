@@ -305,6 +305,20 @@ class SlateStatusResponse(BaseModel):
     latency_ms: int | None = None
 
 
+class SlateSummary(BaseModel):
+    id: str
+    created_at: datetime
+    status: str
+    request: dict[str, Any]
+    latency_ms: int | None = None
+
+
+class SlateListResponse(BaseModel):
+    items: list[SlateSummary]
+    limit: int
+    offset: int
+
+
 class SlateMatchRunSummary(BaseModel):
     sport: str
     home_team: str = ""
@@ -343,6 +357,9 @@ class SlateDetailResponse(BaseModel):
     matches_succeeded: int | None = None
     latency_ms: int | None = None
     discovery_latency_ms: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
     error_stage: str | None = None
     error_message: str | None = None
 
@@ -978,6 +995,9 @@ def _run_next_queued_slate_job() -> None:
                 discovery_latency_ms=result.discovery_latency_ms,
                 matches_attempted=result.matches_attempted,
                 matches_succeeded=result.matches_succeeded,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+                total_tokens=result.total_tokens,
             )
         jobs_module.mark_slate_job_done(job_id)
     except Exception as exc:
@@ -1014,9 +1034,17 @@ def _build_slate_deps(request_dict: dict[str, Any]):
         )
         return module.score(match_inputs, markets=markets)
 
+    def get_token_usage() -> tuple[int, int, int]:
+        llm = getattr(discovery_client, "_client", None)
+        cumulative = getattr(llm, "cumulative_token_usage", None)
+        if cumulative:
+            return (cumulative.prompt_tokens, cumulative.completion_tokens, cumulative.total_tokens)
+        return (0, 0, 0)
+
     return SlateOrchestrationDeps(
         discover_matches=discover,
         run_match_pipeline=run_pipeline,
+        get_token_usage=get_token_usage,
     )
 
 
@@ -1035,6 +1063,9 @@ def _slate_row_to_detail(row: Any) -> SlateDetailResponse:
         matches_succeeded=row.matches_succeeded,
         latency_ms=row.latency_ms,
         discovery_latency_ms=row.discovery_latency_ms,
+        prompt_tokens=getattr(row, "prompt_tokens", None),
+        completion_tokens=getattr(row, "completion_tokens", None),
+        total_tokens=getattr(row, "total_tokens", None),
         error_stage=row.error_stage,
         error_message=row.error_message,
     )
@@ -1386,6 +1417,24 @@ def create_app() -> FastAPI:
     # ---- Slates (async) -------------------------------------------------- #
 
     _SUPPORTED_SLATE_SPORTS = {"soccer", "basketball", "baseball"}
+
+    @app.get("/slates", response_model=SlateListResponse)
+    def list_slates(
+        limit: int = Query(20, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+    ) -> SlateListResponse:
+        rows = db_module.list_slate_runs(limit=limit, offset=offset)
+        items = [
+            SlateSummary(
+                id=row.id,
+                created_at=row.created_at,
+                status=row.status,
+                request=json.loads(row.request_json) if row.request_json else {},
+                latency_ms=row.latency_ms,
+            )
+            for row in rows
+        ]
+        return SlateListResponse(items=items, limit=limit, offset=offset)
 
     @app.post("/slates", response_model=SlateAcceptedResponse, status_code=202)
     def create_slate(payload: SlateRequest, background_tasks: BackgroundTasks) -> SlateAcceptedResponse:

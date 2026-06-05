@@ -78,6 +78,54 @@ class TestPostSlates:
         assert response.status_code in (400, 422)
 
 
+class TestListSlates:
+    def test_returns_paginated_list(self, client: TestClient) -> None:
+        db_module.create_pending_slate_run(
+            request_payload={"date": "2026-06-01", "sports": ["soccer"], "max_matches_per_sport": 3, "top_n": 5}
+        )
+        db_module.create_pending_slate_run(
+            request_payload={"date": "2026-06-02", "sports": ["basketball"], "max_matches_per_sport": 2, "top_n": 5}
+        )
+
+        response = client.get("/slates", params={"limit": 10, "offset": 0})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "items" in body
+        assert len(body["items"]) == 2
+        assert body["limit"] == 10
+        assert body["offset"] == 0
+
+    def test_includes_pending_slate_after_post(self, client: TestClient) -> None:
+        client.post(
+            "/slates",
+            json={
+                "date": "2026-06-01",
+                "sports": ["soccer"],
+                "max_matches_per_sport": 3,
+                "top_n": 10,
+            },
+        )
+
+        response = client.get("/slates")
+        body = response.json()
+        assert len(body["items"]) >= 1
+        assert any(item["status"] in ("pending", "queued") for item in body["items"])
+
+    def test_item_has_required_fields(self, client: TestClient) -> None:
+        db_module.create_pending_slate_run(
+            request_payload={"date": "2026-06-01", "sports": ["soccer"], "max_matches_per_sport": 3, "top_n": 5}
+        )
+
+        response = client.get("/slates")
+        body = response.json()
+        item = body["items"][0]
+        assert "id" in item
+        assert "created_at" in item
+        assert "status" in item
+        assert "request" in item
+
+
 class TestBatchAvailability:
     def test_returns_badges_for_candidates(self, client: TestClient) -> None:
         response = client.post(
@@ -260,6 +308,68 @@ class TestSlateAllFailures:
         assert body["status"] == "failed"
         assert body["error_stage"] == "aggregation"
         assert "No viable candidates" in body["error_message"]
+
+
+class TestSlateTokenTracking:
+    def test_returns_token_counts_when_present(self, client: TestClient) -> None:
+        row = db_module.create_pending_slate_run(
+            request_payload={"date": "2026-06-01", "sports": ["soccer"], "max_matches_per_sport": 3, "top_n": 5}
+        )
+        candidates = [
+            {
+                "rank": 1,
+                "sport": "soccer",
+                "player": "Saka",
+                "market": "passes",
+                "line": 50.5,
+                "direction": "over",
+                "confidence": "high",
+                "normalized_score": 90.0,
+                "risk_flags": [],
+                "availability_status": "unknown",
+                "source_match": {"home_team": "Arsenal", "away_team": "Liverpool"},
+            }
+        ]
+        match_runs = [{"sport": "soccer", "home_team": "Arsenal", "away_team": "Liverpool", "status": "success", "pick_count": 1}]
+        db_module.mark_slate_success(
+            slate_id=row.id,
+            candidates=candidates,
+            match_runs=match_runs,
+            latency_ms=2000,
+            discovery_latency_ms=500,
+            matches_attempted=1,
+            matches_succeeded=1,
+            prompt_tokens=5000,
+            completion_tokens=1500,
+            total_tokens=6500,
+        )
+
+        response = client.get(f"/slates/{row.id}")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["prompt_tokens"] == 5000
+        assert body["completion_tokens"] == 1500
+        assert body["total_tokens"] == 6500
+
+    def test_returns_null_tokens_when_not_tracked(self, client: TestClient) -> None:
+        row = db_module.create_pending_slate_run(
+            request_payload={"date": "2026-06-01", "sports": ["soccer"], "max_matches_per_sport": 3, "top_n": 5}
+        )
+        db_module.mark_slate_success(
+            slate_id=row.id,
+            candidates=[],
+            match_runs=[],
+            latency_ms=1000,
+            discovery_latency_ms=200,
+            matches_attempted=0,
+            matches_succeeded=0,
+        )
+
+        response = client.get(f"/slates/{row.id}")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["prompt_tokens"] is None
+        assert body["total_tokens"] is None
 
 
 class TestSlateDiscoveryFailure:

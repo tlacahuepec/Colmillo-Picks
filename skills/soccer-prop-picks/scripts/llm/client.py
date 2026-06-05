@@ -5,6 +5,13 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class TokenUsage:
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+@dataclass(frozen=True)
 class GroundingSource:
     url: str
     title: str
