@@ -189,6 +189,18 @@ def _ensure_added_columns(engine: Engine) -> None:
                 if col_name not in existing_cols:
                     conn.execute(text(f"ALTER TABLE pick_outcomes ADD COLUMN {col_name} {col_def}"))
 
+    if "slate_runs" in inspector.get_table_names():
+        existing_cols = {col["name"] for col in inspector.get_columns("slate_runs")}
+        slate_additive: list[tuple[str, str]] = [
+            ("prompt_tokens", "INTEGER"),
+            ("completion_tokens", "INTEGER"),
+            ("total_tokens", "INTEGER"),
+        ]
+        with engine.begin() as conn:
+            for col_name, col_def in slate_additive:
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE slate_runs ADD COLUMN {col_name} {col_def}"))
+
 
 def configure_engine(url: str | None = None) -> Engine:
     """(Re-)build the global engine + session factory and create tables."""
