@@ -31,13 +31,20 @@ load_dotenv(_REPO_ROOT / ".env")
 
 import streamlit as st  # noqa: E402
 
-from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient, SlateTimeoutError  # noqa: E402
+from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient  # noqa: E402
 from services.ui.best_today_helpers import (  # noqa: E402
     build_slate_payload,
+    clear_slate_cache,
+    confidence_color,
+    format_kickoff_local,
     format_match_run_summary,
-    format_slate_candidate_row,
+    format_risk_flags_markdown,
+    format_source_pick_detail,
+    format_token_summary,
     render_no_candidates_message,
     render_partial_failure_summary,
+    should_render_cached_slate,
+    store_slate_result,
 )
 
 
@@ -721,6 +728,8 @@ def _render_hit_rate_panel(client: PicksAPIClient) -> None:
 
 
 def render_best_today_page(client: PicksAPIClient) -> None:
+    from services.ui.best_today_helpers import format_slate_list_item
+
     st.title("Best Today")
     st.caption("Generate a ranked cross-sport slate of today's best prop picks.")
 
@@ -748,22 +757,20 @@ def render_best_today_page(client: PicksAPIClient) -> None:
 
         submitted = st.form_submit_button("Generate Best Today", type="primary")
 
-    if not submitted:
-        return
+    if submitted:
+        clear_slate_cache(st.session_state)
+        normalized_sports = [s.lower() for s in slate_sports] if slate_sports else []
+        try:
+            payload = build_slate_payload(
+                date=slate_date.isoformat(),
+                sports=normalized_sports,
+                max_matches_per_sport=max_matches,
+                top_n=top_n,
+            )
+        except ValueError as exc:
+            st.error(str(exc), icon="\u26a0\ufe0f")
+            return
 
-    normalized_sports = [s.lower() for s in slate_sports] if slate_sports else []
-    try:
-        payload = build_slate_payload(
-            date=slate_date.isoformat(),
-            sports=normalized_sports,
-            max_matches_per_sport=max_matches,
-            top_n=top_n,
-        )
-    except ValueError as exc:
-        st.error(str(exc), icon="\u26a0\ufe0f")
-        return
-
-    with st.spinner("Submitting slate request..."):
         try:
             accepted = client.create_slate(payload)
         except APIError as exc:
@@ -773,31 +780,123 @@ def render_best_today_page(client: PicksAPIClient) -> None:
             st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
             return
 
-    slate_id = accepted.get("id", "")
-    st.info(f"Slate `{slate_id}` accepted. Running pipelines...", icon="\u23f3")
+        slate_id = accepted.get("id", "")
+        st.toast(f"Slate `{slate_id}` submitted! It will appear in Recent Slates below.", icon="\u2705")
+        st.session_state["selected_slate_id"] = slate_id
+
+    st.divider()
+    st.subheader("Recent Slates")
+
+    col_refresh, _ = st.columns([1, 4])
+    with col_refresh:
+        if st.button("Refresh", key="refresh_slates"):
+            pass
 
     try:
-        with st.spinner("Waiting for slate to complete..."):
-            client.wait_for_slate(slate_id, timeout_seconds=300.0, poll_interval_seconds=2.0)
-    except SlateTimeoutError:
-        st.warning("Slate generation timed out. Showing partial results.", icon="\u23f1\ufe0f")
-    except APIError as exc:
-        st.error(f"Status polling failed: {exc.detail}", icon="\U0001f6d1")
-        return
-    except Exception as exc:
-        st.error(f"Polling error: {exc}", icon="\U0001f6d1")
-        return
+        slates_response = client.list_slates(limit=10)
+        slates = slates_response.get("items", [])
+    except Exception:
+        slates = []
 
-    try:
-        detail = client.get_slate(slate_id)
-    except APIError as exc:
-        st.error(f"Failed to fetch slate detail: {exc.detail}", icon="\U0001f6d1")
-        return
+    if not slates:
+        st.caption("No slates yet. Submit one above!")
+    else:
+        selected_id = st.session_state.get("selected_slate_id", "")
+        for slate in slates:
+            sid = slate.get("id", "")
+            label = format_slate_list_item(slate)
+            col_label, col_btn = st.columns([4, 1])
+            with col_label:
+                st.markdown(label)
+            with col_btn:
+                if st.button("View", key=f"view_{sid}"):
+                    st.session_state["selected_slate_id"] = sid
 
-    _render_slate_results(detail)
+        selected_id = st.session_state.get("selected_slate_id", "")
+        if selected_id:
+            selected_status = next(
+                (s.get("status") for s in slates if s.get("id") == selected_id), None
+            )
+            if selected_status in ("pending", "queued", "running"):
+                st.info(f"Slate `{selected_id}` is still running... Refresh to check.", icon="\u23f3")
+            elif should_render_cached_slate(st.session_state) and st.session_state.get("last_slate_detail", {}).get("id") == selected_id:
+                _render_slate_results(st.session_state["last_slate_detail"], client)
+            else:
+                try:
+                    detail = client.get_slate(selected_id)
+                    store_slate_result(st.session_state, detail)
+                    _render_slate_results(detail, client)
+                except APIError as exc:
+                    st.error(f"Failed to load slate: {exc.detail}", icon="\U0001f6d1")
+                except Exception as exc:
+                    st.error(f"Error loading slate: {exc}", icon="\U0001f6d1")
 
 
-def _render_slate_results(detail: dict[str, Any]) -> None:
+def _render_candidate_card(candidate: dict[str, Any], badge: dict[str, Any] | None = None) -> None:
+    from services.ui.availability_badges import classify_badge
+
+    rank = candidate.get("rank", "?")
+    sport = candidate.get("sport", "?")
+    player = candidate.get("player", "Unknown")
+    market = candidate.get("market", "?")
+    line = candidate.get("line")
+    direction = candidate.get("direction", "?")
+    conf = candidate.get("confidence", "unknown")
+    score = candidate.get("normalized_score", 0)
+    risk_flags = candidate.get("risk_flags", [])
+    source_match = candidate.get("source_match", {})
+    home = source_match.get("home_team", "")
+    away = source_match.get("away_team", "")
+    kickoff = source_match.get("kickoff_utc")
+
+    line_str = f" {line}" if line is not None else ""
+    match_str = f"{home} v {away}" if home and away else ""
+    kickoff_str = format_kickoff_local(kickoff)
+    if match_str and kickoff_str != "—":
+        match_str = f"{match_str} — {kickoff_str}"
+    color = confidence_color(conf)
+
+    with st.container(border=True):
+        cols = st.columns([0.4, 0.8, 2.5, 1, 1, 1, 1.5])
+        with cols[0]:
+            st.markdown(f"**#{rank}**")
+        with cols[1]:
+            st.markdown(f"**{sport}**")
+        with cols[2]:
+            st.markdown(f"**{player}** — {market}{line_str} {direction}")
+            if match_str:
+                st.caption(match_str)
+        with cols[3]:
+            st.metric("Score", f"{score:.0f}")
+        with cols[4]:
+            st.markdown(f":{color}[{conf}]")
+        with cols[5]:
+            if badge:
+                badge_status = classify_badge(
+                    platform_status=badge.get("status", "unknown"),
+                    platform_line=badge.get("platform_line"),
+                    recommended_line=badge.get("line", 0),
+                )
+                st.markdown(f"{badge_status.icon} {badge_status.label}")
+            else:
+                st.markdown(":gray[—]")
+        with cols[6]:
+            flags_md = format_risk_flags_markdown(risk_flags)
+            if flags_md:
+                st.markdown(flags_md)
+        source_pick = candidate.get("source_pick", {})
+        if source_pick:
+            with st.expander(f"Details: {player} — {market}", expanded=False):
+                detail_md = format_source_pick_detail(source_pick)
+                if detail_md:
+                    st.markdown(detail_md)
+                else:
+                    st.caption("No additional detail available.")
+
+
+def _render_slate_results(detail: dict[str, Any], client: PicksAPIClient) -> None:
+    from services.ui.best_today_helpers import build_availability_batch_payload, match_badges_to_candidates
+
     status = detail.get("status", "?")
     if status == "failed":
         st.error(
@@ -819,6 +918,13 @@ def _render_slate_results(detail: dict[str, Any]) -> None:
             attempted = detail.get("matches_attempted", 0)
             succeeded = detail.get("matches_succeeded", 0)
             st.metric("Matches", f"{succeeded}/{attempted}")
+        token_text = format_token_summary(
+            detail.get("prompt_tokens"),
+            detail.get("completion_tokens"),
+            detail.get("total_tokens"),
+        )
+        if token_text:
+            st.caption(token_text)
 
     candidates = detail.get("candidates", [])
     match_runs = detail.get("match_runs", [])
@@ -827,8 +933,24 @@ def _render_slate_results(detail: dict[str, Any]) -> None:
         st.warning(render_no_candidates_message(), icon="\u26a0\ufe0f")
     else:
         st.subheader("Ranked Candidates")
-        for candidate in candidates:
-            st.text(format_slate_candidate_row(candidate))
+
+        slate_id = detail.get("id", "")
+        avail_cache_key = f"slate_availability_{slate_id}"
+        if st.button("Check Availability", key=f"avail_btn_{slate_id}"):
+            batch_payload = build_availability_batch_payload(candidates)
+            try:
+                avail_result = client.check_availability_batch(batch_payload)
+                st.session_state[avail_cache_key] = avail_result
+            except Exception as exc:
+                st.warning(f"Availability check failed: {exc}", icon="\u26a0\ufe0f")
+
+        avail_data = st.session_state.get(avail_cache_key)
+        badge_map: dict[int, dict[str, Any]] = {}
+        if avail_data and not avail_data.get("fallback_mode"):
+            badge_map = match_badges_to_candidates(avail_data.get("badges", []), candidates)
+
+        for idx, candidate in enumerate(candidates):
+            _render_candidate_card(candidate, badge=badge_map.get(idx))
 
     partial_failures = render_partial_failure_summary(match_runs)
     if partial_failures:

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm.client import LLMError, GroundingSource, GroundingSupport
+from llm.client import LLMError, GroundingSource, GroundingSupport, TokenUsage
 from llm.gemini_client import GeminiLLMClient
 from llm.provider_adapter import build_enrich_with_llm, validate_llm_runtime_config
 
@@ -770,3 +770,132 @@ def test_gemini_client_last_sources_backward_compat() -> None:
         GroundingSource(url="https://example.com/a", title="A"),
         GroundingSource(url="https://example.com/b", title="B"),
     )
+
+
+class TestTokenUsageTracking:
+    def test_captures_usage_metadata(self) -> None:
+        class _UsageMetadata:
+            prompt_token_count = 100
+            candidates_token_count = 50
+            total_token_count = 150
+
+        class _ResponseWithUsage:
+            def __init__(self):
+                self.text = '{"ok": true}'
+                self.usage_metadata = _UsageMetadata()
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _ResponseWithUsage()
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+        )
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+        assert client.last_token_usage == TokenUsage(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150
+        )
+
+    def test_token_usage_none_when_metadata_missing(self) -> None:
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_FakeClient,
+        )
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+        assert client.last_token_usage is None
+
+    def test_token_usage_resets_between_calls(self) -> None:
+        call_count = 0
+
+        class _UsageMetadata:
+            prompt_token_count = 200
+            candidates_token_count = 80
+            total_token_count = 280
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                resp = _FakeResponse('{"ok": true}')
+                if call_count == 1:
+                    resp.usage_metadata = _UsageMetadata()
+                return resp
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+        )
+
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert client.last_token_usage is not None
+
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert client.last_token_usage is None
+
+    def test_cumulative_token_usage_sums_across_calls(self) -> None:
+        call_count = 0
+
+        class _UsageMetadata:
+            prompt_token_count = 100
+            candidates_token_count = 50
+            total_token_count = 150
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                resp = MagicMock()
+                resp.text = '{"ok": true}'
+                resp.usage_metadata = _UsageMetadata()
+                return resp
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+        )
+
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+        cumulative = client.cumulative_token_usage
+        assert cumulative.prompt_tokens == 200
+        assert cumulative.completion_tokens == 100
+        assert cumulative.total_tokens == 300
+
+    def test_reset_cumulative_tokens(self) -> None:
+        class _UsageMetadata:
+            prompt_token_count = 50
+            candidates_token_count = 25
+            total_token_count = 75
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                resp = MagicMock()
+                resp.text = '{"ok": true}'
+                resp.usage_metadata = _UsageMetadata()
+                return resp
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+        )
+
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        client.reset_cumulative_tokens()
+
+        assert client.cumulative_token_usage == TokenUsage(0, 0, 0)
