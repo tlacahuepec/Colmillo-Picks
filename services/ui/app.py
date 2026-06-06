@@ -67,22 +67,6 @@ def _format_utc_to_local(utc_str: str) -> str:
         return utc_str
 
 
-def _format_utc_to_local(utc_str: str) -> str:
-    if not utc_str:
-        return utc_str
-    try:
-        dt = _datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
-        tz_name = os.getenv("COLMILLO_TIMEZONE")
-        if tz_name:
-            from zoneinfo import ZoneInfo
-            local_dt = dt.astimezone(ZoneInfo(tz_name))
-        else:
-            local_dt = dt.astimezone()
-        return local_dt.strftime("%b %d, %I:%M %p")
-    except (ValueError, TypeError, KeyError):
-        return utc_str
-
-
 def _construct_match_query(home_team: str, away_team: str, date: str) -> str:
     home = home_team.strip() if home_team else ""
     away = away_team.strip() if away_team else ""
@@ -790,7 +774,8 @@ def render_best_today_page(client: PicksAPIClient) -> None:
     col_refresh, _ = st.columns([1, 4])
     with col_refresh:
         if st.button("Refresh", key="refresh_slates"):
-            pass
+            clear_slate_cache(st.session_state)
+            st.toast("Refreshed!", icon="\U0001f504")
 
     try:
         slates_response = client.list_slates(limit=10)
@@ -810,6 +795,7 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                 st.markdown(label)
             with col_btn:
                 if st.button("View", key=f"view_{sid}"):
+                    clear_slate_cache(st.session_state)
                     st.session_state["selected_slate_id"] = sid
 
         selected_id = st.session_state.get("selected_slate_id", "")
@@ -818,7 +804,7 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                 (s.get("status") for s in slates if s.get("id") == selected_id), None
             )
             if selected_status in ("pending", "queued", "running"):
-                st.info(f"Slate `{selected_id}` is still running... Refresh to check.", icon="\u23f3")
+                st.info(f"Slate `{selected_id}` is still **{selected_status}**... Click Refresh to check progress.", icon="\u23f3")
             elif should_render_cached_slate(st.session_state) and st.session_state.get("last_slate_detail", {}).get("id") == selected_id:
                 _render_slate_results(st.session_state["last_slate_detail"], client)
             else:
