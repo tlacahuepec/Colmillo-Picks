@@ -19,6 +19,7 @@ class TestSportsStatsBibleDoc:
         required_sections = [
             "# Sports Stats Bible",
             "## Purpose",
+            "## Current architecture reality",
             "## Outlier-style target product",
             "## Source tiers",
             "## Basketball source matrix",
@@ -51,9 +52,18 @@ class TestSportsStatsBibleDoc:
             "prizepicks",
             "reddit",
             "mlb statsapi",
+            "sofascore",
+            "transfermarkt",
+            "flashscore",
+            "theoddsapi",
         ]
         for source in required_sources:
             assert source in content, f"Missing source: {source}"
+
+    def test_enforces_free_only_constraint(self) -> None:
+        content = _content().lower()
+        assert "no paid subscriptions" in content
+        assert "free-tier" in content or "free tier" in content
 
     def test_separates_direct_adapters_from_grounding_sources(self) -> None:
         content = _content().lower()
@@ -74,3 +84,9 @@ class TestSportsStatsBibleDoc:
             "responsible gaming",
         ):
             assert feature in content, f"Missing Outlier-style feature: {feature}"
+
+    def test_documents_current_architecture(self) -> None:
+        content = _content().lower()
+        assert "gemini" in content
+        assert "deterministic" in content
+        assert "prizepicks" in content
