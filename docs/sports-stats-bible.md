@@ -57,6 +57,19 @@ Colmillo should implement that benchmark incrementally instead of trying to copy
 | Sportsbook/DFS availability | Availability provider | platform, available/unavailable/unknown, url, checked timestamp | Existing PrizePicks path plus provider expansion |
 | Responsible gaming | Static policy + UI copy | no guarantees, no risk-free language, help resources | Always required |
 
+## Practical approximation of Outlier capabilities
+
+Maps current free-tier + Gemini grounding coverage against the Outlier-style target above. Focus grounding energy on the **Strong** and **Moderate-Good** areas first — these already give Colmillo a research experience competitive with many paid tools for core prop reasoning.
+
+- **Player trend cards & recent form** — Strong. StatMuse (`https://www.statmuse.com/nba/ask/wembanyama-last-5-games`) + ESPN gamelogs (`https://www.espn.com/nba/player/gamelog/_/id/5104157/victor-wembanyama`) + FotMob/Sofascore for last-5/10 aggregates, minutes, usage. LLM synthesizes cleanly when source URLs are required.
+- **Injury / availability context** — Strong. Transfermarkt + Sofascore + ESPN news sections + FotMob injury flags. Always cross-reference 2+ sources and store confidence.
+- **Matchup context (opponent pace, defensive rating, platoon splits)** — Moderate-Good. NBA.com advanced stats or FBref/WhoScored tactical tables + LLM extraction. Good for basketball and soccer props.
+- **Trending / sentiment signals** — Moderate. Reddit r/PrizePicks + public betting % pages (when available via grounding). Never use for score-critical fields.
+- **Line movement & real-time odds comparison** — Limited. TheOddsAPI free tier (Phase 4) gives basic moneylines/totals. Player props and movement require more quota. Currently rely on PrizePicks snapshot + LLM for context.
+- **EV+ edge detection** — Future. Requires calibrated model probability + reliable odds. Can approximate "value" qualitatively via form + matchup + line context.
+- **Arbitrage / middle / boost detection** — Future. Multi-book snapshots needed; currently out of scope.
+- **Alerts & personalized feeds** — UI phase. Grounding quality directly enables better alert logic later.
+
 ## Source tiers
 
 Use these tiers when adding a provider or prompting an LLM. A source can be direct-adapter-ready for one field and grounding-only for another.
@@ -72,6 +85,21 @@ Use these tiers when adding a provider or prompting an LLM. A source can be dire
 **Hard rule:** never make scrape-only public pages the only production dependency for critical scoring fields. If a public page is useful, classify it as an **LLM grounding** helper unless it has a documented free API and permitted automation path.
 
 **Budget rule:** no paid subscriptions. Only use free tiers, public endpoints, and LLM grounding. If a provider requires payment for useful fields, note it as "future if budget exists" and use LLM grounding as the interim approach.
+
+## Key Metrics Glossary
+
+Consistent definitions help the LLM produce reliable, comparable outputs and help humans understand scoring logic. Reference these when writing grounding prompts or explanations.
+
+- **Usage Rate (USG%)** — Share of team possessions a player uses while on the floor. High usage often means higher variance and prop ceiling.
+- **Expected Goals (xG) / Expected Assists (xA)** — Quality-weighted scoring and creation metrics. Much more stable than raw goals/assists over small samples.
+- **Pace** — Team possessions per 48 minutes. Directly impacts volume stats (points, rebounds, etc.).
+- **Defensive Rating / Opponent Defensive Rank** — Points allowed per 100 possessions. Key for matchup adjustments in props.
+- **Minutes Projection / Rotation Risk** — Expected playing time + likelihood of unexpected DNP or reduced role. Critical for prop volume.
+- **Platoon / Handedness Splits** — Performance vs left- or right-handed opponents (or LHP/RHP in MLB). Often material for props.
+- **Recent Form (Last-5 / Last-10)** — Aggregates from the most recent settled games. Prefer these over season averages for short-term props.
+- **Market Agreement / Line Consensus** — How aligned different books or DFS platforms are on a line. Useful signal of sharp vs public money.
+
+Add new terms here as grounding recipes and scoring logic evolve.
 
 ## Basketball source matrix
 
@@ -94,6 +122,13 @@ Basketball field priorities:
 - Playmaking/rebounding: `assist_avg`, `assist_last5`, `rebound_avg`, `rebound_last5`.
 - Context: `pace_factor`, opponent defensive rank, opponent rebound/assist/three rank, injury status.
 - Props: sportsbook/DFS line, market, side, price, source, captured timestamp, market agreement.
+
+Basketball example grounding URLs:
+
+- ESPN gamelog: `https://www.espn.com/nba/player/gamelog/_/id/{espn_id}/{player-slug}`
+- StatMuse: `https://www.statmuse.com/nba/ask/{player-slug}-last-5-games`
+- NBA.com stats: `https://www.nba.com/stats/player/{nba_id}`
+- Basketball-Reference: `https://www.basketball-reference.com/players/{letter}/{bbref_id}.html`
 
 ## Soccer source matrix
 
@@ -120,6 +155,14 @@ Soccer field priorities:
 - Defensive/discipline: tackles, interceptions, blocks, fouls, yellow/red cards.
 - Recent form: last-5 and last-10 aggregates, match-level minutes, opponent strength.
 - Props: market line, side, price, sportsbook/DFS platform, captured timestamp.
+
+Soccer example grounding URLs:
+
+- FotMob: `https://www.fotmob.com/players/{fotmob_id}/{player-slug}`
+- FBref: `https://fbref.com/en/players/{fbref_id}/{player}`
+- Sofascore: `https://www.sofascore.com/player/{player-slug}/{sofascore_id}`
+- Transfermarkt: `https://www.transfermarkt.com/{player-slug}/profil/spieler/{tm_id}`
+- ESPN: `https://www.espn.com/soccer/player/_/id/{espn_id}/{player-slug}`
 
 ## Baseball source matrix
 
@@ -178,8 +221,8 @@ Preferred source order:
 
 1. BALLDONTLIE free tier or `nba_api` for basic player/team data when available.
 2. NBA.com player page or stats page for official context.
-3. ESPN game log page for recent game rows when readable.
-4. StatMuse natural-language recent-form page for last-N summaries.
+3. ESPN game log page for recent game rows when readable (e.g., `https://www.espn.com/nba/player/gamelog/_/id/{id}/{slug}`).
+4. StatMuse natural-language recent-form page for last-N summaries (e.g., `https://www.statmuse.com/nba/ask/{slug}-last-5-games`).
 5. Basketball-Reference only for historical/manual reference.
 6. Reddit `/r/PrizePicks` only for sentiment, never for critical numbers.
 
@@ -196,9 +239,9 @@ Preferred source order:
 
 1. football-data.org free tier for schedules, results, standings, and basic match context.
 2. StatsBomb Open Data for supported competitions/tests.
-3. FotMob for player profiles, recent form, goals, assists, starts, minutes, ratings, xG/xA.
-4. Sofascore for player ratings, match events, lineups, and live data.
-5. Transfermarkt for injuries, transfers, and squad availability.
+3. FotMob for player profiles, recent form, goals, assists, starts, minutes, ratings, xG/xA (e.g., `https://www.fotmob.com/players/{id}/{slug}`).
+4. Sofascore for player ratings, match events, lineups, and live data (e.g., `https://www.sofascore.com/player/{slug}/{id}`).
+5. Transfermarkt for injuries, transfers, and squad availability (e.g., `https://www.transfermarkt.com/{slug}/profil/spieler/{id}`).
 6. FlashScore for schedules, live scores, and match statistics.
 7. WhoScored, FBref, ESPN, and LiveSport as additional grounding sources.
 8. Forums/social only for context, not stats.
@@ -223,6 +266,41 @@ Prompt rules:
 
 - Prefer StatsAPI values for season stats, game logs, probable pitchers, lineups, and venue context.
 - Ask the LLM only to summarize or fill non-critical narrative fields when direct data is partial.
+
+### Example grounding query patterns
+
+These patterns have shown good consistency with Gemini. Copy/adapt them in prompts and future code.
+
+**Basketball recent-form + usage:**
+
+> For [Player Name], pull the last 5 games from StatMuse (`https://www.statmuse.com/nba/ask/[player-slug]-last-5-games`) and the ESPN gamelog (`https://www.espn.com/nba/player/gamelog/_/id/[espn-id]/[player-slug]`). Also check NBA.com advanced splits and any load management notes. Return structured JSON with points, assists, rebounds, threes, minutes, usage_rate per game + averages. Include source URLs for each field group. Use null for anything unverifiable.
+
+**Soccer player props form + availability:**
+
+> Using FotMob (`https://www.fotmob.com/players/[id]/[slug]`) and Sofascore for [Player], extract recent form (last 5-10 matches): goals, assists, shots, xG if available, minutes played, starts. From Transfermarkt (`https://www.transfermarkt.com/[slug]/profil/spieler/[id]`) check injury/suspension status and expected availability for the upcoming match. Cross-reference FBref advanced stats (`https://fbref.com/en/players/[fbref-id]/[player]`) for xG, progressive carries, etc. if relevant to the prop. Keep club vs national team context separate. Return with source URLs and confidence per field.
+
+**General rules for all grounding queries:**
+
+- Always require source URLs per populated field group.
+- Prefer the most recent settled games. Note game dates.
+- Note opponent strength when available.
+- Never invent numbers — use null for anything unverifiable.
+- Never fabricate or "recall" betting lines.
+
+## Anti-patterns and grounding quality rules
+
+Follow these rules in all grounding prompts and LLM calls to keep outputs reliable and reduce hallucination risk.
+
+1. **Never blend club and national-team form** unless the specific market explicitly requires it. Soccer players frequently switch contexts.
+2. **Cross-check injuries from 2+ sources.** If Transfermarkt and Sofascore conflict, return the most conservative status + note the discrepancy and lower confidence.
+3. **Never accept a critical numeric field** (points, goals, usage, minutes) from only one source without a second confirmation or explicit low-confidence flag.
+4. **No fabrication.** If the LLM cannot find a verifiable value with a source URL, return null rather than guessing or averaging creatively.
+5. **Line/price fields: PrizePicks adapter or TheOddsAPI only.** Never let LLM invent or "recall" betting lines.
+6. **Recency preference.** Grounding should prefer the most recent completed games. Note game dates in output.
+7. **Context preservation.** For soccer, always keep league/competition and date context. For basketball, note back-to-back or rest days.
+8. **Sentiment is Tier 4 only.** Reddit and forums are never authoritative for scoring fields.
+
+These rules should be referenced in every grounding prompt template.
 
 ## Implementation roadmap
 
@@ -263,3 +341,20 @@ Prompt rules:
 - Build player trend cards from normalized stats and game logs.
 - Add injury context, matchup context, line movement, and odds comparison.
 - Add responsible gaming language anywhere Colmillo surfaces betting guidance.
+
+### Phase 7 — Grounding quality and glossary integration
+
+- Embed the Key Metrics Glossary and Anti-Patterns rules directly into all grounding prompt templates.
+- Add automated or manual checks for grounding consistency (same player queried twice in a day should produce similar recent-form numbers within tolerance).
+- Measure and track per-source success rate / freshness compliance.
+- Expand example grounding query patterns with more sports/markets.
+
+## How to contribute to this Bible
+
+- When adding a new source or field, update the relevant matrix, tiers, and field dictionary.
+- When improving grounding prompts in code, sync the recipes and examples here.
+- Link related spikes or issues to this document.
+- Propose new glossary terms or anti-patterns when you notice recurring LLM issues.
+- Keep the free-only and LLM-grounding-first principles intact.
+
+See also `docs/contributor-playbook.md` for general contribution workflow.
