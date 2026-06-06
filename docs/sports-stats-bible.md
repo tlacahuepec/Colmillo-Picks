@@ -57,103 +57,209 @@ Colmillo should implement that benchmark incrementally instead of trying to copy
 | Sportsbook/DFS availability | Availability provider | platform, available/unavailable/unknown, url, checked timestamp | Existing PrizePicks path plus provider expansion |
 | Responsible gaming | Static policy + UI copy | no guarantees, no risk-free language, help resources | Always required |
 
-## Practical Approximation of Outlier Capabilities (Current Free + LLM State)
-
-This section maps how close we are today to Outlier.bet-style insights using only free sources, public pages, and Gemini grounding. The goal is to give the LLM (and future UI) concrete guidance on what “good enough” research looks like without paid tools.
-
-- **Player trend cards & recent form**: Strong today. Use StatMuse + ESPN gamelogs (e.g. https://www.espn.com/nba/player/gamelog/_/id/5104157/victor-wembanyama) + FotMob/Sofascore for last-5/10 aggregates, minutes, usage. LLM synthesizes cleanly when source URLs are required.
-- **Injury / load management / availability context**: Strong. Transfermarkt + Sofascore + ESPN news sections + FotMob injury flags. Always cross-reference 2+ sources and store confidence.
-- **Matchup context (opponent pace, defensive rating, platoon splits)**: Moderate-Good. NBA.com advanced or FBref/WhoScored tactical stats + LLM extraction. Good for basketball and soccer props.
-- **Trending / sentiment signals**: Moderate. Reddit r/PrizePicks + public betting % pages (when available via grounding). Never use for score-critical fields.
-- **Line movement & real-time odds comparison**: Limited today. TheOddsAPI free tier (evaluated in roadmap) gives basic moneylines/totals. Player props and movement require more quota or later paid tier. Currently rely on PrizePicks snapshot + LLM for context.
-- **EV+ style edge detection**: Future. Requires calibrated model probability + reliable odds. We can approximate “value” qualitatively via form + matchup + line context.
-- **Arbitrage / middle / boost detection**: Future / limited. Multi-book snapshots needed; currently out of scope or manual.
-- **Alerts & personalized feeds**: UI phase. The bible + grounding quality directly enables better alert logic later.
-
-**Key takeaway**: Focus grounding recipes and field dictionary on the “Strong” and “Moderate-Good” areas first. These already give Colmillo a research experience competitive with many paid tools for core prop reasoning.
-
 ## Source tiers
 
-... (unchanged from current — all your tiers and rules preserved) ...
+Use these tiers when adding a provider or prompting an LLM. A source can be direct-adapter-ready for one field and grounding-only for another.
 
-## Key Metrics Glossary
+| Tier | Usage mode | Description | Examples | Rule |
+| --- | --- | --- | --- | --- |
+| 0 | Direct adapter | Existing deterministic repo provider | MLB StatsAPI adapter, PrizePicks availability | Prefer when implemented and healthy |
+| 1 | Free API | Free public API with stable docs (no subscription) | MLB StatsAPI, football-data.org free tier, StatsBomb Open Data, TheOddsAPI free tier, BALLDONTLIE free tier | Good first choice when fields fit and quota allows |
+| 2 | LLM grounding | Public page useful for human/LLM extraction but not a supported automation API | FotMob, Sofascore, ESPN pages, NBA.com pages, StatMuse, LiveSport, Transfermarkt, FlashScore | Use to help LLM search; store source URLs |
+| 3 | Scrape-sensitive grounding | Scrape-sensitive or unstable public pages | Basketball-Reference, FBref, WhoScored | Avoid direct scraping; use as LLM grounding reference only |
+| 4 | Sentiment only | Forums/social/user chatter | Reddit `/r/PrizePicks`, betting forums | Never authoritative for scoring fields |
 
-Consistent definitions help the LLM produce reliable, comparable outputs and help humans understand scoring logic. Reference these when writing grounding prompts or explanations.
+**Hard rule:** never make scrape-only public pages the only production dependency for critical scoring fields. If a public page is useful, classify it as an **LLM grounding** helper unless it has a documented free API and permitted automation path.
 
-- **Usage Rate (USG%)**: Share of team possessions a player uses while on the floor. High usage often means higher variance and prop ceiling.
-- **Expected Goals (xG) / Expected Assists (xA)**: Quality-weighted scoring and creation metrics. Much more stable than raw goals/assists over small samples.
-- **Pace**: Team possessions per 48 minutes. Directly impacts volume stats (points, rebounds, etc.).
-- **Defensive Rating / Opponent Defensive Rank**: Points allowed per 100 possessions. Key for matchup adjustments in props.
-- **Minutes Projection / Rotation Risk**: Expected playing time + likelihood of unexpected DNP or reduced role. Critical for prop volume.
-- **Platoon / Handedness Splits**: Performance vs left- or right-handed opponents (or LHP/RHP in MLB). Often material for props.
-- **Recent Form (Last-5 / Last-10)**: Aggregates from the most recent settled games. Prefer these over season averages for short-term props.
-- **Market Agreement / Line Consensus**: How aligned different books or DFS platforms are on a line. Useful signal of sharp vs public money.
-
-Add new terms here as the grounding recipes and scoring logic evolve.
+**Budget rule:** no paid subscriptions. Only use free tiers, public endpoints, and LLM grounding. If a provider requires payment for useful fields, note it as "future if budget exists" and use LLM grounding as the interim approach.
 
 ## Basketball source matrix
 
-... (enhanced with your exact example URLs for Wembanyama ESPN gamelog and StatMuse) ...
+| Source | Data fields | Free API? | LLM grounding candidate | Risk/cost notes | Recommended use |
+| --- | --- | --- | --- | --- | --- |
+| BALLDONTLIE | NBA teams, players, games, game player stats, season averages | Free tier (limited) | Yes | Free tier has rate limits and limited endpoints; advanced stats require paid | Use free tier for basic player/team lookups; LLM grounding for the rest |
+| NBA.com stats | Official profile, splits, advanced, tracking, matchup, usage-style data | No (undocumented) | Yes | Public pages are grounding-friendly; endpoint automation is not an official SLA | Primary LLM grounding source for NBA advanced stats |
+| `nba_api` | Python access to NBA.com stats/live endpoints | Free (unofficial) | No | Useful but NBA.com can change undocumented endpoints without notice | Secondary adapter with aggressive caching; treat failures as provider-unavailable |
+| ESPN NBA player game logs | Game logs, profile context, basic per-game stats | No | Yes | JavaScript/bot checks can block automation | Grounding URL for recent-form extraction only |
+| StatMuse | Natural-language last-N answers and tables | No | Yes | Great for questions like "Wemby last 5 games"; not canonical API | LLM grounding helper for recent form |
+| Basketball-Reference | Historical, advanced, game logs, usage references | No | Yes | Scrape/TOS risk; public HTML can change | Manual/reference source, not production dependency |
+| PrizePicks | DFS prop availability and lines | Free (public endpoint) | Yes | Current repo has availability adapter; platform may change payloads | Availability/DFS line source with graceful fallback |
+| Reddit `/r/PrizePicks` | Community slips, market chatter, sentiment | No | Yes | Not authoritative; noisy and biased | Sentiment/context only; never score-critical |
+
+Basketball field priorities:
+
+- Player identity: `player_id`, `player_name`, `team`, `position`.
+- Workload: `minutes_proj`, `starts`, `rest_days`, `rotation_risk`.
+- Usage and scoring: `usage_rate`, `points_avg`, `points_last5`, `three_point_attempts`, `threes_avg`, `threes_last5`.
+- Playmaking/rebounding: `assist_avg`, `assist_last5`, `rebound_avg`, `rebound_last5`.
+- Context: `pace_factor`, opponent defensive rank, opponent rebound/assist/three rank, injury status.
+- Props: sportsbook/DFS line, market, side, price, source, captured timestamp, market agreement.
 
 ## Soccer source matrix
 
-... (enhanced with your example FBref Lamine Yamal and ESPN Kvaratskhelia links) ...
+| Source | Data fields | Free API? | LLM grounding candidate | Risk/cost notes | Recommended use |
+| --- | --- | --- | --- | --- | --- |
+| football-data.org | Competitions, teams, matches, standings, lineups/bookings/subs/goals | Free tier (10 req/min, limited competitions) | Yes | Free tier covers major leagues; deep player prop fields limited | Schedule/results/standings adapter; first free soccer API to integrate |
+| StatsBomb Open Data | Competitions, matches, lineups, events, selected 360 data | Free (open source) | Yes | Limited competitions and not live; great for tests/backfills | Tests, deterministic fixtures, research |
+| FotMob | Player profile, recent matches, goals, assists, starts, minutes, ratings, xG/xA-style sections | No | Yes | Public page; automation risk; rich player data | Primary soccer LLM grounding helper for player stats |
+| Sofascore | Player stats, ratings, match events, lineups, live scores, heat maps | No | Yes | Public page; rich data; no official API | Strong LLM grounding for player ratings and match events |
+| Transfermarkt | Injuries, transfers, market values, squad info, contract details | No | Yes | Public page; scraping legal grey area in some jurisdictions | LLM grounding for injuries, transfers, squad availability |
+| FlashScore | Live scores, schedules, fixtures, standings, match statistics | No | Yes | Public page; broad coverage across leagues | LLM grounding for schedules, scores, and match stats |
+| WhoScored | Player ratings, tactical stats, matchup context | No | Yes | Scrape-sensitive and bot-sensitive | Grounding for tactical/matchup context only |
+| FBref | Player/team advanced soccer tables, xG, passing, defensive stats | No | Yes | Scraping risk and recent public data instability | Reference/grounding only; not first adapter |
+| ESPN soccer player pages | Profile, appearances, game logs/news context | No | Yes | Bot checks/JS can block automation | Grounding URL only |
+| LiveSport | Schedules, scores, fixtures, standings, live match stats across sports | No | Yes | Public site; not a stable API | Broad schedule/score grounding |
+| API-Football | Fixtures, lineups, player stats, standings, injuries, predictions | Free tier (100 req/day) | No | Previously integrated and removed from Colmillo; replaced by LLM grounding | Reference only; was removed in favor of Gemini-based fixture resolution |
 
-## ... (Baseball, Betting matrices unchanged but still excellent) ...
+Soccer field priorities:
 
-## LLM grounding recipes
+- Player identity: `player_id`, `player_name`, `team`, `position`, league/competition.
+- Availability: starts, minutes, injury/suspension, expected lineup status.
+- Attacking: goals, assists, shots, shots_on_target, xG, xA, chances created.
+- Passing/possession: passes, pass attempts, pass completion, key passes, crosses, dribbles.
+- Defensive/discipline: tackles, interceptions, blocks, fouls, yellow/red cards.
+- Recent form: last-5 and last-10 aggregates, match-level minutes, opponent strength.
+- Props: market line, side, price, sportsbook/DFS platform, captured timestamp.
 
-... (original recipes preserved) ...
+## Baseball source matrix
 
-### Example Grounding Query Patterns (Proven / Recommended)
+| Source | Data fields | Free API? | LLM grounding candidate | Risk/cost notes | Recommended use |
+| --- | --- | --- | --- | --- | --- |
+| MLB StatsAPI | Schedule, rosters, probable pitchers, live feed, lineups, season stats, game logs, venue data | Free (no key required) | No | Already implemented and public/free | Keep as primary MLB provider |
+| Existing Colmillo MLB adapters | `StatsAPIScheduleAdapter`, `StatsAPIPitcherAdapter`, `StatsAPIPlayerStatsAdapter`, `StatsAPISplitsAdapter`, lineups, bullpen, weather/park factor | Free (built on StatsAPI) | No | Needs deeper matchup split normalization | Expand, do not replace |
+| Baseball-Reference / StatMuse / ESPN MLB pages | Historical/recent player context | No | Yes | Public-page automation risk | Grounding or manual validation only |
 
-These patterns have shown good consistency when used with Gemini. Copy/adapt them in prompts and future code.
+MLB field priorities:
 
-**Basketball recent-form + usage (inspired by your examples)**:
-"For [Player Name], pull the last 5 games from StatMuse[](https://www.statmuse.com/nba/ask/[player-slug]-last-5-games) and the ESPN gamelog (example: https://www.espn.com/nba/player/gamelog/_/id/[espn-id]/[player-slug]). Also check NBA.com advanced splits and any load management notes. Return structured JSON with points, assists, rebounds, threes, minutes, usage_rate per game + averages. Include source URLs for each group. Use null for anything unverifiable."
+- Event: `game_pk`, teams, venue, start time, weather/roof, park factor.
+- Pitching: probable pitchers, handedness, strikeout rate, walk rate, recent game logs.
+- Batting: lineup slot, handedness, season stats, recent game logs, home/away and platoon splits.
+- Bullpen/team context: bullpen availability, team offense/defense context.
+- Props: hits, home runs, total bases, RBIs, runs, strikeouts, outs, walks, line/price/source.
 
-**Soccer player props form + availability**:
-"Using FotMob and Sofascore for [Player], extract recent form (last 5-10 matches): goals, assists, shots, xG if available, minutes played, starts. From Transfermarkt check injury/suspension status and expected availability for the upcoming match. Cross-reference FBref advanced stats (example: https://fbref.com/en/players/[fbref-id]/[player]) for xG, progressive carries, etc. if relevant to the prop. Keep club vs national team context separate. Return with source URLs and confidence per field."
+## Betting and props source matrix
 
-**General rule for all examples**: Always require source URLs. Prefer the most recent settled games. Note opponent strength when available. Never invent numbers.
+| Source | Sports | Data fields | Free API? | LLM grounding candidate | Risk/cost notes | Recommended use |
+| --- | --- | --- | --- | --- | --- | --- |
+| PrizePicks | Multi-sport DFS props | Projections/lines, platform availability | Free (public endpoint) | Yes | Existing adapter checks availability; endpoint/payload can change | DFS availability and candidate line source |
+| TheOddsAPI | Multi-sport odds/props | Moneylines, totals, spreads, player props, bookmaker prices | Free tier (500 req/month) | No | Free tier covers basic odds; player props require paid plans | First odds aggregator to evaluate on free tier |
+| Sportsbook pages | Individual book lines/prices | Public prices and promotions | No | Yes | Automation/legal risk varies by book | Grounding/manual validation only |
+| Reddit `/r/PrizePicks` | DFS betting discussion | Slips, player chatter, promo/context | No | Yes | Sentiment only; not authoritative | Forum context only |
 
-## Anti-Patterns & Grounding Quality Rules
+**Not applicable currently (paid only):** SportsGameOdds (paid tiers for production), OpticOdds (commercial provider). Revisit if budget becomes available.
 
-To keep outputs reliable and reduce hallucination risk, follow these rules in all grounding prompts and LLM calls:
+Betting field priorities:
 
-- **Never blend club and national-team form** unless the specific market or prop explicitly requires it. Soccer players frequently switch contexts.
-- **Injuries & availability**: Always cross-check at least two sources (e.g. Transfermarkt + Sofascore + ESPN). If they conflict, return the most conservative status + note the discrepancy and lower confidence.
-- **Recent form**: Always include both last-5/last-10 and season context. Small samples are noisy; opponent quality matters.
-- **Single-source rule**: Never accept a critical numeric field (points, goals, usage, minutes) from only one source without a second confirmation or explicit low-confidence flag.
-- **No fabrication**: If the LLM cannot find a verifiable value with a source URL, return null rather than guessing or averaging creatively.
-- **Line/price fields**: Only use PrizePicks adapter or TheOddsAPI. Never let LLM invent or “recall” betting lines.
-- **Recency & freshness**: Grounding should prefer the most recent completed games. Note game dates.
-- **Context preservation**: For soccer, always keep league/competition and date context. For basketball, note back-to-back or rest days.
-- **Sentiment vs facts**: Reddit and forums are Tier 4 only. Use for narrative color, never for any scoring input.
-
-These rules should be included (or referenced) in every grounding prompt template.
+- Event identity: sport, league, event id, home/away, start time.
+- Market identity: player, market, side, line, price, book/platform.
+- Freshness: captured timestamp, provider timestamp, TTL, stale/ok status.
+- Comparison: consensus line, market agreement, best price, line movement, opening/current line.
+- Risk: platform availability, missing-line reason, no-bet reason, source confidence.
 
 ## Field dictionary
 
-... (unchanged) ...
+| Category | Fields | Freshness target | Preferred source type | LLM fallback allowed? |
+| --- | --- | --- | --- | --- |
+| Player identity | `player_id`, `player_name`, `team`, `position` | Daily or provider TTL | Free stats API or LLM grounding | Yes for mapping hints; must be verified |
+| Schedule/event | event id, teams, venue, start time | Same day/live | Free schedule API (football-data.org, MLB StatsAPI) | Yes only when direct lookup fails |
+| Season stats | season averages, rates, splits | Daily or hourly during season | Free stats API or LLM grounding | Yes if source URL and confidence stored |
+| Recent form | last-5/last-10 game logs and averages | Same day after games settle | LLM grounding (FotMob, ESPN, StatMuse) | Yes if source URL and confidence stored |
+| Injury/lineup | injury status, expected starter, minutes risk | Hourly/game day | LLM grounding (Transfermarkt, Sofascore, ESPN) | Yes for narrative; critical status should remain nullable if uncertain |
+| Props/odds | line, side, price, sportsbook, timestamp | Minutes | PrizePicks adapter or TheOddsAPI free tier | Avoid except as temporary fallback with low confidence |
+| Forums/social | player chatter, sentiment, market popularity | Minutes/hours | Reddit/forum search | Never for score-critical fields |
+
+## LLM grounding recipes
+
+LLM grounding should narrow the search space instead of asking the model to discover everything from scratch. The prompt should include the sport, event, player, market, required fields, source priority, and rules for nulls.
+
+### Basketball recipe
+
+Preferred source order:
+
+1. BALLDONTLIE free tier or `nba_api` for basic player/team data when available.
+2. NBA.com player page or stats page for official context.
+3. ESPN game log page for recent game rows when readable.
+4. StatMuse natural-language recent-form page for last-N summaries.
+5. Basketball-Reference only for historical/manual reference.
+6. Reddit `/r/PrizePicks` only for sentiment, never for critical numbers.
+
+Prompt rules:
+
+- Ask for exact fields such as `usage_rate`, `minutes_proj`, `points_last5`, `assist_last5`, `rebound_last5`, `threes_last5`, and `three_point_attempts`.
+- Require a source URL per populated field group.
+- Use `null` when a value cannot be verified.
+- Do not fabricate PrizePicks or sportsbook lines.
+
+### Soccer recipe
+
+Preferred source order:
+
+1. football-data.org free tier for schedules, results, standings, and basic match context.
+2. StatsBomb Open Data for supported competitions/tests.
+3. FotMob for player profiles, recent form, goals, assists, starts, minutes, ratings, xG/xA.
+4. Sofascore for player ratings, match events, lineups, and live data.
+5. Transfermarkt for injuries, transfers, and squad availability.
+6. FlashScore for schedules, live scores, and match statistics.
+7. WhoScored, FBref, ESPN, and LiveSport as additional grounding sources.
+8. Forums/social only for context, not stats.
+
+Prompt rules:
+
+- Ask for exact market fields: shots, shots on target, passes, tackles, fouls, cards, goals, assists, minutes, starts, xG/xA where available.
+- Preserve competition/date context because soccer players move across clubs and national teams.
+- Do not merge club and national-team recent form unless the market explicitly asks for it.
+- Prefer FotMob and Sofascore for recent player form; prefer Transfermarkt for injury/availability.
+
+### Baseball recipe
+
+Preferred source order:
+
+1. Existing MLB StatsAPI adapters (free, already implemented).
+2. Expanded MLB split/recent-form adapters.
+3. TheOddsAPI free tier for basic odds when available.
+4. Public pages (ESPN, StatMuse, Baseball-Reference) only for narrative validation.
+
+Prompt rules:
+
+- Prefer StatsAPI values for season stats, game logs, probable pitchers, lineups, and venue context.
+- Ask the LLM only to summarize or fill non-critical narrative fields when direct data is partial.
 
 ## Implementation roadmap
 
-... (original phases 1-6 preserved) ...
+### Phase 1 — Documentation only (DONE)
 
-### Phase 7 — Grounding quality & glossary integration (NEW)
+- Add this Sports Stats Bible.
+- Add documentation tests so required sections and sources cannot disappear silently.
+- Link future issue/PR work to this document.
 
-- Embed the Key Metrics Glossary and Anti-Patterns rules directly into all grounding prompt templates.
-- Add automated or manual checks for grounding consistency (e.g., same player queried twice in a day should produce similar recent-form numbers within tolerance).
-- Measure and track per-source success rate / freshness compliance.
-- Expand example query patterns with more sports/markets.
+### Phase 2 — Expand LLM grounding recipes
 
-## How to contribute to this Bible
+- Add specific source URLs per player/sport to grounding prompts.
+- Improve Gemini search grounding prompts with FotMob, Sofascore, and Transfermarkt as preferred soccer sources.
+- Add StatMuse and NBA.com as preferred basketball grounding sources.
+- Track source quality and freshness per grounded field.
 
-- When adding a new source or field, update the relevant matrix, tiers, and field dictionary.
-- When improving grounding prompts in code, sync the recipes and examples here.
-- Link related spikes or issues to this document.
-- Propose new glossary terms or anti-patterns when you notice recurring LLM issues.
-- Keep the free-only and LLM-grounding-first principles intact.
+### Phase 3 — football-data.org free tier adapter
 
-See also `docs/contributor-playbook.md` for general contribution workflow.
+- Evaluate football-data.org free tier for soccer schedule/results/standings.
+- Build a lightweight adapter for match schedules and basic context.
+- Use as deterministic fallback when LLM grounding is unavailable or slow.
+
+### Phase 4 — TheOddsAPI free tier for basic odds
+
+- Evaluate TheOddsAPI free tier (500 requests/month) for moneylines and totals.
+- Determine if quota is sufficient for daily pick generation across supported sports.
+- Normalize line snapshots for basic odds comparison.
+
+### Phase 5 — Basketball free data spike
+
+- Evaluate BALLDONTLIE free tier for basic player/team/game data.
+- Evaluate `nba_api` for usage rate, player dashboards, and advanced splits.
+- Cache IDs and stable responses aggressively.
+- Treat endpoint failures as provider-unavailable, not pipeline-crashing.
+
+### Phase 6 — Outlier-like research cards
+
+- Build player trend cards from normalized stats and game logs.
+- Add injury context, matchup context, line movement, and odds comparison.
+- Add responsible gaming language anywhere Colmillo surfaces betting guidance.
