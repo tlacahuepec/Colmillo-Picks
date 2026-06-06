@@ -79,10 +79,11 @@ def _build_llm_fixture_provider(
         base_url=fixture_llm_base_url,
     )
     if config.provider == "gemini":
+        model = config.model or "gemini-2.5-flash"
         client = GeminiLLMClient(
             api_key=config.api_key or "",
-            model=config.model or "gemini-2.5-flash",
-            search_grounding=True,
+            model=model,
+            search_grounding=_supports_search_grounding(model),
             max_output_tokens=4000,
             max_retries=_env_int("COLMILLO_FIXTURE_LLM_MAX_RETRIES", 1),
             retry_delay_seconds=_env_float("COLMILLO_FIXTURE_LLM_RETRY_DELAY_SECONDS", 3.0),
@@ -104,7 +105,7 @@ _DEFAULT_LINEUP_ODDS_MODEL = "gemini-2.5-flash-lite"
 
 
 def _supports_search_grounding(model: str) -> bool:
-    return model.startswith("gemini-2")
+    return model.startswith("gemini-2") or model.startswith("gemini-3")
 
 
 def _build_llm_lineup_provider(

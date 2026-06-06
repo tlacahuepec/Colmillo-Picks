@@ -5,9 +5,31 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class TokenUsage:
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+@dataclass(frozen=True)
 class GroundingSource:
     url: str
     title: str
+
+
+@dataclass(frozen=True)
+class GroundingSupport:
+    start_index: int
+    end_index: int
+    text: str
+    source_indices: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class GroundingMetadataResult:
+    sources: tuple[GroundingSource, ...]
+    supports: tuple[GroundingSupport, ...]
+    web_search_queries: tuple[str, ...]
 
 
 class LLMClient(Protocol):

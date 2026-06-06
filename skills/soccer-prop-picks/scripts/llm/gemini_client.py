@@ -5,7 +5,7 @@ import re
 from time import sleep
 from typing import Any, Callable
 
-from llm.client import GroundingSource, LLMClient, LLMError
+from llm.client import GroundingMetadataResult, GroundingSource, GroundingSupport, LLMClient, LLMError, TokenUsage
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
 _DEBUG_GROUNDING = __import__("os").environ.get("COLMILLO_DEBUG_GROUNDING", "").strip().lower() in ("1", "true", "yes")
@@ -85,6 +85,9 @@ class GeminiLLMClient(LLMClient):
         self._search_grounding = search_grounding
         self._sleep = sleep_fn
         self._last_sources: list[GroundingSource] = []
+        self._last_grounding_metadata: GroundingMetadataResult | None = None
+        self._last_token_usage: TokenUsage | None = None
+        self._cumulative_tokens: list[int] = [0, 0, 0]
 
         if client_factory is not None:
             self._client = client_factory(api_key=api_key)
@@ -97,15 +100,46 @@ class GeminiLLMClient(LLMClient):
     def last_sources(self) -> list[GroundingSource]:
         return list(self._last_sources)
 
-    def _extract_grounding_sources(self, response: Any) -> list[GroundingSource]:
+    @property
+    def last_grounding_metadata(self) -> GroundingMetadataResult | None:
+        return self._last_grounding_metadata
+
+    @property
+    def last_token_usage(self) -> TokenUsage | None:
+        return self._last_token_usage
+
+    @property
+    def cumulative_token_usage(self) -> TokenUsage:
+        return TokenUsage(
+            prompt_tokens=self._cumulative_tokens[0],
+            completion_tokens=self._cumulative_tokens[1],
+            total_tokens=self._cumulative_tokens[2],
+        )
+
+    def reset_cumulative_tokens(self) -> None:
+        self._cumulative_tokens = [0, 0, 0]
+
+    def _extract_grounding_metadata(self, response: Any) -> GroundingMetadataResult | None:
         if not self._search_grounding:
-            return []
+            return None
         if not hasattr(response, "candidates") or not response.candidates:
-            return []
+            return None
         candidate = response.candidates[0]
         grounding_meta = getattr(candidate, "grounding_metadata", None)
         if not grounding_meta:
-            return []
+            return None
+
+        sources = self._extract_sources_from_metadata(grounding_meta)
+        supports = self._extract_supports_from_metadata(grounding_meta)
+        web_queries = tuple(getattr(grounding_meta, "web_search_queries", None) or [])
+
+        return GroundingMetadataResult(
+            sources=tuple(sources),
+            supports=supports,
+            web_search_queries=web_queries,
+        )
+
+    def _extract_sources_from_metadata(self, grounding_meta: Any) -> list[GroundingSource]:
         chunks = getattr(grounding_meta, "grounding_chunks", None) or []
         sources: list[GroundingSource] = []
         for chunk in chunks:
@@ -138,6 +172,25 @@ class GeminiLLMClient(LLMClient):
             import sys
             print("[grounding-debug] Falling back to web_search_queries as source indicators", file=sys.stderr)
         return sources
+
+    def _extract_supports_from_metadata(self, grounding_meta: Any) -> tuple[GroundingSupport, ...]:
+        raw_supports = getattr(grounding_meta, "grounding_supports", None) or []
+        supports: list[GroundingSupport] = []
+        for support in raw_supports:
+            segment = getattr(support, "segment", None)
+            if not segment:
+                continue
+            start_index = getattr(segment, "start_index", 0) or 0
+            end_index = getattr(segment, "end_index", 0) or 0
+            text = getattr(segment, "text", "") or ""
+            chunk_indices = tuple(getattr(support, "grounding_chunk_indices", None) or [])
+            supports.append(GroundingSupport(
+                start_index=start_index,
+                end_index=end_index,
+                text=text,
+                source_indices=chunk_indices,
+            ))
+        return tuple(supports)
 
     def generate_structured(
         self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
@@ -178,7 +231,26 @@ class GeminiLLMClient(LLMClient):
                 parsed = _parse_first_json_object(json_text)
                 if not isinstance(parsed, dict):
                     raise LLMError("Gemini returned non-dict JSON output")
-                self._last_sources = self._extract_grounding_sources(response)
+                self._last_grounding_metadata = self._extract_grounding_metadata(response)
+                if self._last_grounding_metadata:
+                    self._last_sources = list(self._last_grounding_metadata.sources)
+                else:
+                    self._last_sources = []
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    prompt = getattr(usage, "prompt_token_count", 0) or 0
+                    completion = getattr(usage, "candidates_token_count", 0) or 0
+                    total = getattr(usage, "total_token_count", 0) or 0
+                    self._last_token_usage = TokenUsage(
+                        prompt_tokens=prompt,
+                        completion_tokens=completion,
+                        total_tokens=total,
+                    )
+                    self._cumulative_tokens[0] += prompt
+                    self._cumulative_tokens[1] += completion
+                    self._cumulative_tokens[2] += total
+                else:
+                    self._last_token_usage = None
                 return parsed
             except json.JSONDecodeError as exc:
                 if attempt >= attempts:

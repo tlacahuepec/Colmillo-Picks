@@ -17,12 +17,16 @@ class SlateResult:
     discovery_latency_ms: int
     matches_attempted: int
     matches_succeeded: int
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class SlateOrchestrationDeps:
     discover_matches: Callable[..., dict[str, Any]]
     run_match_pipeline: Callable[..., list[dict[str, Any]]]
+    get_token_usage: Callable[[], tuple[int, int, int]] | None = None
 
 
 def execute_slate_job(
@@ -110,6 +114,16 @@ def execute_slate_job(
     ranked = rank_slate_candidates(all_candidates, top_n=top_n)
     total_latency_ms = max(0, round((time.perf_counter() - t0) * 1000))
 
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    if deps.get_token_usage:
+        p, c, t = deps.get_token_usage()
+        if t > 0:
+            prompt_tokens = p
+            completion_tokens = c
+            total_tokens = t
+
     return SlateResult(
         candidates=ranked,
         match_runs=match_runs,
@@ -117,4 +131,7 @@ def execute_slate_job(
         discovery_latency_ms=discovery_latency_ms,
         matches_attempted=matches_attempted,
         matches_succeeded=matches_succeeded,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
     )

@@ -145,6 +145,14 @@ class PicksAPIClient:
             payload["platforms"] = platforms
         return self._request("POST", f"/picks/{pick_id}/availability", json=payload)
 
+    def check_availability_batch(
+        self, candidates: list[dict[str, Any]], *, platforms: list[str] | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"candidates": candidates}
+        if platforms:
+            payload["platforms"] = platforms
+        return self._request("POST", "/availability/check-batch", json=payload)
+
     # Slate methods (Issue #213) ----------------------------------------------- #
 
     def create_slate(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -155,6 +163,9 @@ class PicksAPIClient:
 
     def get_slate_status(self, slate_id: str) -> dict[str, Any]:
         return self._request("GET", f"/slates/{slate_id}/status")
+
+    def list_slates(self, limit: int = 10, offset: int = 0) -> dict[str, Any]:
+        return self._request("GET", "/slates", params={"limit": limit, "offset": offset})
 
     def wait_for_slate(
         self,

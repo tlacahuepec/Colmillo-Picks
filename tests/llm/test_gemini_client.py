@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm.client import LLMError, GroundingSource
+from llm.client import LLMError, GroundingSource, GroundingSupport, TokenUsage
 from llm.gemini_client import GeminiLLMClient
 from llm.provider_adapter import build_enrich_with_llm, validate_llm_runtime_config
 
@@ -388,11 +388,26 @@ class _FakeGroundingChunk:
         self.web = web
 
 
+class _FakeSegment:
+    def __init__(self, start_index: int, end_index: int, text: str = ""):
+        self.start_index = start_index
+        self.end_index = end_index
+        self.text = text
+
+
+class _FakeGroundingSupport:
+    def __init__(self, segment: _FakeSegment, grounding_chunk_indices: list[int]):
+        self.segment = segment
+        self.grounding_chunk_indices = grounding_chunk_indices
+
+
 class _FakeGroundingMetadata:
-    def __init__(self, chunks: list[_FakeGroundingChunk], search_entry_point=None):
+    def __init__(self, chunks: list[_FakeGroundingChunk], search_entry_point=None,
+                 grounding_supports=None, web_search_queries=None):
         self.grounding_chunks = chunks
         self.search_entry_point = search_entry_point
-        self.web_search_queries = None
+        self.grounding_supports = grounding_supports
+        self.web_search_queries = web_search_queries
 
 
 class _FakeCandidate:
@@ -597,3 +612,290 @@ class TestJsonRepair:
         text = '{"a": {"b": 1,}, "c": [1,],}'
         result = _repair_json(text)
         assert result == {"a": {"b": 1}, "c": [1]}
+
+
+def test_gemini_client_parses_grounding_supports() -> None:
+    chunks = [
+        _FakeGroundingChunk(_FakeWeb("https://example.com/a", "Source A")),
+        _FakeGroundingChunk(_FakeWeb("https://example.com/b", "Source B")),
+    ]
+    supports = [
+        _FakeGroundingSupport(
+            segment=_FakeSegment(start_index=0, end_index=20, text="Bayern won 3-1"),
+            grounding_chunk_indices=[0],
+        ),
+        _FakeGroundingSupport(
+            segment=_FakeSegment(start_index=25, end_index=50, text="Lewandowski scored twice"),
+            grounding_chunk_indices=[0, 1],
+        ),
+    ]
+    metadata = _FakeGroundingMetadata(chunks=chunks, grounding_supports=supports)
+
+    class _Client:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponseWithGrounding('{"ok": true}', metadata)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_Client,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    gm = client.last_grounding_metadata
+    assert gm is not None
+    assert len(gm.supports) == 2
+    assert gm.supports[0] == GroundingSupport(
+        start_index=0, end_index=20, text="Bayern won 3-1", source_indices=(0,)
+    )
+    assert gm.supports[1] == GroundingSupport(
+        start_index=25, end_index=50, text="Lewandowski scored twice", source_indices=(0, 1)
+    )
+
+
+def test_gemini_client_grounding_supports_empty_when_none() -> None:
+    chunks = [_FakeGroundingChunk(_FakeWeb("https://example.com", "Ex"))]
+    metadata = _FakeGroundingMetadata(chunks=chunks, grounding_supports=None)
+
+    class _Client:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponseWithGrounding('{"ok": true}', metadata)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_Client,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    gm = client.last_grounding_metadata
+    assert gm is not None
+    assert gm.supports == ()
+
+
+def test_gemini_client_exposes_web_search_queries() -> None:
+    chunks = [_FakeGroundingChunk(_FakeWeb("https://example.com", "Ex"))]
+    metadata = _FakeGroundingMetadata(
+        chunks=chunks,
+        web_search_queries=["Bayern Munich schedule", "Bundesliga results"],
+    )
+
+    class _Client:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponseWithGrounding('{"ok": true}', metadata)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_Client,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    gm = client.last_grounding_metadata
+    assert gm is not None
+    assert gm.web_search_queries == ("Bayern Munich schedule", "Bundesliga results")
+
+
+def test_gemini_client_web_search_queries_empty_when_missing() -> None:
+    chunks = [_FakeGroundingChunk(_FakeWeb("https://example.com", "Ex"))]
+    metadata = _FakeGroundingMetadata(chunks=chunks, web_search_queries=None)
+
+    class _Client:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponseWithGrounding('{"ok": true}', metadata)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_Client,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    gm = client.last_grounding_metadata
+    assert gm is not None
+    assert gm.web_search_queries == ()
+
+
+def test_gemini_client_last_grounding_metadata_none_when_disabled() -> None:
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_FakeClient,
+        search_grounding=False,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert client.last_grounding_metadata is None
+
+
+def test_gemini_client_last_sources_backward_compat() -> None:
+    chunks = [
+        _FakeGroundingChunk(_FakeWeb("https://example.com/a", "A")),
+        _FakeGroundingChunk(_FakeWeb("https://example.com/b", "B")),
+    ]
+    metadata = _FakeGroundingMetadata(chunks=chunks)
+
+    class _Client:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _FakeResponseWithGrounding('{"ok": true}', metadata)
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_Client,
+        search_grounding=True,
+    )
+    client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+    assert client.last_sources == [
+        GroundingSource(url="https://example.com/a", title="A"),
+        GroundingSource(url="https://example.com/b", title="B"),
+    ]
+    gm = client.last_grounding_metadata
+    assert gm is not None
+    assert gm.sources == (
+        GroundingSource(url="https://example.com/a", title="A"),
+        GroundingSource(url="https://example.com/b", title="B"),
+    )
+
+
+class TestTokenUsageTracking:
+    def test_captures_usage_metadata(self) -> None:
+        class _UsageMetadata:
+            prompt_token_count = 100
+            candidates_token_count = 50
+            total_token_count = 150
+
+        class _ResponseWithUsage:
+            def __init__(self):
+                self.text = '{"ok": true}'
+                self.usage_metadata = _UsageMetadata()
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _ResponseWithUsage()
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+        )
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+        assert client.last_token_usage == TokenUsage(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150
+        )
+
+    def test_token_usage_none_when_metadata_missing(self) -> None:
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_FakeClient,
+        )
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+        assert client.last_token_usage is None
+
+    def test_token_usage_resets_between_calls(self) -> None:
+        call_count = 0
+
+        class _UsageMetadata:
+            prompt_token_count = 200
+            candidates_token_count = 80
+            total_token_count = 280
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                resp = _FakeResponse('{"ok": true}')
+                if call_count == 1:
+                    resp.usage_metadata = _UsageMetadata()
+                return resp
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+        )
+
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert client.last_token_usage is not None
+
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert client.last_token_usage is None
+
+    def test_cumulative_token_usage_sums_across_calls(self) -> None:
+        call_count = 0
+
+        class _UsageMetadata:
+            prompt_token_count = 100
+            candidates_token_count = 50
+            total_token_count = 150
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                resp = MagicMock()
+                resp.text = '{"ok": true}'
+                resp.usage_metadata = _UsageMetadata()
+                return resp
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+        )
+
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+
+        cumulative = client.cumulative_token_usage
+        assert cumulative.prompt_tokens == 200
+        assert cumulative.completion_tokens == 100
+        assert cumulative.total_tokens == 300
+
+    def test_reset_cumulative_tokens(self) -> None:
+        class _UsageMetadata:
+            prompt_token_count = 50
+            candidates_token_count = 25
+            total_token_count = 75
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                resp = MagicMock()
+                resp.text = '{"ok": true}'
+                resp.usage_metadata = _UsageMetadata()
+                return resp
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+        )
+
+        client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        client.reset_cumulative_tokens()
+
+        assert client.cumulative_token_usage == TokenUsage(0, 0, 0)

@@ -242,6 +242,7 @@ class LLMFixtureProvider:
         self.debug_enabled = _env_flag("COLMILLO_FIXTURE_LLM_DEBUG", default=False)
         self.debug_max_chars = int(os.getenv("COLMILLO_FIXTURE_LLM_DEBUG_MAX_CHARS", "2500"))
         self.last_sources: list = []
+        self.last_grounding_metadata = None
         self.client = client or OpenAICompatibleChatClient(
             api_key=resolved.api_key or "",
             base_url=resolved.base_url or "",
@@ -275,6 +276,7 @@ class LLMFixtureProvider:
             schema={},
         )
         self.last_sources = list(getattr(self.client, "last_sources", []))
+        self.last_grounding_metadata = getattr(self.client, "last_grounding_metadata", None)
         self._debug("response", {"provider": self.config.provider, "model": self.config.model, "response": result})
         if not _should_soft_accept_match(result, request):
             self._debug(

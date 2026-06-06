@@ -5,9 +5,18 @@ Kept separate from the Streamlit runtime so they can be unit-tested directly.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 _DEFAULT_SPORTS = ["soccer", "basketball", "baseball"]
+
+_CONFIDENCE_COLORS: dict[str, str] = {
+    "high": "green",
+    "medium": "orange",
+    "low": "red",
+}
+
+_SLATE_CACHE_KEY = "last_slate_detail"
 
 
 def build_slate_payload(
@@ -82,3 +91,132 @@ def render_partial_failure_summary(match_runs: list[dict[str, Any]]) -> str:
         error = run.get("error_message", "unknown error")
         lines.append(f"- [{sport}] {home} v {away}: failed — {error}")
     return "\n".join(lines)
+
+
+def store_slate_result(session_state: dict[str, Any], detail: dict[str, Any]) -> None:
+    session_state[_SLATE_CACHE_KEY] = detail
+
+
+def clear_slate_cache(session_state: dict[str, Any]) -> None:
+    session_state.pop(_SLATE_CACHE_KEY, None)
+
+
+def should_render_cached_slate(session_state: dict[str, Any]) -> bool:
+    return _SLATE_CACHE_KEY in session_state
+
+
+def confidence_color(confidence: str) -> str:
+    return _CONFIDENCE_COLORS.get(confidence.lower(), "gray")
+
+
+def format_risk_flags_markdown(risk_flags: list[str]) -> str:
+    if not risk_flags:
+        return ""
+    return " ".join(f"`{flag}`" for flag in risk_flags)
+
+
+def build_availability_batch_payload(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for c in candidates:
+        player = c.get("player", "")
+        market = c.get("market", "")
+        if not player or not market:
+            continue
+        payload.append({
+            "player": player,
+            "market": market,
+            "line": c.get("line") or 0.0,
+        })
+    return payload
+
+
+def match_badges_to_candidates(
+    badges: list[dict[str, Any]], candidates: list[dict[str, Any]]
+) -> dict[int, dict[str, Any]]:
+    if not badges:
+        return {}
+    badge_map: dict[tuple[str, str], dict[str, Any]] = {}
+    for badge in badges:
+        key = (badge.get("player", ""), badge.get("market", ""))
+        badge_map[key] = badge
+
+    result: dict[int, dict[str, Any]] = {}
+    for idx, candidate in enumerate(candidates):
+        key = (candidate.get("player", ""), candidate.get("market", ""))
+        if key in badge_map:
+            result[idx] = badge_map[key]
+    return result
+
+
+def format_source_pick_detail(source_pick: dict[str, Any]) -> str:
+    if not source_pick:
+        return ""
+    lines: list[str] = []
+    score = source_pick.get("score")
+    if score is not None:
+        lines.append(f"**Score:** {score}")
+    rationale = source_pick.get("llm_rationale")
+    if rationale:
+        lines.append(f"**Reasoning:** {rationale}")
+    factors = source_pick.get("factors")
+    if factors and isinstance(factors, dict):
+        factor_parts = [f"{k}: {v}" for k, v in factors.items()]
+        lines.append(f"**Factors:** {', '.join(factor_parts)}")
+    return "\n\n".join(lines)
+
+
+def format_kickoff_local(kickoff_utc: str | None) -> str:
+    if not kickoff_utc:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
+        local_dt = dt.astimezone()
+        try:
+            return local_dt.strftime("%b %-d, %-I:%M %p")
+        except ValueError:
+            return local_dt.strftime("%b %#d, %#I:%M %p")
+    except (ValueError, OSError):
+        return "—"
+
+
+def format_token_summary(
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    total_tokens: int | None,
+) -> str:
+    if total_tokens is None:
+        return ""
+    parts: list[str] = []
+    if prompt_tokens is not None:
+        parts.append(f"{prompt_tokens:,} prompt")
+    if completion_tokens is not None:
+        parts.append(f"{completion_tokens:,} completion")
+    total_str = f"{total_tokens:,} total"
+    if parts:
+        return f"Tokens: {' + '.join(parts)} = {total_str}"
+    return f"Tokens: {total_str}"
+
+
+_STATUS_ICONS: dict[str, str] = {
+    "pending": "\u23f3",
+    "queued": "\u23f3",
+    "running": "\u26a1",
+    "success": "\u2705",
+    "failed": "\u274c",
+}
+
+
+def slate_status_icon(status: str) -> str:
+    return _STATUS_ICONS.get(status.lower(), "\u2753")
+
+
+def format_slate_list_item(slate: dict[str, Any]) -> str:
+    status = slate.get("status", "?")
+    icon = slate_status_icon(status)
+    request = slate.get("request", {})
+    date = request.get("date", "?")
+    sports = request.get("sports", [])
+    sports_str = ", ".join(sports) if sports else "all"
+    latency = slate.get("latency_ms")
+    latency_str = f" ({latency}ms)" if latency else ""
+    return f"{icon} {date} — {sports_str} [{status}]{latency_str}"

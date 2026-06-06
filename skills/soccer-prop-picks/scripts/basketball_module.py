@@ -161,9 +161,14 @@ class BasketballModule:
             players = match_inputs.get("players", [])
             lines = match_inputs.get("lines", {})
             game = match_inputs.get("game", {})
-            missing_inputs = _find_missing_basketball_inputs(players, lines, scoring_markets)
 
-        if scoring_markets and missing_inputs:
+        eligible, excluded_by_market = _partition_eligible_players(players, lines, scoring_markets)
+
+        if excluded_by_market:
+            _log_player_exclusions(match_inputs, scoring_markets, excluded_by_market)
+
+        if scoring_markets and not eligible:
+            missing_inputs = _find_missing_basketball_inputs(players, lines, scoring_markets)
             reason = "missing_prop_lines" if any(m.startswith("prop_line:") for m in missing_inputs) else "missing_player_context"
             _log_scoring_rejection(reason=reason, match_inputs=match_inputs, markets=scoring_markets, missing_fields=missing_inputs)
             raise BasketballDataQualityError(
@@ -171,7 +176,7 @@ class BasketballModule:
                 reason=reason,
             )
 
-        player_dicts = self._build_scoring_dicts(players, lines, game, markets=scoring_markets)
+        player_dicts = self._build_scoring_dicts(eligible, lines, game, markets=scoring_markets)
 
         if scoring_markets and player_dicts:
             scores = score_basketball_props(player_dicts, markets=scoring_markets)
@@ -424,6 +429,9 @@ class BasketballModule:
             for market in markets:
                 line_key = f"line_{market}"
                 if line_key not in d:
+                    required = _MARKET_REQUIRED_FIELDS.get(market, ())
+                    if any(player.get(f) is None for f in required):
+                        continue
                     market_data = player_lines.get(market, {})
                     if isinstance(market_data, dict):
                         if market_data.get("line") is not None:
@@ -458,6 +466,72 @@ def _find_missing_basketball_inputs(
             if not has_line:
                 missing.append(f"prop_line:{name}:{market}")
     return missing
+
+
+def _partition_eligible_players(
+    players: list[dict[str, Any]],
+    lines: Any,
+    markets: tuple[str, ...],
+) -> tuple[list[dict[str, Any]], dict[str, list[tuple[str, list[str]]]]]:
+    """Partition players into eligible vs excluded per market.
+
+    Returns (eligible_players, excluded_by_market) where eligible_players
+    contains players with complete data for at least one requested market.
+    """
+    eligible_names: set[str] = set()
+    excluded_by_market: dict[str, list[tuple[str, list[str]]]] = {}
+
+    for market in markets:
+        excluded_by_market[market] = []
+        required = _MARKET_REQUIRED_FIELDS.get(market, ())
+        for player in players:
+            name = str(player.get("player_name", "")).strip() or "Unknown"
+            missing_fields: list[str] = []
+            for field in required:
+                if player.get(field) is None:
+                    missing_fields.append(field)
+            player_lines = lines.get(name, {}) if isinstance(lines, dict) else {}
+            has_line, _ = _line_for_market(player_lines, market)
+            if not has_line:
+                missing_fields.append(f"line_{market}")
+            if missing_fields:
+                excluded_by_market[market].append((name, missing_fields))
+            else:
+                eligible_names.add(name)
+
+    excluded_by_market = {m: entries for m, entries in excluded_by_market.items() if entries}
+    eligible = [p for p in players if str(p.get("player_name", "")).strip() in eligible_names]
+    return eligible, excluded_by_market
+
+
+def _log_player_exclusions(
+    match_inputs: dict[str, Any],
+    markets: tuple[str, ...],
+    excluded_by_market: dict[str, list[tuple[str, list[str]]]],
+) -> None:
+    all_excluded_names: set[str] = set()
+    for entries in excluded_by_market.values():
+        for name, _ in entries:
+            all_excluded_names.add(name)
+
+    logger.info(
+        "basketball_players_excluded sport=basketball home_team=%s away_team=%s "
+        "match_date=%s league=%s markets=%s excluded_count=%s excluded_players=%s",
+        match_inputs.get("home_team", ""),
+        match_inputs.get("away_team", ""),
+        match_inputs.get("match_date", ""),
+        match_inputs.get("league", "nba"),
+        ",".join(markets),
+        len(all_excluded_names),
+        ",".join(sorted(all_excluded_names)[:10]),
+    )
+
+    data_quality = match_inputs.setdefault("data_quality", {})
+    if isinstance(data_quality, dict):
+        data_quality["excluded_players"] = {
+            market: [name for name, _ in entries]
+            for market, entries in excluded_by_market.items()
+        }
 
 
 def _line_for_market(player_lines: Any, market: str) -> tuple[bool, Any]:

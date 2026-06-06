@@ -464,11 +464,11 @@ def test_build_dependency_bundle_lineup_uses_env_model_override(monkeypatch: pyt
 
     lineup_client = captured_clients[1]
     assert lineup_client["model"] == "gemini-3.1-flash-lite"
-    assert lineup_client["search_grounding"] is False
+    assert lineup_client["search_grounding"] is True
 
     odds_client = captured_clients[2]
     assert odds_client["model"] == "gemini-3.1-flash-lite"
-    assert odds_client["search_grounding"] is False
+    assert odds_client["search_grounding"] is True
 
 
 def test_build_dependency_bundle_lineup_defaults_to_flash_lite_with_search_grounding(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -117,6 +117,9 @@ class SlateRun(Base):
     error_message = Column(Text, nullable=True)
     matches_attempted = Column(Integer, nullable=True)
     matches_succeeded = Column(Integer, nullable=True)
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
 
 
 class SlateJob(Base):
@@ -185,6 +188,18 @@ def _ensure_added_columns(engine: Engine) -> None:
             for col_name, col_def in outcome_additive:
                 if col_name not in existing_cols:
                     conn.execute(text(f"ALTER TABLE pick_outcomes ADD COLUMN {col_name} {col_def}"))
+
+    if "slate_runs" in inspector.get_table_names():
+        existing_cols = {col["name"] for col in inspector.get_columns("slate_runs")}
+        slate_additive: list[tuple[str, str]] = [
+            ("prompt_tokens", "INTEGER"),
+            ("completion_tokens", "INTEGER"),
+            ("total_tokens", "INTEGER"),
+        ]
+        with engine.begin() as conn:
+            for col_name, col_def in slate_additive:
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE slate_runs ADD COLUMN {col_name} {col_def}"))
 
 
 def configure_engine(url: str | None = None) -> Engine:
@@ -685,6 +700,9 @@ def mark_slate_success(
     discovery_latency_ms: int,
     matches_attempted: int,
     matches_succeeded: int,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
 ) -> SlateRun | None:
     with session_scope() as session:
         row = session.get(SlateRun, slate_id)
@@ -697,6 +715,9 @@ def mark_slate_success(
         row.discovery_latency_ms = discovery_latency_ms
         row.matches_attempted = matches_attempted
         row.matches_succeeded = matches_succeeded
+        row.prompt_tokens = prompt_tokens
+        row.completion_tokens = completion_tokens
+        row.total_tokens = total_tokens
         row.error_stage = None
         row.error_message = None
         session.add(row)

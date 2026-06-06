@@ -86,6 +86,7 @@ class LLMGameProvider:
         self.debug_enabled = _env_flag("COLMILLO_GAME_LLM_DEBUG", default=False)
         self.debug_max_chars = int(os.getenv("COLMILLO_GAME_LLM_DEBUG_MAX_CHARS", "2500"))
         self.last_sources: list = []
+        self.last_grounding_metadata = None
         self.client = client or OpenAICompatibleChatClient(
             api_key=resolved.api_key or "",
             base_url=resolved.base_url or "",
@@ -133,6 +134,7 @@ class LLMGameProvider:
             return _neutral_fallback(home_team, away_team)
 
         self.last_sources = list(getattr(self.client, "last_sources", []))
+        self.last_grounding_metadata = getattr(self.client, "last_grounding_metadata", None)
         self._debug("response", {"provider": self.config.provider, "response": result})
 
         if not _should_accept_game(result):
