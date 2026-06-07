@@ -129,3 +129,39 @@ class TestDefaultConfigs:
     def test_generic_returns_none(self):
         config = get_enrichment_config("generic")
         assert config is None
+
+
+class TestBasketballBibleIntegration:
+    """Verify basketball config contains bible-sourced URLs and anti-patterns."""
+
+    def test_contains_statmuse_url(self):
+        config = get_enrichment_config("basketball")
+        assert "statmuse.com/nba/ask" in config.system_prompt_guidance
+
+    def test_contains_espn_gamelog_url(self):
+        config = get_enrichment_config("basketball")
+        assert "espn.com/nba/player/gamelog" in config.system_prompt_guidance
+
+    def test_contains_nba_com_url(self):
+        config = get_enrichment_config("basketball")
+        assert "nba.com/stats/player" in config.system_prompt_guidance
+
+    def test_contains_basketball_reference_url(self):
+        config = get_enrichment_config("basketball")
+        assert "basketball-reference.com/players" in config.system_prompt_guidance
+
+    def test_contains_null_over_guessing_rule(self):
+        config = get_enrichment_config("basketball")
+        assert "null" in config.system_prompt_guidance.lower()
+
+    def test_contains_recency_preference(self):
+        config = get_enrichment_config("basketball")
+        assert "recent" in config.system_prompt_guidance.lower()
+
+    def test_preferred_sources_include_bible_urls(self):
+        config = get_enrichment_config("basketball")
+        sources_text = " ".join(config.preferred_sources)
+        assert "statmuse.com" in sources_text
+        assert "espn.com" in sources_text
+        assert "nba.com" in sources_text
+        assert "basketball-reference.com" in sources_text

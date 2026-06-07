@@ -47,7 +47,15 @@ BASKETBALL_ENRICHMENT_CONFIG = SportEnrichmentConfig(
         "- assist_avg / assist_last5: Season and last-5-game assist averages\n"
         "- threes_avg / threes_last5: Season and last-5-game three-pointers made averages\n"
         "- three_point_attempts: Season average 3PA per game\n\n"
-        "Search basketball-reference.com, nba.com/stats, or equivalent sources. "
+        "PREFERRED SOURCES (search these first, in priority order):\n"
+        "1. StatMuse (https://www.statmuse.com/nba/ask/{player-slug}-last-5-games) — best for last-N game summaries\n"
+        "2. ESPN gamelog (https://www.espn.com/nba/player/gamelog/_/id/{espn-id}/{player-slug}) — per-game stats rows\n"
+        "3. NBA.com stats (https://www.nba.com/stats/player/{nba-id}) — official splits, usage, advanced\n"
+        "4. Basketball-Reference (https://www.basketball-reference.com/players/{letter}/{bbref-id}.html) — season/career/game logs\n\n"
+        "QUALITY RULES:\n"
+        "- Prefer the most recent settled games for last5 fields.\n"
+        "- Note back-to-back or rest days when relevant to minutes projection.\n"
+        "- Return null rather than guessing when no source can verify the value.\n\n"
         "Return numeric values (not strings). Use null ONLY when no source can verify the value."
     ),
     required_fields_per_market={
@@ -61,7 +69,12 @@ BASKETBALL_ENRICHMENT_CONFIG = SportEnrichmentConfig(
         "minutes_proj should reflect current rotation status and recent minutes pattern.",
         "last5 averages should be from the 5 most recent games actually played.",
     ),
-    preferred_sources=("basketball-reference.com", "nba.com/stats"),
+    preferred_sources=(
+        "https://www.statmuse.com/nba/ask/{player-slug}-last-5-games",
+        "https://www.espn.com/nba/player/gamelog/_/id/{espn-id}/{player-slug}",
+        "https://www.nba.com/stats/player/{nba-id}",
+        "https://www.basketball-reference.com/players/{letter}/{bbref-id}.html",
+    ),
 )
 
 BASEBALL_ENRICHMENT_CONFIG = SportEnrichmentConfig(
