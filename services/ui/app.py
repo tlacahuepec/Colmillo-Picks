@@ -973,11 +973,11 @@ def render_grounding_audit_page() -> None:
     from missing_input_enrichment import GeminiMissingInputEnrichmentProvider  # noqa: E402
 
     test_players = [
-        {"name": "Victor Wembanyama", "team": "SAS", "opp": "LAL"},
-        {"name": "LeBron James", "team": "LAL", "opp": "SAS"},
-        {"name": "Tyrese Maxey", "team": "PHI", "opp": "BOS"},
-        {"name": "Draymond Green", "team": "GSW", "opp": "LAC"},
-        {"name": "Chet Holmgren", "team": "OKC", "opp": "DEN"},
+        {"name": "Karl-Anthony Towns", "team": "NYK", "opp": "SAS"},
+        {"name": "Jalen Brunson", "team": "NYK", "opp": "SAS"},
+        {"name": "Victor Wembanyama", "team": "SAS", "opp": "NYK"},
+        {"name": "Devin Vassell", "team": "SAS", "opp": "NYK"},
+        {"name": "Stephon Castle", "team": "SAS", "opp": "NYK"},
     ]
 
     required_fields: dict[str, tuple[str, ...]] = {
@@ -1001,6 +1001,8 @@ def render_grounding_audit_page() -> None:
         return
 
     from datetime import datetime, timezone
+
+    from llm.client import LLMError  # noqa: E402
 
     client = GeminiLLMClient(api_key=api_key, model="gemini-2.5-flash", search_grounding=True)
     provider = GeminiMissingInputEnrichmentProvider(client=client, model="gemini-2.5-flash")
@@ -1030,19 +1032,24 @@ def render_grounding_audit_page() -> None:
             )
 
             missing_fields = [f"player:{player['name']}:{f}" for f in all_unique_fields]
-            result = provider.enrich_missing_inputs(
-                sport="basketball",
-                home_team=player["team"],
-                away_team=player["opp"],
-                match_date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
-                league="nba",
-                requested_markets=("points", "rebounds", "assists", "threes"),
-                missing_fields=missing_fields,
-                players=[{"player_name": player["name"], "team": player["team"], "position": "Unknown"}],
-                lines={},
-                game={},
-            )
-            grounding_metadata = provider.last_grounding_metadata
+            try:
+                result = provider.enrich_missing_inputs(
+                    sport="basketball",
+                    home_team=player["team"],
+                    away_team=player["opp"],
+                    match_date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
+                    league="nba",
+                    requested_markets=("points", "rebounds", "assists", "threes"),
+                    missing_fields=missing_fields,
+                    players=[{"player_name": player["name"], "team": player["team"], "position": "Unknown"}],
+                    lines={},
+                    game={},
+                )
+                grounding_metadata = provider.last_grounding_metadata
+            except LLMError as exc:
+                st.warning(f"Attempt failed for {player['name']} (temp={temp}): {exc}")
+                result = None
+                grounding_metadata = None
             player_results.append(result)
 
             if result:
