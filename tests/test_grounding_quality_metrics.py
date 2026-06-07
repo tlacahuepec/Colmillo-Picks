@@ -8,6 +8,7 @@ from grounding_quality_metrics import (
     GroundingQualityReport,
     compute_critical_null_rate,
     compute_field_fill_rate,
+    compute_freshness_compliance,
     compute_source_url_presence,
     compute_consistency_score,
     score_enrichment_result,
@@ -266,3 +267,165 @@ class TestScoreEnrichmentResult:
         assert report.grounding_source_count == 2
         assert report.web_search_query_count == 2
         assert report.confidence_score == pytest.approx(0.66, abs=0.01)
+
+
+class TestComputeFreshnessCompliance:
+    def test_no_sources_returns_default(self):
+        players = [{"player_name": "Test", "minutes_proj": 30.0}]
+        rate = compute_freshness_compliance(players)
+        assert rate == 1.0
+
+    def test_all_fresh_sources(self):
+        from datetime import datetime, timezone
+
+        now = datetime.now(tz=timezone.utc).isoformat()
+        players = [
+            {
+                "player_name": "Test",
+                "sources": [
+                    {"label": "ESPN", "url": "https://espn.com", "retrieved_at": now},
+                    {"label": "NBA", "url": "https://nba.com", "retrieved_at": now},
+                ],
+            }
+        ]
+        rate = compute_freshness_compliance(players, ttl_days=7)
+        assert rate == 1.0
+
+    def test_all_stale_sources(self):
+        players = [
+            {
+                "player_name": "Test",
+                "sources": [
+                    {"label": "ESPN", "url": "https://espn.com", "retrieved_at": "2020-01-01T00:00:00+00:00"},
+                    {"label": "NBA", "url": "https://nba.com", "retrieved_at": "2020-01-02T00:00:00+00:00"},
+                ],
+            }
+        ]
+        rate = compute_freshness_compliance(players, ttl_days=7)
+        assert rate == 0.0
+
+    def test_mixed_freshness(self):
+        from datetime import datetime, timezone
+
+        now = datetime.now(tz=timezone.utc).isoformat()
+        players = [
+            {
+                "player_name": "Test",
+                "sources": [
+                    {"label": "Fresh", "url": "https://x.com", "retrieved_at": now},
+                    {"label": "Stale", "url": "https://y.com", "retrieved_at": "2020-01-01T00:00:00+00:00"},
+                ],
+            }
+        ]
+        rate = compute_freshness_compliance(players, ttl_days=7)
+        assert rate == pytest.approx(0.5)
+
+    def test_sources_without_timestamp_are_fresh(self):
+        players = [
+            {
+                "player_name": "Test",
+                "sources": [
+                    {"label": "ESPN", "url": "https://espn.com"},
+                ],
+            }
+        ]
+        rate = compute_freshness_compliance(players, ttl_days=7)
+        assert rate == 1.0
+
+
+_BASEBALL_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "hits": ("batting_avg", "hits_last5", "at_bats_avg"),
+    "total_bases": ("batting_avg", "slugging_pct", "total_bases_last5"),
+    "runs": ("batting_avg", "runs_last5", "obp"),
+    "rbi": ("batting_avg", "rbi_last5", "runners_in_scoring_position_avg"),
+    "strikeouts": ("k_rate", "strikeouts_last5", "pitcher_k_rate"),
+}
+
+
+class TestBaseballFieldScoring:
+    def test_full_baseball_result(self):
+        result = {
+            "players": [
+                {
+                    "player_name": "Aaron Judge",
+                    "batting_avg": 0.310,
+                    "hits_last5": 1.8,
+                    "at_bats_avg": 4.2,
+                    "slugging_pct": 0.650,
+                    "total_bases_last5": 3.0,
+                    "runs_last5": 1.2,
+                    "obp": 0.420,
+                    "rbi_last5": 1.5,
+                    "runners_in_scoring_position_avg": 0.340,
+                    "k_rate": 0.28,
+                    "strikeouts_last5": 1.6,
+                    "pitcher_k_rate": 0.25,
+                    "sources": [{"label": "ESPN", "url": "https://espn.com/mlb"}],
+                }
+            ],
+            "confidence": "high",
+            "sources": [],
+        }
+        report = score_enrichment_result(result, _BASEBALL_REQUIRED_FIELDS)
+        assert report.field_fill_rate == 1.0
+        assert report.critical_null_rate == 0.0
+        assert report.source_url_presence_rate == 1.0
+
+    def test_partial_baseball_result(self):
+        result = {
+            "players": [
+                {
+                    "player_name": "Aaron Judge",
+                    "batting_avg": 0.310,
+                    "hits_last5": None,
+                    "at_bats_avg": None,
+                    "slugging_pct": 0.650,
+                    "total_bases_last5": None,
+                    "sources": [],
+                }
+            ],
+            "confidence": "medium",
+            "sources": [],
+        }
+        report = score_enrichment_result(result, _BASEBALL_REQUIRED_FIELDS)
+        assert report.field_fill_rate < 1.0
+        assert report.critical_null_rate > 0.0
+
+    def test_empty_baseball_result(self):
+        result = {"players": [], "confidence": "unknown", "sources": []}
+        report = score_enrichment_result(result, _BASEBALL_REQUIRED_FIELDS)
+        assert report.field_fill_rate == 0.0
+
+    def test_baseball_uses_same_function_as_basketball(self):
+        basketball_result = {
+            "players": [{"player_name": "Test", "minutes_proj": 30.0}],
+            "confidence": "high",
+            "sources": [],
+        }
+        baseball_result = {
+            "players": [{"player_name": "Test", "batting_avg": 0.300}],
+            "confidence": "high",
+            "sources": [],
+        }
+        bball_report = score_enrichment_result(basketball_result, _BASKETBALL_REQUIRED_FIELDS)
+        base_report = score_enrichment_result(baseball_result, _BASEBALL_REQUIRED_FIELDS)
+        assert isinstance(bball_report, GroundingQualityReport)
+        assert isinstance(base_report, GroundingQualityReport)
+
+
+class TestScoreEnrichmentResultIncludesFreshness:
+    def test_report_has_freshness_field(self):
+        result = {
+            "players": [
+                {
+                    "player_name": "Test",
+                    "minutes_proj": 30.0,
+                    "sources": [{"label": "X", "url": "https://x.com"}],
+                }
+            ],
+            "confidence": "high",
+            "sources": [],
+        }
+        report = score_enrichment_result(result, _BASKETBALL_REQUIRED_FIELDS)
+        assert hasattr(report, "freshness_compliance")
+        assert report.freshness_compliance == 1.0
