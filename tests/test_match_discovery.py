@@ -198,3 +198,59 @@ def test_discover_matches_preserves_informational_error_from_llm() -> None:
     soccer = result["results"]["soccer"]
     assert len(soccer["matches"]) == 1
     assert soccer["error"] == "Limited verifiable match information available for 2026-06-01."
+
+
+class TestMatchesRequestedDateFilter:
+    """Tests for _matches_requested_date timezone and edge-case handling."""
+
+    def test_filter_rejects_match_when_kickoff_utc_is_previous_local_day(self):
+        from match_discovery import _matches_requested_date
+
+        match = {"home_team": "Arsenal", "away_team": "Chelsea", "kickoff_utc": "2026-06-05T23:00:00Z"}
+        assert _matches_requested_date(match, "2026-06-06", timezone="America/Chicago") is False
+
+    def test_filter_accepts_match_when_kickoff_utc_converts_to_requested_local_day(self):
+        from match_discovery import _matches_requested_date
+
+        match = {"home_team": "Arsenal", "away_team": "Chelsea", "kickoff_utc": "2026-06-07T03:00:00Z"}
+        assert _matches_requested_date(match, "2026-06-06", timezone="America/Chicago") is True
+
+    def test_filter_rejects_match_with_no_date_fields(self):
+        from match_discovery import _matches_requested_date
+
+        match = {"home_team": "Arsenal", "away_team": "Chelsea"}
+        assert _matches_requested_date(match, "2026-06-06") is False
+
+    def test_filter_still_works_without_timezone(self):
+        from match_discovery import _matches_requested_date
+
+        match = {"home_team": "Arsenal", "away_team": "Chelsea", "kickoff_utc": "2026-06-06T19:00:00Z"}
+        assert _matches_requested_date(match, "2026-06-06") is True
+
+    def test_filter_without_timezone_rejects_wrong_utc_date(self):
+        from match_discovery import _matches_requested_date
+
+        match = {"home_team": "Arsenal", "away_team": "Chelsea", "kickoff_utc": "2026-06-07T03:00:00Z"}
+        assert _matches_requested_date(match, "2026-06-06") is False
+
+    def test_event_date_takes_priority_over_kickoff_utc(self):
+        from match_discovery import _matches_requested_date
+
+        match = {
+            "home_team": "Arsenal",
+            "away_team": "Chelsea",
+            "event_date": "2026-06-06",
+            "kickoff_utc": "2026-06-07T03:00:00Z",
+        }
+        assert _matches_requested_date(match, "2026-06-06", timezone="America/Chicago") is True
+
+    def test_event_date_mismatch_rejects(self):
+        from match_discovery import _matches_requested_date
+
+        match = {
+            "home_team": "Arsenal",
+            "away_team": "Chelsea",
+            "event_date": "2026-06-05",
+            "kickoff_utc": "2026-06-06T01:00:00Z",
+        }
+        assert _matches_requested_date(match, "2026-06-06") is False

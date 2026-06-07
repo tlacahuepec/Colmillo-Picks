@@ -183,6 +183,7 @@ def test_discover_matches_posts_date_sports_and_limit(
             date_utc: str,
             sports: list[str],
             limit_per_sport: int,
+            timezone: str | None = None,
         ) -> dict[str, Any]:
             assert date_utc == "2026-06-01"
             assert sports == ["soccer", "baseball"]

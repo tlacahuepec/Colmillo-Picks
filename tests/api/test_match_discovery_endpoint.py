@@ -44,6 +44,7 @@ class _FakeDiscoveryClient:
         date_utc: str,
         sports: list[str],
         limit_per_sport: int,
+        timezone: str | None = None,
     ) -> dict:
         self.calls.append({
             "date_utc": date_utc,
