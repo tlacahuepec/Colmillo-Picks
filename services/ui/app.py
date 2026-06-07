@@ -24,6 +24,9 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+_SCRIPTS_DIR = _REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from dotenv import load_dotenv  # noqa: E402
 
@@ -48,7 +51,7 @@ from services.ui.best_today_helpers import (  # noqa: E402
 )
 
 
-PAGES = ("Generate", "History", "Best Today")
+PAGES = ("Generate", "History", "Best Today", "Grounding Audit")
 
 
 def _format_utc_to_local(utc_str: str) -> str:
@@ -949,6 +952,201 @@ def _render_slate_results(detail: dict[str, Any], client: PicksAPIClient) -> Non
                 st.text(format_match_run_summary(run))
 
 
+def render_grounding_audit_page() -> None:
+    """Grounding quality audit — run enrichment and measure quality metrics."""
+    st.title("Grounding Quality Audit")
+    st.caption(
+        "Measures enrichment quality: field-fill rate, source-URL presence, "
+        "critical nulls, and cross-attempt consistency."
+    )
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        st.error("GEMINI_API_KEY not set. Add it to your .env file to run the audit.")
+        return
+
+    from grounding_quality_metrics import (  # noqa: E402
+        compute_consistency_score,
+        score_enrichment_result,
+    )
+    from llm.gemini_client import GeminiLLMClient  # noqa: E402
+    from missing_input_enrichment import GeminiMissingInputEnrichmentProvider  # noqa: E402
+
+    test_players = [
+        {"name": "Karl-Anthony Towns", "team": "NYK", "opp": "SAS"},
+        {"name": "Jalen Brunson", "team": "NYK", "opp": "SAS"},
+        {"name": "Victor Wembanyama", "team": "SAS", "opp": "NYK"},
+        {"name": "Devin Vassell", "team": "SAS", "opp": "NYK"},
+        {"name": "Stephon Castle", "team": "SAS", "opp": "NYK"},
+    ]
+
+    required_fields: dict[str, tuple[str, ...]] = {
+        "points": ("minutes_proj", "usage_rate", "points_avg", "points_last5"),
+        "rebounds": ("minutes_proj", "usage_rate", "rebound_avg", "rebound_last5"),
+        "assists": ("minutes_proj", "usage_rate", "assist_avg", "assist_last5"),
+        "threes": ("minutes_proj", "usage_rate", "threes_avg", "threes_last5", "three_point_attempts"),
+    }
+
+    col1, col2 = st.columns(2)
+    with col1:
+        num_players = st.selectbox("Players to test", options=[1, 2, 3, 4, 5], index=0)
+    with col2:
+        num_attempts = st.selectbox("Attempts per player", options=[1, 2, 3], index=0)
+
+    selected_players = test_players[:num_players]
+
+    st.markdown("**Selected players:** " + ", ".join(p["name"] for p in selected_players))
+
+    if not st.button("Run Audit", type="primary"):
+        return
+
+    from datetime import datetime, timezone
+
+    from llm.client import LLMError  # noqa: E402
+
+    client = GeminiLLMClient(api_key=api_key, model="gemini-2.5-flash", search_grounding=True)
+    provider = GeminiMissingInputEnrichmentProvider(client=client, model="gemini-2.5-flash")
+
+    temperatures = [None, 0.7, 1.0][:num_attempts]
+    all_unique_fields: list[str] = []
+    for fields in required_fields.values():
+        for f in fields:
+            if f not in all_unique_fields:
+                all_unique_fields.append(f)
+
+    progress = st.progress(0.0, text="Starting audit...")
+    total_calls = num_players * num_attempts
+    call_count = 0
+
+    results_data: list[dict[str, Any]] = []
+
+    for player in selected_players:
+        player_results: list[dict[str, Any] | None] = []
+        player_reports = []
+
+        for temp in temperatures:
+            call_count += 1
+            progress.progress(
+                call_count / total_calls,
+                text=f"Enriching {player['name']} (temp={temp})...",
+            )
+
+            missing_fields = [f"player:{player['name']}:{f}" for f in all_unique_fields]
+            try:
+                result = provider.enrich_missing_inputs(
+                    sport="basketball",
+                    home_team=player["team"],
+                    away_team=player["opp"],
+                    match_date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
+                    league="nba",
+                    requested_markets=("points", "rebounds", "assists", "threes"),
+                    missing_fields=missing_fields,
+                    players=[{"player_name": player["name"], "team": player["team"], "position": "Unknown"}],
+                    lines={},
+                    game={},
+                )
+                grounding_metadata = provider.last_grounding_metadata
+            except LLMError as exc:
+                st.warning(f"Attempt failed for {player['name']} (temp={temp}): {exc}")
+                result = None
+                grounding_metadata = None
+            player_results.append(result)
+
+            if result:
+                report = score_enrichment_result(
+                    result, required_fields, grounding_metadata=grounding_metadata
+                )
+                player_reports.append(report)
+
+        consistency = compute_consistency_score([r for r in player_results if r])
+        results_data.append({
+            "player": player["name"],
+            "reports": player_reports,
+            "consistency": consistency,
+            "raw_results": player_results,
+        })
+
+    progress.progress(1.0, text="Audit complete!")
+
+    st.subheader("Summary Metrics")
+    all_reports = [r for entry in results_data for r in entry["reports"]]
+    if all_reports:
+        import statistics
+
+        col_a, col_b, col_c = st.columns(3)
+        fill_rates = [r.field_fill_rate for r in all_reports]
+        source_rates = [r.source_url_presence_rate for r in all_reports]
+        null_rates = [r.critical_null_rate for r in all_reports]
+
+        col_a.metric("Avg Field-Fill Rate", f"{statistics.mean(fill_rates):.1%}")
+        col_b.metric("Avg Source-URL Presence", f"{statistics.mean(source_rates):.1%}")
+        col_c.metric("Avg Critical-Null Rate", f"{statistics.mean(null_rates):.1%}")
+
+    st.subheader("Per-Player Results")
+    rows = []
+    for entry in results_data:
+        reports = entry["reports"]
+        if reports:
+            import statistics as _stats
+
+            rows.append({
+                "Player": entry["player"],
+                "Fill Rate": f"{_stats.mean(r.field_fill_rate for r in reports):.1%}",
+                "Source URLs": f"{_stats.mean(r.source_url_presence_rate for r in reports):.1%}",
+                "Critical Nulls": f"{_stats.mean(r.critical_null_rate for r in reports):.1%}",
+                "Confidence": f"{_stats.mean(r.confidence_score for r in reports):.2f}",
+                "Consistency (CV)": f"{entry['consistency']:.3f}",
+            })
+        else:
+            rows.append({
+                "Player": entry["player"],
+                "Fill Rate": "FAILED",
+                "Source URLs": "FAILED",
+                "Critical Nulls": "FAILED",
+                "Confidence": "FAILED",
+                "Consistency (CV)": "N/A",
+            })
+
+    if rows:
+        st.table(rows)
+
+    st.subheader("Grounding Sources Observed")
+    all_urls: set[str] = set()
+    for entry in results_data:
+        for result in entry["raw_results"]:
+            if not result:
+                continue
+            for p in result.get("players", []):
+                for src in p.get("sources", []):
+                    if src.get("url"):
+                        all_urls.add(src["url"])
+            for src in result.get("sources", []):
+                if src.get("url"):
+                    all_urls.add(src["url"])
+
+    if all_urls:
+        domains: dict[str, int] = {}
+        for url in all_urls:
+            try:
+                domain = url.split("//")[1].split("/")[0]
+                domains[domain] = domains.get(domain, 0) + 1
+            except (IndexError, AttributeError):
+                continue
+        for domain, count in sorted(domains.items(), key=lambda x: -x[1]):
+            st.markdown(f"- `{domain}` ({count})")
+    else:
+        st.info("No source URLs observed in enrichment responses.")
+
+    st.subheader("Bible-Expected Sources")
+    expected_sources = ["espn.com", "statmuse.com", "nba.com", "basketball-reference.com"]
+    for source in expected_sources:
+        found = any(source in url for url in all_urls)
+        if found:
+            st.markdown(f"- `{source}` — :green[PRESENT]")
+        else:
+            st.markdown(f"- `{source}` — :red[MISSING]")
+
+
 def main() -> None:
     st.set_page_config(page_title="Colmillo-Picks", layout="wide")
     config = APIClientConfig.from_env()
@@ -959,6 +1157,8 @@ def main() -> None:
         render_generate_page(client)
     elif page == "History":
         render_history_page(client)
+    elif page == "Grounding Audit":
+        render_grounding_audit_page()
     else:
         render_best_today_page(client)
 

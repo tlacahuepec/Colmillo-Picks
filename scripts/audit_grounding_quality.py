@@ -53,11 +53,11 @@ _BASKETBALL_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 _TEST_PLAYERS = [
-    {"name": "Victor Wembanyama", "team": "SAS", "opp": "LAL"},
-    {"name": "LeBron James", "team": "LAL", "opp": "SAS"},
-    {"name": "Tyrese Maxey", "team": "PHI", "opp": "BOS"},
-    {"name": "Draymond Green", "team": "GSW", "opp": "LAC"},
-    {"name": "Chet Holmgren", "team": "OKC", "opp": "DEN"},
+    {"name": "Karl-Anthony Towns", "team": "NYK", "opp": "SAS"},
+    {"name": "Jalen Brunson", "team": "NYK", "opp": "SAS"},
+    {"name": "Victor Wembanyama", "team": "SAS", "opp": "NYK"},
+    {"name": "Devin Vassell", "team": "SAS", "opp": "NYK"},
+    {"name": "Stephon Castle", "team": "SAS", "opp": "NYK"},
 ]
 
 
@@ -76,6 +76,8 @@ def _run_single_enrichment(
     temperature: float | None,
 ) -> tuple[dict | None, GroundingMetadataResult | None]:
     """Run a single enrichment attempt for one player."""
+    from llm.client import LLMError
+
     all_fields = []
     for fields in _BASKETBALL_REQUIRED_FIELDS.values():
         for f in fields:
@@ -84,18 +86,22 @@ def _run_single_enrichment(
 
     missing_fields = [f"player:{player['name']}:{f}" for f in all_fields]
 
-    result = provider.enrich_missing_inputs(
-        sport="basketball",
-        home_team=player["team"],
-        away_team=player["opp"],
-        match_date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
-        league="nba",
-        requested_markets=("points", "rebounds", "assists", "threes"),
-        missing_fields=missing_fields,
-        players=[{"player_name": player["name"], "team": player["team"], "position": "Unknown"}],
-        lines={},
-        game={},
-    )
+    try:
+        result = provider.enrich_missing_inputs(
+            sport="basketball",
+            home_team=player["team"],
+            away_team=player["opp"],
+            match_date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
+            league="nba",
+            requested_markets=("points", "rebounds", "assists", "threes"),
+            missing_fields=missing_fields,
+            players=[{"player_name": player["name"], "team": player["team"], "position": "Unknown"}],
+            lines={},
+            game={},
+        )
+    except LLMError as exc:
+        print(f"    WARNING: attempt failed: {exc}", file=sys.stderr)
+        return None, None
 
     grounding_metadata = provider.last_grounding_metadata
     return result, grounding_metadata
