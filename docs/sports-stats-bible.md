@@ -358,3 +358,22 @@ These rules should be referenced in every grounding prompt template.
 - Keep the free-only and LLM-grounding-first principles intact.
 
 See also `docs/contributor-playbook.md` for general contribution workflow.
+
+## Adding a new sport
+
+Adding a new sport (e.g., NFL, NHL) requires configuration and a module implementation. The config registry pattern means no prompt builder or pipeline edits are needed — just define the config and register it.
+
+### Quick steps
+
+1. Research sources and document them in a source matrix above.
+2. Define markets and required fields per market.
+3. Create a `SportEnrichmentConfig` with URLs, anti-patterns, and field format rules.
+4. Register the config in `_build_default_registry()`.
+5. Implement the `SportModule` protocol (collect, score, explain).
+6. Register the module in `SportModuleRegistry`.
+7. Add tests verifying config content and prompt integration.
+8. Update this bible with the sport's source matrix, recipe, and anti-patterns.
+
+### Full guide
+
+See [`docs/sport-onboarding-guide.md`](sport-onboarding-guide.md) for a complete walkthrough with NFL as an example, including code skeletons, test templates, and a checklist.
