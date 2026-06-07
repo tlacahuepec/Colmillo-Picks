@@ -965,6 +965,7 @@ def render_grounding_audit_page() -> None:
         st.error("GEMINI_API_KEY not set. Add it to your .env file to run the audit.")
         return
 
+    from bible_style_enrichment import BibleStyleEnrichmentProvider  # noqa: E402
     from grounding_quality_metrics import (  # noqa: E402
         compute_consistency_score,
         score_enrichment_result,
@@ -993,6 +994,12 @@ def render_grounding_audit_page() -> None:
     with col2:
         num_attempts = st.selectbox("Attempts per player", options=[1, 2, 3], index=0)
 
+    use_bible_style = st.checkbox(
+        "Use bible-style prompt (explicit URLs + anti-patterns)",
+        value=False,
+        help="A/B test: uses explicit source URLs and anti-pattern rules from the Sports Stats Bible.",
+    )
+
     selected_players = test_players[:num_players]
 
     st.markdown("**Selected players:** " + ", ".join(p["name"] for p in selected_players))
@@ -1005,7 +1012,11 @@ def render_grounding_audit_page() -> None:
     from llm.client import LLMError  # noqa: E402
 
     client = GeminiLLMClient(api_key=api_key, model="gemini-2.5-flash", search_grounding=True)
-    provider = GeminiMissingInputEnrichmentProvider(client=client, model="gemini-2.5-flash")
+    if use_bible_style:
+        provider = BibleStyleEnrichmentProvider(client=client, model="gemini-2.5-flash")
+        st.info("Using **bible-style** prompt (explicit URLs + anti-patterns).", icon="📖")
+    else:
+        provider = GeminiMissingInputEnrichmentProvider(client=client, model="gemini-2.5-flash")
 
     temperatures = [None, 0.7, 1.0][:num_attempts]
     all_unique_fields: list[str] = []
