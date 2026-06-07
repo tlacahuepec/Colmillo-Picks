@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -27,6 +28,7 @@ class GroundingQualityReport:
     confidence_score: float
     grounding_source_count: int
     web_search_query_count: int
+    freshness_compliance: float
 
 
 def compute_field_fill_rate(
@@ -90,6 +92,42 @@ def compute_critical_null_rate(
     return null_count / total if total > 0 else 0.0
 
 
+def compute_freshness_compliance(
+    players: list[dict[str, Any]],
+    ttl_days: int = 7,
+) -> float:
+    """Fraction of source entries with timestamps within the TTL window.
+
+    Sources without a `retrieved_at` field are treated as fresh (graceful degradation).
+    Returns 1.0 when no sources have timestamps at all.
+    """
+    if not players:
+        return 1.0
+
+    total = 0
+    fresh = 0
+    now = datetime.now(tz=timezone.utc)
+
+    for player in players:
+        sources = player.get("sources", [])
+        if not sources:
+            continue
+        for source in sources:
+            total += 1
+            retrieved_at = source.get("retrieved_at")
+            if not retrieved_at:
+                fresh += 1
+                continue
+            try:
+                ts = datetime.fromisoformat(retrieved_at.replace("Z", "+00:00"))
+                if (now - ts).days <= ttl_days:
+                    fresh += 1
+            except (ValueError, TypeError, AttributeError):
+                fresh += 1
+
+    return fresh / total if total > 0 else 1.0
+
+
 def compute_consistency_score(results: list[dict[str, Any]]) -> float:
     """Mean coefficient of variation across numeric fields for the same player across attempts.
 
@@ -147,6 +185,7 @@ def score_enrichment_result(
         confidence_score=confidence_score,
         grounding_source_count=grounding_source_count,
         web_search_query_count=web_search_query_count,
+        freshness_compliance=compute_freshness_compliance(players),
     )
 
 

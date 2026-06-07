@@ -106,6 +106,7 @@ def select_best_enrichment(
     *,
     required_fields: dict[str, tuple[str, ...]] | None = None,
     requested_markets: tuple[str, ...] = (),
+    use_quality_tiebreaker: bool = False,
 ) -> tuple[EnrichmentCandidate, SelectionDecision]:
     scored: list[tuple[int, int, float, int, EnrichmentCandidate]] = []
     for candidate in candidates:
@@ -119,6 +120,7 @@ def select_best_enrichment(
     best = scored[0]
     populated, nulls, confidence, attempt, winner = best
 
+    reason = "only_candidate"
     if len(scored) > 1:
         second = scored[1]
         if populated > second[0]:
@@ -127,10 +129,11 @@ def select_best_enrichment(
             reason = "fewest_critical_nulls"
         elif confidence > second[2]:
             reason = "highest_confidence"
+        elif use_quality_tiebreaker and required_fields:
+            winner, reason = _apply_quality_tiebreaker(scored, required_fields)
+            populated, nulls, confidence = _stats_for(winner, scored)
         else:
             reason = "first_attempt_preferred"
-    else:
-        reason = "only_candidate"
 
     decision = SelectionDecision(
         winner_index=candidates.index(winner),
@@ -142,3 +145,31 @@ def select_best_enrichment(
         critical_null_count=nulls,
     )
     return winner, decision
+
+
+def _stats_for(
+    winner: EnrichmentCandidate,
+    scored: list[tuple[int, int, float, int, EnrichmentCandidate]],
+) -> tuple[int, int, float]:
+    for populated, nulls, confidence, _, candidate in scored:
+        if candidate is winner:
+            return populated, nulls, confidence
+    return 0, 0, 0.0
+
+
+def _apply_quality_tiebreaker(
+    scored: list[tuple[int, int, float, int, EnrichmentCandidate]],
+    required_fields: dict[str, tuple[str, ...]],
+) -> tuple[EnrichmentCandidate, str]:
+    from grounding_quality_metrics import score_enrichment_result
+
+    best_score = -1.0
+    best_candidate = scored[0][4]
+    for _, _, _, _, candidate in scored:
+        report = score_enrichment_result(candidate.result, required_fields)
+        quality = report.field_fill_rate + report.source_url_presence_rate + report.freshness_compliance
+        if quality > best_score:
+            best_score = quality
+            best_candidate = candidate
+
+    return best_candidate, "quality_tiebreaker"
