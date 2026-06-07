@@ -1,0 +1,131 @@
+"""Tests for sport enrichment config dataclass and registry."""
+
+from __future__ import annotations
+
+import pytest
+
+from sport_enrichment_config import (
+    SportEnrichmentConfig,
+    SportEnrichmentConfigRegistry,
+    get_enrichment_config,
+)
+
+
+class TestSportEnrichmentConfig:
+    def test_create_basketball_config(self):
+        config = SportEnrichmentConfig(
+            sport_id="basketball",
+            system_prompt_guidance="BASKETBALL-SPECIFIC GUIDANCE",
+            required_fields_per_market={
+                "points": ("minutes_proj", "usage_rate", "points_avg", "points_last5"),
+            },
+            field_format_rules=(
+                "usage_rate must be expressed as a decimal (e.g., 0.28), not a percentage.",
+            ),
+            preferred_sources=("basketball-reference.com", "nba.com/stats"),
+        )
+        assert config.sport_id == "basketball"
+        assert "minutes_proj" in config.required_fields_per_market["points"]
+
+    def test_config_is_frozen(self):
+        config = SportEnrichmentConfig(
+            sport_id="basketball",
+            system_prompt_guidance="test",
+            required_fields_per_market={},
+            field_format_rules=(),
+            preferred_sources=(),
+        )
+        with pytest.raises(Exception):
+            config.sport_id = "soccer"
+
+
+class TestSportEnrichmentConfigRegistry:
+    def test_register_and_get(self):
+        registry = SportEnrichmentConfigRegistry()
+        config = SportEnrichmentConfig(
+            sport_id="basketball",
+            system_prompt_guidance="test guidance",
+            required_fields_per_market={},
+            field_format_rules=(),
+            preferred_sources=(),
+        )
+        registry.register(config)
+        assert registry.get("basketball") is config
+
+    def test_get_unregistered_returns_none(self):
+        registry = SportEnrichmentConfigRegistry()
+        assert registry.get("unknown_sport") is None
+
+    def test_register_multiple_sports(self):
+        registry = SportEnrichmentConfigRegistry()
+        basketball = SportEnrichmentConfig(
+            sport_id="basketball",
+            system_prompt_guidance="bball",
+            required_fields_per_market={},
+            field_format_rules=(),
+            preferred_sources=(),
+        )
+        baseball = SportEnrichmentConfig(
+            sport_id="baseball",
+            system_prompt_guidance="",
+            required_fields_per_market={},
+            field_format_rules=(),
+            preferred_sources=(),
+        )
+        registry.register(basketball)
+        registry.register(baseball)
+        assert registry.get("basketball") is basketball
+        assert registry.get("baseball") is baseball
+
+    def test_registered_sports_property(self):
+        registry = SportEnrichmentConfigRegistry()
+        config = SportEnrichmentConfig(
+            sport_id="basketball",
+            system_prompt_guidance="",
+            required_fields_per_market={},
+            field_format_rules=(),
+            preferred_sources=(),
+        )
+        registry.register(config)
+        assert "basketball" in registry.registered_sports
+
+
+class TestDefaultConfigs:
+    def test_basketball_config_exists(self):
+        config = get_enrichment_config("basketball")
+        assert config is not None
+        assert config.sport_id == "basketball"
+
+    def test_basketball_has_system_prompt_guidance(self):
+        config = get_enrichment_config("basketball")
+        assert "minutes_proj" in config.system_prompt_guidance
+        assert "usage_rate" in config.system_prompt_guidance
+
+    def test_basketball_has_required_fields(self):
+        config = get_enrichment_config("basketball")
+        assert "points" in config.required_fields_per_market
+        assert "rebounds" in config.required_fields_per_market
+        assert "assists" in config.required_fields_per_market
+        assert "threes" in config.required_fields_per_market
+
+    def test_basketball_has_field_format_rules(self):
+        config = get_enrichment_config("basketball")
+        assert len(config.field_format_rules) > 0
+        assert any("usage_rate" in rule for rule in config.field_format_rules)
+
+    def test_basketball_has_preferred_sources(self):
+        config = get_enrichment_config("basketball")
+        assert any("basketball-reference" in s for s in config.preferred_sources)
+
+    def test_baseball_config_exists(self):
+        config = get_enrichment_config("baseball")
+        assert config is not None
+        assert config.sport_id == "baseball"
+
+    def test_unknown_sport_returns_none(self):
+        config = get_enrichment_config("curling")
+        assert config is None
+
+    def test_generic_returns_none(self):
+        config = get_enrichment_config("generic")
+        assert config is None

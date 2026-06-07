@@ -193,26 +193,17 @@ class GeminiMissingInputEnrichmentProvider:
 
     @staticmethod
     def _build_system_prompt(*, sport: str = "generic") -> str:
+        from sport_enrichment_config import get_enrichment_config
+
         base = (
             "You enrich missing sports betting-analysis inputs after official providers were tried first. "
             "Return exactly one JSON object. Use search-grounded, source-labeled data only. "
             "Never invent betting prop lines; include line source metadata for each line or leave it unknown. "
             "Use null for unverified values. Do not include markdown or prose."
         )
-        if sport == "basketball":
-            base += (
-                "\n\nBASKETBALL-SPECIFIC GUIDANCE:\n"
-                "The scoring engine requires these exact numeric fields per player:\n"
-                "- minutes_proj: Projected minutes for this game (typically 20-38 for starters)\n"
-                "- usage_rate: Fraction of team possessions used while on court (decimal 0.15-0.35, NOT percentage)\n"
-                "- points_avg / points_last5: Season and last-5-game scoring averages\n"
-                "- rebound_avg / rebound_last5: Season and last-5-game rebounding averages\n"
-                "- assist_avg / assist_last5: Season and last-5-game assist averages\n"
-                "- threes_avg / threes_last5: Season and last-5-game three-pointers made averages\n"
-                "- three_point_attempts: Season average 3PA per game\n\n"
-                "Search basketball-reference.com, nba.com/stats, or equivalent sources. "
-                "Return numeric values (not strings). Use null ONLY when no source can verify the value."
-            )
+        config = get_enrichment_config(sport)
+        if config and config.system_prompt_guidance:
+            base += "\n\n" + config.system_prompt_guidance
         return base
 
     @staticmethod
@@ -230,6 +221,51 @@ class GeminiMissingInputEnrichmentProvider:
         game: dict[str, Any],
         official_context: dict[str, Any],
     ) -> str:
+        from sport_enrichment_config import get_enrichment_config
+
+        config = get_enrichment_config(sport)
+
+        if sport == "basketball":
+            player_schema = [
+                {
+                    "player_name": "full name (must match exactly)",
+                    "team": "3-letter team code (e.g., LAL, BOS, OKC)",
+                    "position": "PG|SG|SF|PF|C",
+                    "minutes_proj": "float: projected minutes (20-38 typical for starters)",
+                    "usage_rate": "float: 0.15-0.35 range (decimal, not percentage)",
+                    "points_avg": "float: season ppg",
+                    "points_last5": "float: last 5 games ppg",
+                    "rebound_avg": "float: season rpg",
+                    "rebound_last5": "float: last 5 games rpg",
+                    "assist_avg": "float: season apg",
+                    "assist_last5": "float: last 5 games apg",
+                    "threes_avg": "float: season 3PM per game",
+                    "threes_last5": "float: last 5 games 3PM per game",
+                    "three_point_attempts": "float: season 3PA per game",
+                    "sources": [{"label": "source name", "url": "source URL"}],
+                }
+            ]
+        else:
+            player_schema = [
+                {
+                    "player_name": "full name",
+                    "team": "team code or official team",
+                    "position": "position",
+                    "type": "batter|pitcher for baseball when known",
+                    "all_required_stats": "sport-specific numeric fields, null when unknown",
+                    "sources": [{"label": "source name", "url": "source URL"}],
+                }
+            ]
+
+        base_rules = [
+            "Return fields only when you can verify them from a source.",
+            "Every prop line must include source or sources metadata.",
+            "Do not fabricate PrizePicks, sportsbook, lineup, injury, or stat values.",
+            "If required data cannot be verified, leave it absent or null.",
+        ]
+        if config:
+            base_rules.extend(config.field_format_rules)
+
         return json.dumps(
             {
                 "task": "Return only the missing inputs needed to score the requested markets.",
@@ -252,34 +288,7 @@ class GeminiMissingInputEnrichmentProvider:
                 "required_json_shape": {
                     "confidence": "high|medium|low",
                     "retrieved_at_utc": "ISO-8601 timestamp",
-                    "players": [
-                        {
-                            "player_name": "full name (must match exactly)",
-                            "team": "3-letter team code (e.g., LAL, BOS, OKC)",
-                            "position": "PG|SG|SF|PF|C",
-                            "minutes_proj": "float: projected minutes (20-38 typical for starters)",
-                            "usage_rate": "float: 0.15-0.35 range (decimal, not percentage)",
-                            "points_avg": "float: season ppg",
-                            "points_last5": "float: last 5 games ppg",
-                            "rebound_avg": "float: season rpg",
-                            "rebound_last5": "float: last 5 games rpg",
-                            "assist_avg": "float: season apg",
-                            "assist_last5": "float: last 5 games apg",
-                            "threes_avg": "float: season 3PM per game",
-                            "threes_last5": "float: last 5 games 3PM per game",
-                            "three_point_attempts": "float: season 3PA per game",
-                            "sources": [{"label": "source name", "url": "source URL"}],
-                        }
-                    ] if sport == "basketball" else [
-                        {
-                            "player_name": "full name",
-                            "team": "team code or official team",
-                            "position": "position",
-                            "type": "batter|pitcher for baseball when known",
-                            "all_required_stats": "sport-specific numeric fields, null when unknown",
-                            "sources": [{"label": "source name", "url": "source URL"}],
-                        }
-                    ],
+                    "players": player_schema,
                     "lines": {
                         "<player_name>": {
                             "<market>": {
@@ -294,16 +303,7 @@ class GeminiMissingInputEnrichmentProvider:
                     "game": {"optional": "missing game-level context"},
                     "sources": [{"label": "source label", "url": "source URL"}],
                 },
-                "rules": [
-                    "Return fields only when you can verify them from a source.",
-                    "Every prop line must include source or sources metadata.",
-                    "Do not fabricate PrizePicks, sportsbook, lineup, injury, or stat values.",
-                    "If required data cannot be verified, leave it absent or null.",
-                ] + ([
-                    "usage_rate must be expressed as a decimal (e.g., 0.28), not a percentage (e.g., 28).",
-                    "minutes_proj should reflect current rotation status and recent minutes pattern.",
-                    "last5 averages should be from the 5 most recent games actually played.",
-                ] if sport == "basketball" else []),
+                "rules": base_rules,
             },
             sort_keys=True,
             default=str,
