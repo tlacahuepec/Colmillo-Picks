@@ -94,11 +94,55 @@ BASEBALL_ENRICHMENT_CONFIG = SportEnrichmentConfig(
     preferred_sources=("baseball-reference.com", "fangraphs.com"),
 )
 
+SOCCER_ENRICHMENT_CONFIG = SportEnrichmentConfig(
+    sport_id="soccer",
+    system_prompt_guidance=(
+        "SOCCER-SPECIFIC GUIDANCE:\n"
+        "The scoring engine requires these fields per player per market:\n"
+        "- goals: minutes, starts, xG, goals_last5, opponent_defense_rank\n"
+        "- assists: minutes, starts, xA, assists_last5, key_passes\n"
+        "- shots: minutes, starts, shots_last5, shots_on_target_last5\n"
+        "- passes: minutes, starts, passes_last5, pass_completion\n\n"
+        "PREFERRED SOURCES (search these first, in priority order):\n"
+        "1. FotMob (https://www.fotmob.com/players/{fotmob_id}/{player-slug}) — player profiles, recent form, goals, assists, xG/xA\n"
+        "2. Sofascore (https://www.sofascore.com/player/{player-slug}/{sofascore_id}) — player ratings, match events, lineups\n"
+        "3. Transfermarkt (https://www.transfermarkt.com/{player-slug}/profil/spieler/{tm_id}) — injuries, transfers, squad availability\n"
+        "4. FBref (https://fbref.com/en/players/{fbref_id}/{player}) — advanced stats, xG, progressive carries\n"
+        "5. ESPN (https://www.espn.com/soccer/player/_/id/{espn_id}/{player-slug}) — profile, appearances, game logs\n\n"
+        "QUALITY RULES:\n"
+        "- Never blend club and national-team form unless the market explicitly requires it.\n"
+        "- Always preserve league/competition and date context.\n"
+        "- Cross-check injuries from 2+ sources (Transfermarkt + Sofascore or ESPN).\n"
+        "- Prefer FotMob and Sofascore for recent player form; Transfermarkt for injury/availability.\n"
+        "- Return null rather than guessing when no source can verify the value.\n\n"
+        "Return numeric values (not strings). Use null ONLY when no source can verify the value."
+    ),
+    required_fields_per_market={
+        "goals": ("minutes", "starts", "xG", "goals_last5", "opponent_defense_rank"),
+        "assists": ("minutes", "starts", "xA", "assists_last5", "key_passes"),
+        "shots": ("minutes", "starts", "shots_last5", "shots_on_target_last5"),
+        "passes": ("minutes", "starts", "passes_last5", "pass_completion"),
+    },
+    field_format_rules=(
+        "xG and xA must be expressed as decimals per 90 minutes (e.g., 0.45), not totals.",
+        "pass_completion must be expressed as a decimal (e.g., 0.82), not a percentage.",
+        "last5 averages should be from the 5 most recent club matches actually played.",
+    ),
+    preferred_sources=(
+        "https://www.fotmob.com/players/{fotmob_id}/{player-slug}",
+        "https://www.sofascore.com/player/{player-slug}/{sofascore_id}",
+        "https://www.transfermarkt.com/{player-slug}/profil/spieler/{tm_id}",
+        "https://fbref.com/en/players/{fbref_id}/{player}",
+        "https://www.espn.com/soccer/player/_/id/{espn_id}/{player-slug}",
+    ),
+)
+
 
 def _build_default_registry() -> SportEnrichmentConfigRegistry:
     registry = SportEnrichmentConfigRegistry()
     registry.register(BASKETBALL_ENRICHMENT_CONFIG)
     registry.register(BASEBALL_ENRICHMENT_CONFIG)
+    registry.register(SOCCER_ENRICHMENT_CONFIG)
     return registry
 
 

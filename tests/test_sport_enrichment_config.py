@@ -131,6 +131,78 @@ class TestDefaultConfigs:
         assert config is None
 
 
+class TestSoccerConfig:
+    def test_soccer_config_exists(self):
+        config = get_enrichment_config("soccer")
+        assert config is not None
+        assert config.sport_id == "soccer"
+
+    def test_soccer_has_system_prompt_guidance(self):
+        config = get_enrichment_config("soccer")
+        assert config.system_prompt_guidance != ""
+
+    def test_soccer_has_required_fields_for_all_markets(self):
+        config = get_enrichment_config("soccer")
+        assert "goals" in config.required_fields_per_market
+        assert "assists" in config.required_fields_per_market
+        assert "shots" in config.required_fields_per_market
+        assert "passes" in config.required_fields_per_market
+
+    def test_soccer_has_field_format_rules(self):
+        config = get_enrichment_config("soccer")
+        assert len(config.field_format_rules) > 0
+        assert any("xG" in rule or "xA" in rule for rule in config.field_format_rules)
+
+    def test_soccer_has_preferred_sources(self):
+        config = get_enrichment_config("soccer")
+        assert len(config.preferred_sources) == 5
+
+
+class TestSoccerBibleIntegration:
+    """Verify soccer config contains bible-sourced URLs and anti-patterns."""
+
+    def test_contains_fotmob_url(self):
+        config = get_enrichment_config("soccer")
+        assert "fotmob.com/players" in config.system_prompt_guidance
+
+    def test_contains_sofascore_url(self):
+        config = get_enrichment_config("soccer")
+        assert "sofascore.com/player" in config.system_prompt_guidance
+
+    def test_contains_transfermarkt_url(self):
+        config = get_enrichment_config("soccer")
+        assert "transfermarkt.com" in config.system_prompt_guidance
+
+    def test_contains_fbref_url(self):
+        config = get_enrichment_config("soccer")
+        assert "fbref.com/en/players" in config.system_prompt_guidance
+
+    def test_contains_espn_url(self):
+        config = get_enrichment_config("soccer")
+        assert "espn.com/soccer/player" in config.system_prompt_guidance
+
+    def test_contains_club_national_team_antipattern(self):
+        config = get_enrichment_config("soccer")
+        assert "national-team" in config.system_prompt_guidance.lower()
+
+    def test_contains_injury_crosscheck_antipattern(self):
+        config = get_enrichment_config("soccer")
+        assert "2+" in config.system_prompt_guidance or "two" in config.system_prompt_guidance.lower()
+
+    def test_contains_null_over_guessing_rule(self):
+        config = get_enrichment_config("soccer")
+        assert "null" in config.system_prompt_guidance.lower()
+
+    def test_preferred_sources_include_bible_urls(self):
+        config = get_enrichment_config("soccer")
+        sources_text = " ".join(config.preferred_sources)
+        assert "fotmob.com" in sources_text
+        assert "sofascore.com" in sources_text
+        assert "transfermarkt.com" in sources_text
+        assert "fbref.com" in sources_text
+        assert "espn.com" in sources_text
+
+
 class TestBasketballBibleIntegration:
     """Verify basketball config contains bible-sourced URLs and anti-patterns."""
 
