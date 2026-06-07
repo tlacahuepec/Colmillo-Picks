@@ -137,6 +137,7 @@ class MatchDiscoveryClient:
         date_utc: str,
         sports: list[str],
         limit_per_sport: int = 5,
+        timezone: str | None = None,
     ) -> dict[str, Any]:
         normalized_sports = validate_match_discovery_inputs(
             date_utc=date_utc,
@@ -162,6 +163,7 @@ class MatchDiscoveryClient:
                     sport=sport,
                     date_utc=date_utc,
                     limit_per_sport=limit_per_sport,
+                    timezone=timezone,
                 )
             except LLMError as exc:
                 results[sport] = _error_result(str(exc))
@@ -204,6 +206,7 @@ def _normalize_sport_result(
     sport: str,
     date_utc: str,
     limit_per_sport: int,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
     sport_payload = _extract_sport_payload(raw, sport)
     provider = _string_or_none(raw.get("provider"))
@@ -227,7 +230,7 @@ def _normalize_sport_result(
         if isinstance(item, dict)
     ]
 
-    matches = [m for m in matches if _matches_requested_date(m, date_utc)]
+    matches = [m for m in matches if _matches_requested_date(m, date_utc, timezone=timezone)]
 
     data_quality = sport_payload.get("data_quality")
     if not isinstance(data_quality, dict):
@@ -251,15 +254,25 @@ def _extract_sport_payload(raw: dict[str, Any], sport: str) -> dict[str, Any]:
     return raw
 
 
-def _matches_requested_date(match: dict[str, Any], date_utc: str) -> bool:
+def _matches_requested_date(match: dict[str, Any], date_utc: str, *, timezone: str | None = None) -> bool:
     """Return True if the match's event_date or kickoff_utc falls on the requested date."""
     event_date = match.get("event_date", "")
-    if event_date and event_date != date_utc:
-        return False
+    if event_date:
+        return event_date == date_utc
     kickoff = match.get("kickoff_utc", "")
-    if kickoff and not kickoff.startswith(date_utc):
+    if not kickoff:
         return False
-    return True
+    if timezone:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        try:
+            dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+            local_date = dt.astimezone(ZoneInfo(timezone)).date().isoformat()
+            return local_date == date_utc
+        except (ValueError, TypeError, KeyError):
+            pass
+    return kickoff.startswith(date_utc)
 
 
 def _normalize_match(

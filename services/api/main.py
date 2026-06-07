@@ -242,6 +242,7 @@ class MatchDiscoveryRequest(BaseModel):
     limit_per_sport: int = Field(5, ge=1, le=5)
     llm_provider: str | None = Field(None, description="gemini | grok | openai")
     llm_model: str | None = None
+    timezone: str | None = Field(None, description="IANA timezone for date filtering (e.g., America/Chicago)")
 
 
 class DiscoverySource(BaseModel):
@@ -1155,6 +1156,7 @@ def create_app() -> FastAPI:
                 date_utc=payload.date,
                 sports=sports,
                 limit_per_sport=payload.limit_per_sport,
+                timezone=payload.timezone,
             )
         except MatchDiscoveryValidationError as exc:
             latency_ms = int((_time.perf_counter() - t0) * 1000)

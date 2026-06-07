@@ -136,11 +136,15 @@ def _build_match_discovery_payload(
     ]
     if not normalized_sports:
         raise ValueError("at least one sport is required")
-    return {
+    timezone = os.getenv("COLMILLO_TIMEZONE")
+    payload: dict[str, Any] = {
         "date": date.isoformat(),
         "sports": normalized_sports,
         "limit_per_sport": int(limit_per_sport),
     }
+    if timezone:
+        payload["timezone"] = timezone
+    return payload
 
 
 def _build_payload_from_suggested_match(
