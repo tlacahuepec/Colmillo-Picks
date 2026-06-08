@@ -80,10 +80,17 @@ def render_no_candidates_message() -> str:
 
 
 def render_partial_failure_summary(match_runs: list[dict[str, Any]]) -> str:
+    pending = [r for r in match_runs if r.get("status") == "pending_data"]
     failed = [r for r in match_runs if r.get("status") == "failed"]
-    if not failed:
+    if not failed and not pending:
         return ""
     lines = []
+    for run in pending:
+        home = run.get("home_team", "?")
+        away = run.get("away_team", "?")
+        sport = run.get("sport", "?")
+        error = run.get("error_message", "waiting for data")
+        lines.append(f"- [{sport}] {home} v {away}: waiting for lineup — {error}")
     for run in failed:
         home = run.get("home_team", "?")
         away = run.get("away_team", "?")
