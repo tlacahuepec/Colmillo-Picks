@@ -142,8 +142,8 @@ class LLMPlayerStatsProvider:
                     ]
                 },
                 "rules": [
-                    "Include exactly 16 players: 8 from the home team and 8 from the away team.",
-                    "Include the full expected rotation: all starters and key bench players expected to play.",
+                    "Include exactly 8 players: 4 from the home team and 4 from the away team.",
+                    "Select the top 4 players per team by usage rate who are expected to play (starters preferred).",
                     "CRITICAL: Only include players on the team's CURRENT active roster as of today. Players who were traded, waived, released, or sent to G-League before today MUST NOT be included.",
                     "If uncertain whether a player is currently on the team, exclude them and include a different active roster player instead.",
                     "Use current-season statistics, not career averages.",
@@ -151,7 +151,8 @@ class LLMPlayerStatsProvider:
                     "Projected minutes should reflect the player's typical workload this season.",
                     "Usage rate is the percentage of team plays used by the player (0.15-0.35 typical range).",
                     "Rotation risk: locked_in=star starter, normal=regular starter, elevated=minutes fluctuating, high=bench player or injury concern.",
-                    "Use null for any field you cannot determine with reasonable confidence.",
+                    "CRITICAL: Do NOT return null for usage_rate, minutes_proj, points_avg, or rebound_avg — these are required. If you cannot find a value, estimate from available data.",
+                    "Use null only for fields you truly cannot determine with reasonable confidence.",
                     "Return JSON only — no markdown, no prose.",
                 ],
             },
