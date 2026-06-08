@@ -2,7 +2,7 @@
   "global": {
     "top_k": 5,
     "contribution_floor": 0.0,
-    "model_version": "basketball-prop-v1.0-nba-weighted",
+    "model_version": "basketball-prop-v2.0-nba-expanded",
     "min_confidence_for_bet": "medium",
     "directional_edge": {
       "min_absolute_edge": 0.15
@@ -92,6 +92,189 @@
       "SF": 0.85,
       "PF": 0.55,
       "C": 0.25
+    }
+  },
+  "steals": {
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "pace_tempo": 0.16,
+      "opp_defensive_rating": 0.16,
+      "recent_form_momentum": 0.14,
+      "rest_days_b2b": 0.10,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.08,
+      "market_agreement": 0.08
+    },
+    "position_scores": {
+      "PG": 0.90,
+      "SG": 0.80,
+      "SF": 0.70,
+      "PF": 0.50,
+      "C": 0.40
+    }
+  },
+  "blocks": {
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "position_rebound_opportunity": 0.18,
+      "opp_defensive_rating": 0.16,
+      "recent_form_momentum": 0.14,
+      "pace_tempo": 0.10,
+      "rest_days_b2b": 0.08,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.04,
+      "market_agreement": 0.02
+    },
+    "position_scores": {
+      "C": 1.0,
+      "PF": 0.75,
+      "SF": 0.45,
+      "SG": 0.25,
+      "PG": 0.20
+    }
+  },
+  "turnovers": {
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "usage_rate_opportunity": 0.20,
+      "pace_tempo": 0.14,
+      "recent_form_momentum": 0.12,
+      "opp_defensive_rating": 0.10,
+      "rest_days_b2b": 0.08,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.04,
+      "market_agreement": 0.04
+    },
+    "position_scores": {
+      "PG": 0.90,
+      "SG": 0.75,
+      "SF": 0.70,
+      "PF": 0.60,
+      "C": 0.55
+    }
+  },
+  "fg_made": {
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "usage_rate_opportunity": 0.20,
+      "pace_tempo": 0.14,
+      "opp_defensive_rating": 0.12,
+      "recent_form_momentum": 0.10,
+      "rest_days_b2b": 0.08,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.04,
+      "market_agreement": 0.04
+    },
+    "position_scores": {
+      "PG": 0.80,
+      "SG": 0.88,
+      "SF": 0.85,
+      "PF": 0.78,
+      "C": 0.75
+    }
+  },
+  "fg_attempted": {
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "usage_rate_opportunity": 0.22,
+      "pace_tempo": 0.14,
+      "opp_defensive_rating": 0.10,
+      "recent_form_momentum": 0.10,
+      "rest_days_b2b": 0.08,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.04,
+      "market_agreement": 0.04
+    },
+    "position_scores": {
+      "PG": 0.82,
+      "SG": 0.90,
+      "SF": 0.88,
+      "PF": 0.78,
+      "C": 0.75
+    }
+  },
+  "two_pt_made": {
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "usage_rate_opportunity": 0.18,
+      "pace_tempo": 0.14,
+      "opp_defensive_rating": 0.14,
+      "recent_form_momentum": 0.10,
+      "rest_days_b2b": 0.08,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.04,
+      "market_agreement": 0.04
+    },
+    "position_scores": {
+      "C": 0.92,
+      "PF": 0.88,
+      "SF": 0.75,
+      "SG": 0.65,
+      "PG": 0.60
+    }
+  },
+  "rebs_asts": {
+    "combo": ["rebounds", "assists"],
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "position_playmaking_role": 0.16,
+      "position_rebound_opportunity": 0.14,
+      "pace_tempo": 0.12,
+      "opp_defensive_rating": 0.10,
+      "recent_form_momentum": 0.08,
+      "rest_days_b2b": 0.06,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.04,
+      "market_agreement": 0.02
+    },
+    "position_scores": {
+      "PG": 0.75,
+      "SG": 0.55,
+      "SF": 0.65,
+      "PF": 0.80,
+      "C": 0.85
+    }
+  },
+  "pra": {
+    "combo": ["points", "rebounds", "assists"],
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "usage_rate_opportunity": 0.18,
+      "pace_tempo": 0.14,
+      "opp_defensive_rating": 0.12,
+      "recent_form_momentum": 0.10,
+      "rest_days_b2b": 0.08,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.06,
+      "market_agreement": 0.04
+    },
+    "position_scores": {
+      "PG": 0.90,
+      "SG": 0.82,
+      "SF": 0.85,
+      "PF": 0.80,
+      "C": 0.78
+    }
+  },
+  "blks_stls": {
+    "combo": ["blocks", "steals"],
+    "factor_weights": {
+      "minutes_rotation_risk": 0.22,
+      "position_rebound_opportunity": 0.16,
+      "pace_tempo": 0.14,
+      "opp_defensive_rating": 0.16,
+      "recent_form_momentum": 0.12,
+      "rest_days_b2b": 0.08,
+      "home_away_adjustment": 0.06,
+      "teammate_absence_usage": 0.04,
+      "market_agreement": 0.02
+    },
+    "position_scores": {
+      "PG": 0.60,
+      "SG": 0.55,
+      "SF": 0.65,
+      "PF": 0.75,
+      "C": 0.90
     }
   },
   "calibration": {

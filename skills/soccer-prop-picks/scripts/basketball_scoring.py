@@ -33,6 +33,18 @@ _MARKET_STAT_KEYS: dict[str, tuple[str, str, str]] = {
     "rebounds": ("rebound_avg", "rebound_last5", "opp_rebound_rank"),
     "assists": ("assist_avg", "assist_last5", "opp_assist_rank"),
     "threes": ("threes_avg", "threes_last5", "opp_three_rank"),
+    "steals": ("steals_avg", "steals_last5", "opp_steals_rank"),
+    "blocks": ("blocks_avg", "blocks_last5", "opp_blocks_rank"),
+    "turnovers": ("turnovers_avg", "turnovers_last5", "opp_turnovers_rank"),
+    "fg_made": ("fg_made_avg", "fg_made_last5", "opp_fg_rank"),
+    "fg_attempted": ("fg_attempted_avg", "fg_attempted_last5", "opp_fg_rank"),
+    "two_pt_made": ("two_pt_made_avg", "two_pt_made_last5", "opp_fg_rank"),
+}
+
+_COMBO_MARKET_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "rebs_asts": ("rebounds", "assists"),
+    "pra": ("points", "rebounds", "assists"),
+    "blks_stls": ("blocks", "steals"),
 }
 
 
@@ -118,9 +130,16 @@ def _score_market_candidate(
 
 def _check_missing_data(player: dict[str, Any], market: str) -> bool:
     critical = ["minutes_proj", "usage_rate"]
-    stat_keys = _MARKET_STAT_KEYS.get(market, ())
-    if stat_keys:
-        critical.append(stat_keys[0])
+    combo = _COMBO_MARKET_COMPONENTS.get(market)
+    if combo:
+        for component in combo:
+            stat_keys = _MARKET_STAT_KEYS.get(component, ())
+            if stat_keys:
+                critical.append(stat_keys[0])
+    else:
+        stat_keys = _MARKET_STAT_KEYS.get(market, ())
+        if stat_keys:
+            critical.append(stat_keys[0])
     return any(player.get(k) is None for k in critical)
 
 
@@ -279,6 +298,19 @@ def _determine_confidence(
 
 
 def _resolve_direction(player: dict[str, Any], market: str, line: float) -> str:
+    combo = _COMBO_MARKET_COMPONENTS.get(market)
+    if combo:
+        projected = 0.0
+        for component in combo:
+            stat_keys = _MARKET_STAT_KEYS.get(component)
+            if stat_keys is None:
+                continue
+            avg_key, last5_key = stat_keys[0], stat_keys[1]
+            avg = player.get(avg_key)
+            last5 = player.get(last5_key)
+            projected += (last5 if last5 is not None else avg) if avg is not None else 0.0
+        return "over" if projected >= line else "under"
+
     stat_keys = _MARKET_STAT_KEYS.get(market)
     if stat_keys is None:
         return "over"
