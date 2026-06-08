@@ -97,8 +97,10 @@ class LLMPlayerStatsProvider:
                     ]
                 },
                 "rules": [
-                    "Include exactly 6 players: 3 from the home team and 3 from the away team.",
-                    "Select the 3 players with the highest usage rates who are expected to play.",
+                    "Include exactly 16 players: 8 from the home team and 8 from the away team.",
+                    "Include the full expected rotation: all starters and key bench players expected to play.",
+                    "CRITICAL: Only include players on the team's CURRENT active roster as of today. Players who were traded, waived, released, or sent to G-League before today MUST NOT be included.",
+                    "If uncertain whether a player is currently on the team, exclude them and include a different active roster player instead.",
                     "Use current-season statistics, not career averages.",
                     "Last 5 game averages should be from the most recent 5 games played.",
                     "Projected minutes should reflect the player's typical workload this season.",
