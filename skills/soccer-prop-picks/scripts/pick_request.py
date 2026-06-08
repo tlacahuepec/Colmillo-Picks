@@ -11,7 +11,12 @@ SUPPORTED_SPORTS: set[str] = {"soccer", "basketball", "baseball"}
 
 SPORT_MARKETS: dict[str, set[str]] = {
     "soccer": {"passes", "shots"},
-    "basketball": {"points", "rebounds", "assists", "threes"},
+    "basketball": {
+        "points", "rebounds", "assists", "threes",
+        "steals", "blocks", "turnovers", "fantasy_score",
+        "rebs_asts", "pra", "blks_stls",
+        "fg_attempted", "fg_made", "two_pt_made",
+    },
     "baseball": {"hits", "total_bases", "runs", "rbi", "home_runs", "strikeouts", "walks", "pitcher_outs"},
 }
 
