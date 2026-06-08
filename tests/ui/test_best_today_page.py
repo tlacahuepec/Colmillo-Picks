@@ -49,6 +49,28 @@ class TestBuildSlatePayload:
 
         assert payload["sports"] == ["soccer", "basketball", "baseball"]
 
+    def test_includes_timezone_when_provided(self) -> None:
+        payload = build_slate_payload(
+            date="2026-06-01",
+            sports=["soccer"],
+            max_matches_per_sport=3,
+            top_n=10,
+            timezone="America/Chicago",
+        )
+
+        assert payload["timezone"] == "America/Chicago"
+
+    def test_omits_timezone_when_none(self) -> None:
+        payload = build_slate_payload(
+            date="2026-06-01",
+            sports=["soccer"],
+            max_matches_per_sport=3,
+            top_n=10,
+            timezone=None,
+        )
+
+        assert "timezone" not in payload
+
 
 class TestFormatSlateCandidateRow:
     def test_formats_candidate_with_all_fields(self) -> None:

@@ -290,6 +290,7 @@ class SlateRequest(BaseModel):
     top_n: int = Field(10, ge=1, le=20)
     llm_provider: str | None = None
     llm_model: str | None = None
+    timezone: str | None = Field(None, description="IANA timezone for date filtering (e.g., America/Chicago)")
 
 
 class SlateAcceptedResponse(BaseModel):
@@ -1021,9 +1022,9 @@ def _build_slate_deps(request_dict: dict[str, Any]):
         model=request_dict.get("llm_model"),
     )
 
-    def discover(*, date_utc: str, sports: list[str], limit_per_sport: int) -> dict[str, Any]:
+    def discover(*, date_utc: str, sports: list[str], limit_per_sport: int, timezone: str | None = None) -> dict[str, Any]:
         return discovery_client.discover_matches(
-            date_utc=date_utc, sports=sports, limit_per_sport=limit_per_sport
+            date_utc=date_utc, sports=sports, limit_per_sport=limit_per_sport, timezone=timezone
         )
 
     def run_pipeline(

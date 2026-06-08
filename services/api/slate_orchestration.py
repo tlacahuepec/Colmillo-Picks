@@ -41,12 +41,14 @@ def execute_slate_job(
     sports = request_dict.get("sports", ["soccer", "basketball", "baseball"])
     max_matches_per_sport = request_dict.get("max_matches_per_sport", 3)
     top_n = request_dict.get("top_n", 10)
+    timezone = request_dict.get("timezone")
 
     t_discovery = time.perf_counter()
     discovery_result = deps.discover_matches(
         date_utc=date,
         sports=sports,
         limit_per_sport=max_matches_per_sport,
+        timezone=timezone,
     )
     discovery_latency_ms = max(0, round((time.perf_counter() - t_discovery) * 1000))
 

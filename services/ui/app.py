@@ -757,6 +757,7 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                 sports=normalized_sports,
                 max_matches_per_sport=max_matches,
                 top_n=top_n,
+                timezone=os.getenv("COLMILLO_TIMEZONE"),
             )
         except ValueError as exc:
             st.error(str(exc), icon="\u26a0\ufe0f")
