@@ -231,6 +231,7 @@ def _normalize_sport_result(
     ]
 
     matches = [m for m in matches if _matches_requested_date(m, date_utc, timezone=timezone)]
+    matches = [m for m in matches if _is_match_upcoming(m)]
 
     data_quality = sport_payload.get("data_quality")
     if not isinstance(data_quality, dict):
@@ -273,6 +274,27 @@ def _matches_requested_date(match: dict[str, Any], date_utc: str, *, timezone: s
         except (ValueError, TypeError, KeyError):
             pass
     return kickoff.startswith(date_utc)
+
+
+def _is_match_upcoming(
+    match: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    buffer_minutes: int = 15,
+) -> bool:
+    """Return True if the match has not yet started (with buffer for pre-kickoff bets)."""
+    kickoff = match.get("kickoff_utc", "")
+    if not kickoff:
+        return True
+    try:
+        kickoff_dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+        from datetime import timedelta
+
+        reference = now if now is not None else datetime.now(timezone.utc)
+        cutoff = reference - timedelta(minutes=buffer_minutes)
+        return kickoff_dt > cutoff
+    except (ValueError, TypeError):
+        return True
 
 
 def _normalize_match(
