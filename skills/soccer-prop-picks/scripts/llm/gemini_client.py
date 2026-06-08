@@ -13,6 +13,14 @@ _DEBUG_GROUNDING = __import__("os").environ.get("COLMILLO_DEBUG_GROUNDING", "").
 _MARKDOWN_JSON_FENCE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
 _TRAILING_COMMA = re.compile(r",\s*([}\]])")
 _CITATION_ANNOTATION = re.compile(r"\s*\[cite:\s*[\d,\s]+\]")
+_BARE_CITATION = re.compile(r'"\s*\[\d+(?:,\s*\d+)*\]')
+
+
+def _strip_citations(text: str) -> str:
+    """Remove both [cite: N, N] and bare [N, N] citation markers from text."""
+    result = _CITATION_ANNOTATION.sub("", text)
+    result = _BARE_CITATION.sub('"', result)
+    return result
 
 
 def _repair_json(text: str) -> dict | None:
@@ -28,11 +36,11 @@ def _repair_json(text: str) -> dict | None:
 def _extract_json_text(raw: str) -> str:
     stripped = raw.strip()
     if stripped.startswith("{"):
-        return _CITATION_ANNOTATION.sub("", stripped)
+        return stripped
     match = _MARKDOWN_JSON_FENCE.search(stripped)
     if match:
-        return _CITATION_ANNOTATION.sub("", match.group(1).strip())
-    return _CITATION_ANNOTATION.sub("", stripped)
+        return match.group(1).strip()
+    return stripped
 
 
 def _best_json_part(parts: list) -> str | None:
@@ -45,7 +53,7 @@ def _best_json_part(parts: list) -> str | None:
         if not extracted:
             continue
         try:
-            json.loads(extracted)
+            _parse_first_json_object(extracted)
             return text
         except (json.JSONDecodeError, ValueError):
             continue
@@ -61,22 +69,41 @@ def _parse_first_json_object(text: str) -> dict:
             return obj
         raise json.JSONDecodeError("Expected dict", text, 0)
     except json.JSONDecodeError:
+        pass
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    cleaned = _strip_citations(text)
+    try:
+        obj, _ = decoder.raw_decode(cleaned)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    repaired = _repair_json(cleaned)
+    if repaired is not None:
+        return repaired
+
+    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if match:
+        extracted = match.group(0)
         try:
-            return json.loads(text)
+            return json.loads(extracted)
         except json.JSONDecodeError:
-            repaired = _repair_json(text)
-            if repaired is not None:
-                return repaired
-            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-            if match:
-                extracted = match.group(0)
-                try:
-                    return json.loads(extracted)
-                except json.JSONDecodeError:
-                    repaired_extracted = _repair_json(extracted)
-                    if repaired_extracted is not None:
-                        return repaired_extracted
-            raise
+            repaired_extracted = _repair_json(extracted)
+            if repaired_extracted is not None:
+                return repaired_extracted
+
+    raise json.JSONDecodeError("No valid JSON object found", text, 0)
 
 
 class GeminiLLMClient(LLMClient):

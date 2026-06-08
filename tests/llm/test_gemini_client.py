@@ -702,8 +702,8 @@ class TestMultiPartResponse:
         result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
         assert result == {"valid": True}
 
-    def test_citation_annotations_stripped_from_json(self) -> None:
-        """[cite: N, N, N] annotations in JSON strings should be stripped."""
+    def test_citation_annotations_inside_string_preserved(self) -> None:
+        """[cite: N, N, N] inside a valid JSON string value doesn't break parsing."""
         text_with_cites = '{"notes": "Important game [cite: 1, 2, 3]", "ok": true}'
 
         class _Client:
@@ -719,7 +719,46 @@ class TestMultiPartResponse:
             search_grounding=True,
         )
         result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
-        assert result == {"notes": "Important game", "ok": True}
+        assert result["ok"] is True
+        assert "Important game" in result["notes"]
+
+    def test_bare_numeric_citation_stripped_from_json(self) -> None:
+        """Bare [N, N, N] citations injected by SDK are stripped on parse failure."""
+        text_with_bare_cites = '{"notes": "Yankees lost Judge" [1, 2, 3, 4], "sources": [{"label": "CBS"}]}'
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _FakeResponse(text_with_bare_cites)
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+            search_grounding=True,
+        )
+        result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert result == {"notes": "Yankees lost Judge", "sources": [{"label": "CBS"}]}
+
+    def test_bare_citation_does_not_corrupt_json_arrays(self) -> None:
+        """Valid JSON arrays like [1, 2, 3] in values should NOT be stripped."""
+        valid_json = '{"ids": [1, 2, 3], "name": "test"}'
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _FakeResponse(valid_json)
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+            search_grounding=True,
+        )
+        result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert result == {"ids": [1, 2, 3], "name": "test"}
 
 
 class TestJsonRepair:
