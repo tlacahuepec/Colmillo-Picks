@@ -302,3 +302,25 @@ class TestPastMatchFiltering:
 
         match = {"home_team": "Arsenal", "away_team": "Chelsea", "kickoff_utc": "not-a-date"}
         assert _is_match_upcoming(match) is True
+
+
+class TestMatchDiscoveryClientConfig:
+    """Tests for MatchDiscoveryClient.from_env configuration."""
+
+    def test_gemini_client_uses_sufficient_max_output_tokens(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        captured = {}
+
+        import llm.gemini_client as gemini_mod
+        original_init = gemini_mod.GeminiLLMClient.__init__
+
+        def _capture_init(self, **kwargs):
+            captured.update(kwargs)
+            original_init(self, **kwargs)
+
+        monkeypatch.setattr(gemini_mod.GeminiLLMClient, "__init__", _capture_init)
+
+        from match_discovery import MatchDiscoveryClient
+        MatchDiscoveryClient.from_env(provider="gemini")
+
+        assert captured.get("max_output_tokens", 0) >= 4000

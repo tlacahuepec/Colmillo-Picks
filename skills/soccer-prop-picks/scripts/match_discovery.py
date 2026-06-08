@@ -95,6 +95,7 @@ class MatchDiscoveryClient:
                 api_key=api_key,
                 model=model or getenv("GEMINI_MODEL") or "gemini-2.5-flash",
                 search_grounding=True,
+                max_output_tokens=4000,
             )
         elif resolved_provider == "grok":
             api_key = getenv("XAI_API_KEY")
