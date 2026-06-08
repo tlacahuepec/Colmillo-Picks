@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from baseball_module import BaseballDataQualityError
 from slate_ranking import SlateCandidate, candidates_from_picks, rank_slate_candidates
 
 
@@ -97,6 +98,20 @@ def execute_slate_job(
                     "error_stage": None,
                     "error_message": None,
                     "pick_count": len(candidates),
+                    "latency_ms": match_latency_ms,
+                })
+            except BaseballDataQualityError as exc:
+                match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))
+                status = "pending_data" if exc.reason == "hitter_inputs_unavailable" else "failed"
+                match_runs.append({
+                    "sport": sport,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "event_date": event_date,
+                    "status": status,
+                    "error_stage": "scoring",
+                    "error_message": str(exc)[:500],
+                    "pick_count": 0,
                     "latency_ms": match_latency_ms,
                 })
             except Exception as exc:

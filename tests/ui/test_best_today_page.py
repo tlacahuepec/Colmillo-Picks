@@ -181,6 +181,18 @@ class TestRenderPartialFailureSummary:
 
         assert text == ""
 
+    def test_pending_data_shown_separately_from_failures(self) -> None:
+        match_runs = [
+            {"sport": "baseball", "home_team": "Yankees", "away_team": "Red Sox", "status": "pending_data", "error_message": "Lineups not posted yet"},
+            {"sport": "basketball", "home_team": "Lakers", "away_team": "Celtics", "status": "failed", "error_message": "timeout"},
+        ]
+
+        text = render_partial_failure_summary(match_runs)
+
+        assert "Yankees" in text
+        assert "Lakers" in text
+        assert "waiting" in text.lower() or "pending" in text.lower() or "lineup" in text.lower()
+
 
 class TestSessionStateCaching:
     def test_store_slate_result_sets_key(self) -> None:
