@@ -68,7 +68,7 @@ def _make_deps(
     pipeline_error_teams: set[str] | None = None,
     discovery_raises: Exception | None = None,
 ) -> SlateOrchestrationDeps:
-    def discover(*, date_utc, sports, limit_per_sport):
+    def discover(*, date_utc, sports, limit_per_sport, timezone=None):
         if discovery_raises:
             raise discovery_raises
         return discovery_response or _discovery_response(sports)
@@ -91,7 +91,7 @@ class TestOrchestratorCallsDiscoveryThenPipelines:
     def test_calls_in_correct_order(self) -> None:
         call_log: list[str] = []
 
-        def discover(*, date_utc, sports, limit_per_sport):
+        def discover(*, date_utc, sports, limit_per_sport, timezone=None):
             call_log.append("discovery")
             return _discovery_response(["soccer"], matches_per_sport=1)
 
@@ -218,3 +218,54 @@ class TestDiscoveryFailure:
 
         with pytest.raises(RuntimeError, match="LLM timeout"):
             execute_slate_job(request_dict=request, deps=deps)
+
+
+class TestTimezonePassthrough:
+    def test_timezone_passed_to_discovery(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def discover(*, date_utc, sports, limit_per_sport, timezone=None):
+            captured["timezone"] = timezone
+            return _discovery_response(sports, matches_per_sport=1)
+
+        def run_pipeline(*, sport, home_team, away_team, event_date, markets):
+            return _pipeline_result(sport, f"{home_team} Star", 0.75)
+
+        deps = SlateOrchestrationDeps(
+            discover_matches=discover,
+            run_match_pipeline=run_pipeline,
+        )
+        request = {
+            "date": "2026-06-01",
+            "sports": ["soccer"],
+            "max_matches_per_sport": 1,
+            "top_n": 5,
+            "timezone": "America/Chicago",
+        }
+        execute_slate_job(request_dict=request, deps=deps)
+
+        assert captured["timezone"] == "America/Chicago"
+
+    def test_timezone_defaults_to_none_when_absent(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def discover(*, date_utc, sports, limit_per_sport, timezone=None):
+            captured["timezone"] = timezone
+            return _discovery_response(sports, matches_per_sport=1)
+
+        def run_pipeline(*, sport, home_team, away_team, event_date, markets):
+            return _pipeline_result(sport, f"{home_team} Star", 0.75)
+
+        deps = SlateOrchestrationDeps(
+            discover_matches=discover,
+            run_match_pipeline=run_pipeline,
+        )
+        request = {
+            "date": "2026-06-01",
+            "sports": ["soccer"],
+            "max_matches_per_sport": 1,
+            "top_n": 5,
+        }
+        execute_slate_job(request_dict=request, deps=deps)
+
+        assert captured["timezone"] is None

@@ -25,13 +25,17 @@ def build_slate_payload(
     sports: list[str],
     max_matches_per_sport: int,
     top_n: int,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "date": date,
         "sports": sports if sports else _DEFAULT_SPORTS,
         "max_matches_per_sport": max_matches_per_sport,
         "top_n": top_n,
     }
+    if timezone:
+        payload["timezone"] = timezone
+    return payload
 
 
 def format_slate_candidate_row(candidate: dict[str, Any]) -> str:
