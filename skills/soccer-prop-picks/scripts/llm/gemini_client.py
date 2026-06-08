@@ -12,6 +12,7 @@ _DEBUG_GROUNDING = __import__("os").environ.get("COLMILLO_DEBUG_GROUNDING", "").
 
 _MARKDOWN_JSON_FENCE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
 _TRAILING_COMMA = re.compile(r",\s*([}\]])")
+_CITATION_ANNOTATION = re.compile(r"\s*\[cite:\s*[\d,\s]+\]")
 
 
 def _repair_json(text: str) -> dict | None:
@@ -27,11 +28,28 @@ def _repair_json(text: str) -> dict | None:
 def _extract_json_text(raw: str) -> str:
     stripped = raw.strip()
     if stripped.startswith("{"):
-        return stripped
+        return _CITATION_ANNOTATION.sub("", stripped)
     match = _MARKDOWN_JSON_FENCE.search(stripped)
     if match:
-        return match.group(1).strip()
-    return stripped
+        return _CITATION_ANNOTATION.sub("", match.group(1).strip())
+    return _CITATION_ANNOTATION.sub("", stripped)
+
+
+def _best_json_part(parts: list) -> str | None:
+    """Try each part to find one containing parseable JSON."""
+    for part in parts:
+        text = getattr(part, "text", None)
+        if not text or not text.strip():
+            continue
+        extracted = _extract_json_text(text)
+        if not extracted:
+            continue
+        try:
+            json.loads(extracted)
+            return text
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return getattr(parts[0], "text", None) if parts else None
 
 
 def _parse_first_json_object(text: str) -> dict:
@@ -222,7 +240,7 @@ class GeminiLLMClient(LLMClient):
                 if not text and hasattr(response, "candidates") and response.candidates:
                     parts = response.candidates[0].content.parts
                     if parts:
-                        text = parts[0].text
+                        text = _best_json_part(parts)
                 if not text or not text.strip():
                     raise LLMError("Gemini returned empty response")
                 json_text = _extract_json_text(text)
