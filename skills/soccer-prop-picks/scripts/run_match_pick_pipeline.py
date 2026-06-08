@@ -55,7 +55,7 @@ class ParsedMatchQuery(tuple):
 
 
 _MIN_TOP_N = 1
-_MAX_TOP_N = 5
+_MAX_TOP_N = 10
 
 
 def _normalize_team_name(raw_team: str) -> str:
@@ -119,7 +119,7 @@ def _cli_top_n(raw_value: str) -> int:
     except ValueError as exc:
         raise argparse.ArgumentTypeError("top-n must be an integer") from exc
     if not _MIN_TOP_N <= value <= _MAX_TOP_N:
-        raise argparse.ArgumentTypeError("top-n must be a positive integer between 1 and 5")
+        raise argparse.ArgumentTypeError("top-n must be a positive integer between 1 and 10")
     return value
 
 

@@ -511,7 +511,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
 
         col_n, col_explain, col_fallback = st.columns(3)
         with col_n:
-            top_n = st.slider("Top N picks", min_value=1, max_value=5, value=5, key="gen_top_n")
+            top_n = st.slider("Top N picks", min_value=1, max_value=10, value=10, key="gen_top_n")
         with col_explain:
             add_explanations = st.checkbox(
                 "Add pick explanations", value=False, help="LLM adds rationale to each pick",

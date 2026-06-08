@@ -183,7 +183,7 @@ def test_render_report_rejects_non_positive_top_n_programmatically(invalid_top_n
     match_inputs = sample_match_inputs()
     scored = scorer.score_props(match_inputs)
 
-    with pytest.raises(ValueError, match="top_n must be between 1 and 5 inclusive"):
+    with pytest.raises(ValueError, match="top_n must be between 1 and 10 inclusive"):
         renderer.render_report(scored, match_inputs, availability_data={}, top_n=invalid_top_n)
 
 

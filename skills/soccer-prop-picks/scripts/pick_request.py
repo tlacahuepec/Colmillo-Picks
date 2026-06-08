@@ -81,8 +81,8 @@ def validate_pick_request(request: PickRequest) -> None:
             f"Invalid event_date '{request.event_date}'. Expected YYYY-MM-DD format."
         )
 
-    if not (1 <= request.top_n <= 5):
-        errors.append(f"top_n must be between 1 and 5, got {request.top_n}.")
+    if not (1 <= request.top_n <= 10):
+        errors.append(f"top_n must be between 1 and 10, got {request.top_n}.")
 
     if errors:
         raise PickRequestValidationError(errors)

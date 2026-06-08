@@ -293,7 +293,7 @@ def create_pending_pick_run(*, request_payload: dict[str, Any]) -> PickRun:
         created_at=datetime.now(timezone.utc),
         match_query=str(request_payload.get("match_query", ""))[:255],
         competition=competition_text,
-        top_n=int(request_payload.get("top_n", 5)),
+        top_n=int(request_payload.get("top_n", 10)),
         request_json=json.dumps(_safe_request_payload(request_payload), default=str),
         report_markdown="",
         scores_json="[]",

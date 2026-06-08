@@ -58,7 +58,7 @@ class PicksRequest(BaseModel):
     """Request body for ``POST /picks`` (legacy match_query format)."""
 
     match_query: str = Field(..., description="e.g. 'arsenal - liverpool 2026-05-03'")
-    top_n: int = Field(5, ge=1, le=5)
+    top_n: int = Field(10, ge=1, le=10)
     competition: str = Field("League", description="Display label for the competition.")
     league: str | None = None
     use_llm: bool = False
@@ -84,7 +84,7 @@ class StructuredPicksRequest(BaseModel):
     home_team: str
     away_team: str
     markets: list[str] = Field(default_factory=list)
-    top_n: int = Field(5, ge=1, le=5)
+    top_n: int = Field(10, ge=1, le=10)
     league: str | None = None
     platform: str | None = None
     use_llm: bool = False
@@ -733,7 +733,7 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
         home_team=request_dict.get("home_team", ""),
         away_team=request_dict.get("away_team", ""),
         markets=markets if markets else tuple(module.supported_markets),
-        top_n=request_dict.get("top_n", 5),
+        top_n=request_dict.get("top_n", 10),
         league=request_dict.get("league"),
     )
     runner = PipelineRunner()

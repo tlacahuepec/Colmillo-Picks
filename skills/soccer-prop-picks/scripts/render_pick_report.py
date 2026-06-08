@@ -12,7 +12,7 @@ from availability.contract import standardize_availability_payload
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "templates" / "pick_report.md"
 _MIN_TOP_N = 1
-_MAX_TOP_N = 5
+_MAX_TOP_N = 10
 _REJECTED_PREDICTION_MESSAGE = "No actionable picks: prediction rejected due to missing critical fields"
 
 
@@ -310,7 +310,7 @@ def _availability_rows(scored_props: list[dict[str, Any]], top_n: int, availabil
 
 def _validate_top_n(top_n: int) -> None:
     if not _MIN_TOP_N <= top_n <= _MAX_TOP_N:
-        raise ValueError("top_n must be between 1 and 5 inclusive")
+        raise ValueError("top_n must be between 1 and 10 inclusive")
 
 
 def _is_prediction_rejected(match_inputs: dict[str, Any]) -> bool:
