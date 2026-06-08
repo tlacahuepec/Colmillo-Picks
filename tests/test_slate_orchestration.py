@@ -218,3 +218,43 @@ class TestDiscoveryFailure:
 
         with pytest.raises(RuntimeError, match="LLM timeout"):
             execute_slate_job(request_dict=request, deps=deps)
+
+
+class TestPendingDataStatus:
+    """Baseball lineup-pending games should be marked as pending_data, not failed."""
+
+    def test_lineup_pending_error_produces_pending_data_status(self) -> None:
+        from baseball_module import BaseballDataQualityError
+
+        def discover(*, date_utc, sports, limit_per_sport):
+            return _discovery_response(["baseball"], matches_per_sport=1)
+
+        def run_pipeline(*, sport, home_team, away_team, event_date, markets):
+            raise BaseballDataQualityError(
+                "Lineups not posted yet — retry closer to game time.",
+                reason="hitter_inputs_unavailable",
+            )
+
+        deps = SlateOrchestrationDeps(
+            discover_matches=discover,
+            run_match_pipeline=run_pipeline,
+        )
+        request = {"date": "2026-06-01", "sports": ["baseball"], "top_n": 5}
+
+        result = execute_slate_job(request_dict=request, deps=deps)
+        runs = result.match_runs
+        assert len(runs) == 1
+        assert runs[0]["status"] == "pending_data"
+        assert "lineup" in runs[0]["error_message"].lower() or "retry" in runs[0]["error_message"].lower()
+
+    def test_generic_error_still_produces_failed_status(self) -> None:
+        deps = _make_deps(
+            pipeline_error_teams={"Yankees"},
+            discovery_response=_discovery_response(["baseball"], matches_per_sport=1),
+        )
+        request = {"date": "2026-06-01", "sports": ["baseball"], "top_n": 5}
+
+        result = execute_slate_job(request_dict=request, deps=deps)
+        runs = result.match_runs
+        assert len(runs) == 1
+        assert runs[0]["status"] == "failed"

@@ -696,9 +696,9 @@ def _missing_batter_message(match_inputs: dict[str, Any]) -> str:
     summary = _score_rejection_context(match_inputs)
     if summary.get("source") == "mlb_statsapi" and summary.get("game_found"):
         return (
-            "Could not find enough match details: MLB StatsAPI found the game, but hitter "
-            "markets require official batting order data and prop lines; those inputs are "
-            "unavailable for this game right now."
+            "Lineups not posted yet: MLB StatsAPI found the game, but hitter "
+            "markets require official batting order data and prop lines. "
+            "Retry closer to game time — lineups typically post 2-4 hours before first pitch."
         )
     return "Could not find enough match details: hitter markets require batter data."
 
