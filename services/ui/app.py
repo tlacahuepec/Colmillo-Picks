@@ -256,7 +256,7 @@ def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any]) -> 
     try:
         with st.spinner("Running pick pipeline..."):
             final = client.wait_for_pick(
-                pick_id, timeout_seconds=180.0, poll_interval_seconds=1.5
+                pick_id, timeout_seconds=300.0, poll_interval_seconds=2.0
             )
     except APIError as exc:
         _render_pipeline_error(exc)

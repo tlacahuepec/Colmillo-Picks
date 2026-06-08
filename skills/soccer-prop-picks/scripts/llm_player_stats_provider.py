@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
 from typing import Any
 
 from llm.client import LLMClient
+
+logger = logging.getLogger("colmillo.basketball")
 
 
 def _utc_now_z() -> str:
@@ -42,8 +45,38 @@ class LLMPlayerStatsProvider:
                     f"[player-stats-llm-debug] response: {json.dumps(result, default=str)[:2000]}",
                     file=sys.stderr,
                 )
-            return self._map_response(result)
+            mapped = self._map_response(result)
+            if mapped is None:
+                logger.warning(
+                    "basketball_player_stats_empty_response",
+                    extra={
+                        "home_team": home_team,
+                        "away_team": away_team,
+                        "match_date": match_date,
+                        "raw_keys": list(result.keys()) if isinstance(result, dict) else str(type(result)),
+                    },
+                )
+            else:
+                logger.info(
+                    "basketball_player_stats_fetched",
+                    extra={
+                        "home_team": home_team,
+                        "away_team": away_team,
+                        "player_count": len(mapped),
+                    },
+                )
+            return mapped
         except Exception as exc:
+            logger.warning(
+                "basketball_player_stats_llm_error",
+                extra={
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "match_date": match_date,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:500],
+                },
+            )
             if debug:
                 print(
                     f"[player-stats-llm-debug] error: {type(exc).__name__}: {exc}",
