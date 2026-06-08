@@ -123,8 +123,9 @@ def build_match_discovery_user_prompt(
                 "Prefer matches with clear kickoff time and competition context",
             ],
             "basketball": [
-                "NBA, EuroLeague, or NCAAB games with playoff, rivalry, rest, injury, or standings significance",
-                "Prefer games with clear home and away teams and scheduled tip time",
+                "ONLY NBA, WNBA, or FIBA/Olympic international cup games",
+                "Do NOT include EuroLeague, NCAAB, or any domestic league outside the US (no Greek League, Israeli League, Turkish League, etc.)",
+                "Prefer games with playoff, rivalry, or standings significance and a clear scheduled tip time",
             ],
             "baseball": [
                 "MLB games with notable pitchers, rivalry context, playoff relevance, or strong market interest",
