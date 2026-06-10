@@ -84,6 +84,7 @@ def merge_with_scores_node(state: dict[str, Any]) -> dict[str, Any]:
     result = merge_explanations(
         scored_payload=state["scored_payload"],
         explanations=state.get("explanations", []),
+        grounding=state.get("grounding_metadata"),
     )
     return {"result": result, "transitions": transitions}
 
