@@ -48,6 +48,7 @@ class TestEnrichmentStateTypedDict:
             "top_n",
             "transitions",
             "error",
+            "result",
         }
         assert set(hints.keys()) == expected_fields
 
