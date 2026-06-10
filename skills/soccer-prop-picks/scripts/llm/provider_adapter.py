@@ -96,6 +96,19 @@ def build_enrich_with_llm(
 
     chat_model = _as_chat_model(client)
 
+    if _read_langgraph_toggle(getenv):
+        from llm.langgraph_enrichment import run_enrichment_graph
+
+        def enrich_with_llm(*, scored_payload: dict, match_inputs: dict) -> dict:
+            return run_enrichment_graph(
+                scored_payload=scored_payload,
+                match_inputs=match_inputs,
+                top_n=5,
+                client=client,
+            )
+
+        return enrich_with_llm
+
     if use_langgraph:
         flow = SimpleLangGraphFlow(
             prompt_builder=default_prompt_builder,
