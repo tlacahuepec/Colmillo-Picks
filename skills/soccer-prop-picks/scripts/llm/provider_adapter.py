@@ -16,6 +16,11 @@ _DEFAULT_GROK_MODEL = "grok-3"
 _DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1"
 
 
+def _read_langgraph_toggle(getenv: Callable[[str], str | None]) -> bool:
+    value = getenv("COLMILLO_USE_LANGGRAPH") or ""
+    return value.strip().lower() in ("true", "1")
+
+
 def _as_chat_model(client: object) -> Callable[[dict[str, str]], dict]:
     def chat_model(prompt: dict[str, str]) -> dict:
         return client.generate_structured(system_prompt=prompt["system"], user_prompt=prompt["user"], schema={})
