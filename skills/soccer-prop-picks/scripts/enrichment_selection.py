@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from typing import Any
+
+from llm.client import GroundingMetadataResult
 
 _CONFIDENCE_SCORES: dict[str, float] = {
     "high": 1.0,
@@ -21,6 +23,7 @@ class EnrichmentCandidate:
     temperature: float | None
     result: dict[str, Any]
     sources: list[Any]
+    grounding_metadata: GroundingMetadataResult | None = dataclass_field(default=None)
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,12 @@ def _avg_confidence(candidate: EnrichmentCandidate) -> float:
     return sum(scores) / len(scores)
 
 
+def _grounding_source_count(candidate: EnrichmentCandidate) -> int:
+    if candidate.grounding_metadata is None:
+        return 0
+    return len(candidate.grounding_metadata.sources)
+
+
 def select_best_enrichment(
     candidates: list[EnrichmentCandidate],
     *,
@@ -108,17 +117,18 @@ def select_best_enrichment(
     requested_markets: tuple[str, ...] = (),
     use_quality_tiebreaker: bool = False,
 ) -> tuple[EnrichmentCandidate, SelectionDecision]:
-    scored: list[tuple[int, int, float, int, EnrichmentCandidate]] = []
+    scored: list[tuple[int, int, float, int, int, EnrichmentCandidate]] = []
     for candidate in candidates:
         populated, nulls = _count_populated_and_nulls(
             candidate, required_fields=required_fields, requested_markets=requested_markets
         )
         confidence = _avg_confidence(candidate)
-        scored.append((populated, nulls, confidence, candidate.attempt, candidate))
+        grounding_count = _grounding_source_count(candidate)
+        scored.append((populated, nulls, confidence, grounding_count, candidate.attempt, candidate))
 
-    scored.sort(key=lambda t: (-t[0], t[1], -t[2], t[3]))
+    scored.sort(key=lambda t: (-t[0], t[1], -t[2], -t[3], t[4]))
     best = scored[0]
-    populated, nulls, confidence, attempt, winner = best
+    populated, nulls, confidence, grounding_count, attempt, winner = best
 
     reason = "only_candidate"
     if len(scored) > 1:
@@ -129,6 +139,8 @@ def select_best_enrichment(
             reason = "fewest_critical_nulls"
         elif confidence > second[2]:
             reason = "highest_confidence"
+        elif grounding_count > second[3]:
+            reason = "most_grounding_sources"
         elif use_quality_tiebreaker and required_fields:
             winner, reason = _apply_quality_tiebreaker(scored, required_fields)
             populated, nulls, confidence = _stats_for(winner, scored)
@@ -149,23 +161,23 @@ def select_best_enrichment(
 
 def _stats_for(
     winner: EnrichmentCandidate,
-    scored: list[tuple[int, int, float, int, EnrichmentCandidate]],
+    scored: list[tuple[int, int, float, int, int, EnrichmentCandidate]],
 ) -> tuple[int, int, float]:
-    for populated, nulls, confidence, _, candidate in scored:
+    for populated, nulls, confidence, _, _, candidate in scored:
         if candidate is winner:
             return populated, nulls, confidence
     return 0, 0, 0.0
 
 
 def _apply_quality_tiebreaker(
-    scored: list[tuple[int, int, float, int, EnrichmentCandidate]],
+    scored: list[tuple[int, int, float, int, int, EnrichmentCandidate]],
     required_fields: dict[str, tuple[str, ...]],
 ) -> tuple[EnrichmentCandidate, str]:
     from grounding_quality_metrics import score_enrichment_result
 
     best_score = -1.0
-    best_candidate = scored[0][4]
-    for _, _, _, _, candidate in scored:
+    best_candidate = scored[0][5]
+    for _, _, _, _, _, candidate in scored:
         report = score_enrichment_result(candidate.result, required_fields)
         quality = report.field_fill_rate + report.source_url_presence_rate + report.freshness_compliance
         if quality > best_score:
