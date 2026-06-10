@@ -237,7 +237,7 @@ def _clear_availability_cache() -> None:
             del st.session_state[key]
 
 
-def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any]) -> None:
+def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any], *, wait: bool = True) -> None:
     _clear_availability_cache()
 
     with st.spinner("Submitting pick request..."):
@@ -251,12 +251,21 @@ def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any]) -> 
             return
 
     pick_id = accepted.get("id", "")
+
+    if not wait:
+        st.success(
+            f"Pick `{pick_id}` submitted. Pipeline is running in the background — "
+            f"check **Pick History** when ready.",
+            icon="\U0001f680",
+        )
+        return
+
     st.info(f"Pick `{pick_id}` accepted. Waiting for pipeline to finish...", icon="\u23f3")
     progress_box = st.empty()
     try:
         with st.spinner("Running pick pipeline..."):
             final = client.wait_for_pick(
-                pick_id, timeout_seconds=180.0, poll_interval_seconds=1.5
+                pick_id, timeout_seconds=300.0, poll_interval_seconds=2.0
             )
     except APIError as exc:
         _render_pipeline_error(exc)
@@ -374,7 +383,7 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
             key="discover_limit",
         )
 
-    run_col_n, run_col_explain, run_col_fallback = st.columns(3)
+    run_col_n, run_col_explain, run_col_fallback, run_col_async = st.columns(4)
     with run_col_n:
         suggestion_top_n = st.slider(
             "Suggestion top N",
@@ -394,6 +403,12 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
             "Suggestion fallback",
             value=False,
             key="suggestion_fallback",
+        )
+    with run_col_async:
+        suggestion_fire_forget = st.checkbox(
+            "Fire & forget",
+            value=False,
+            key="suggestion_fire_forget",
         )
 
     if st.button("Find today's matches", key="find_todays_matches"):
@@ -447,7 +462,7 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
         except ValueError as exc:
             st.error(str(exc), icon="\u26a0\ufe0f")
             return True
-        _submit_pick_and_render(client, payload)
+        _submit_pick_and_render(client, payload, wait=not suggestion_fire_forget)
         return True
 
     return False
@@ -509,7 +524,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
                     key="gen_markets",
                 )
 
-        col_n, col_explain, col_fallback = st.columns(3)
+        col_n, col_explain, col_fallback, col_async = st.columns(4)
         with col_n:
             top_n = st.slider("Top N picks", min_value=1, max_value=10, value=10, key="gen_top_n")
         with col_explain:
@@ -521,6 +536,11 @@ def render_generate_page(client: PicksAPIClient) -> None:
             allow_fallback = st.checkbox(
                 "Allow fallback", value=False, help="Return deterministic picks if pipeline fails",
                 key="gen_fallback",
+            )
+        with col_async:
+            fire_and_forget = st.checkbox(
+                "Fire & forget", value=False, help="Submit and check results later in Pick History",
+                key="gen_fire_forget",
             )
 
         submitted = st.form_submit_button("Generate", type="primary")
@@ -540,7 +560,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
             markets=selected_markets or None,
             league=selected_league,
         )
-        _submit_pick_and_render(client, payload)
+        _submit_pick_and_render(client, payload, wait=not fire_and_forget)
         return
     except ValueError as exc:
         st.error(str(exc), icon="⚠️")

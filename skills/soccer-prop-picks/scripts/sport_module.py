@@ -146,7 +146,7 @@ def _build_basketball_module():
                 api_key=config.api_key,
                 model=model,
                 search_grounding=True,
-                max_output_tokens=4000,
+                max_output_tokens=4096,
                 max_retries=1,
                 retry_delay_seconds=2.0,
             )

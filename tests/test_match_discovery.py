@@ -304,6 +304,56 @@ class TestPastMatchFiltering:
         assert _is_match_upcoming(match) is True
 
 
+class TestBasketballDiscoveryCriteria:
+    """Basketball discovery should only include NBA, WNBA, and international cups."""
+
+    def test_basketball_criteria_includes_nba_and_wnba(self) -> None:
+        raw = build_match_discovery_user_prompt(
+            date_utc="2026-06-08",
+            sports=["basketball"],
+            limit_per_sport=3,
+        )
+        parsed = json.loads(raw)
+        criteria = parsed["selection_criteria_by_sport"]["basketball"]
+        criteria_text = " ".join(criteria).lower()
+        assert "nba" in criteria_text
+        assert "wnba" in criteria_text
+
+    def test_basketball_criteria_includes_international_cups(self) -> None:
+        raw = build_match_discovery_user_prompt(
+            date_utc="2026-06-08",
+            sports=["basketball"],
+            limit_per_sport=3,
+        )
+        parsed = json.loads(raw)
+        criteria = parsed["selection_criteria_by_sport"]["basketball"]
+        criteria_text = " ".join(criteria).lower()
+        assert "olympic" in criteria_text or "fiba" in criteria_text
+
+    def test_basketball_criteria_excludes_minor_leagues(self) -> None:
+        raw = build_match_discovery_user_prompt(
+            date_utc="2026-06-08",
+            sports=["basketball"],
+            limit_per_sport=3,
+        )
+        parsed = json.loads(raw)
+        criteria = parsed["selection_criteria_by_sport"]["basketball"]
+        first_criterion = criteria[0].lower()
+        assert "euroleague" not in first_criterion
+        assert "ncaab" not in first_criterion
+
+    def test_basketball_criteria_has_exclusion_rule(self) -> None:
+        raw = build_match_discovery_user_prompt(
+            date_utc="2026-06-08",
+            sports=["basketball"],
+            limit_per_sport=3,
+        )
+        parsed = json.loads(raw)
+        criteria = parsed["selection_criteria_by_sport"]["basketball"]
+        criteria_text = " ".join(criteria).lower()
+        assert "exclude" in criteria_text or "do not include" in criteria_text
+
+
 class TestMatchDiscoveryClientConfig:
     """Tests for MatchDiscoveryClient.from_env configuration."""
 

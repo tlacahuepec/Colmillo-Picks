@@ -204,3 +204,131 @@ class TestPipelineRunnerErrors:
         assert exc_info.value.stage == "score"
         assert exc_info.value.error_details is not None
         assert exc_info.value.error_details["reason"] == "hitter_inputs_unavailable"
+
+
+class TestPickDiversityConstraints:
+    """Picks should be capped at 3 per player and ensure both teams represented."""
+
+    def _make_scores(self, players_and_teams: list[tuple[str, str]], *, base_score: float = 0.9) -> list[dict[str, Any]]:
+        scores = []
+        for i, (player, team) in enumerate(players_and_teams):
+            scores.append({
+                "player": player,
+                "team": team,
+                "market": f"market_{i}",
+                "score": base_score - i * 0.01,
+                "line": 10.5,
+                "direction": "over",
+                "confidence": "high",
+                "explainability": {"risk_flags": []},
+            })
+        return scores
+
+    def test_max_3_picks_per_player(self) -> None:
+        """No player should appear more than 3 times in the final picks."""
+
+        class DominantPlayerModule(FakeSportModule):
+            @property
+            def sport_id(self) -> str:
+                return "basketball"
+
+            def collect_inputs(self, **kwargs: Any) -> dict[str, Any]:
+                return {"home_team": "NYK", "away_team": "SAS", "match_date": "2026-06-08", "players": [], "lines": {}, "game": {}}
+
+            def score(self, match_inputs: dict[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
+                scores = []
+                for i in range(6):
+                    scores.append({"player": "Wembanyama", "team": "SAS", "market": f"m{i}", "score": 0.95 - i * 0.01, "line": 10.5, "direction": "over", "confidence": "high", "explainability": {"risk_flags": []}})
+                for i in range(4):
+                    scores.append({"player": "Brunson", "team": "NYK", "market": f"m{i}", "score": 0.80 - i * 0.01, "line": 8.5, "direction": "over", "confidence": "medium", "explainability": {"risk_flags": []}})
+                return scores
+
+        module = DominantPlayerModule()
+        request = PickRequest(
+            sport="basketball",
+            event_date="2026-06-08",
+            home_team="NYK",
+            away_team="SAS",
+            markets=("points", "rebounds", "assists"),
+            top_n=10,
+        )
+        runner = PipelineRunner()
+        result = runner.run(request=request, module=module)
+
+        from collections import Counter
+        player_counts = Counter(s["player"] for s in result.scores)
+        for player, count in player_counts.items():
+            assert count <= 3, f"{player} has {count} picks, max is 3"
+
+    def test_both_teams_represented_min_3(self) -> None:
+        """At least 3 of the top picks should come from each team."""
+
+        class HomeHeavyModule(FakeSportModule):
+            @property
+            def sport_id(self) -> str:
+                return "basketball"
+
+            def collect_inputs(self, **kwargs: Any) -> dict[str, Any]:
+                return {"home_team": "NYK", "away_team": "SAS", "match_date": "2026-06-08", "players": [], "lines": {}, "game": {}}
+
+            def score(self, match_inputs: dict[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
+                scores = []
+                home_players = ["Brunson", "Hart", "Bridges", "Towns"]
+                away_players = ["Wembanyama", "Vassell", "Johnson", "Barnes"]
+                for i, p in enumerate(home_players):
+                    for j in range(3):
+                        scores.append({"player": p, "team": "NYK", "market": f"m{j}", "score": 0.95 - i * 0.05 - j * 0.01, "line": 10.5, "direction": "over", "confidence": "high", "explainability": {"risk_flags": []}})
+                for i, p in enumerate(away_players):
+                    for j in range(3):
+                        scores.append({"player": p, "team": "SAS", "market": f"m{j}", "score": 0.60 - i * 0.05 - j * 0.01, "line": 8.5, "direction": "over", "confidence": "medium", "explainability": {"risk_flags": []}})
+                return scores
+
+        module = HomeHeavyModule()
+        request = PickRequest(
+            sport="basketball",
+            event_date="2026-06-08",
+            home_team="NYK",
+            away_team="SAS",
+            markets=("points", "rebounds", "assists"),
+            top_n=10,
+        )
+        runner = PipelineRunner()
+        result = runner.run(request=request, module=module)
+
+        home_picks = [s for s in result.scores if s.get("team") == "NYK"]
+        away_picks = [s for s in result.scores if s.get("team") == "SAS"]
+        assert len(home_picks) >= 3, f"Home team only has {len(home_picks)} picks, need at least 3"
+        assert len(away_picks) >= 3, f"Away team only has {len(away_picks)} picks, need at least 3"
+
+    def test_diversity_does_not_apply_to_soccer(self) -> None:
+        """Soccer picks should not be constrained by basketball diversity rules."""
+
+        class SoccerDominantModule(FakeSportModule):
+            @property
+            def sport_id(self) -> str:
+                return "soccer"
+
+            def collect_inputs(self, **kwargs: Any) -> dict[str, Any]:
+                return {"home_team": "Arsenal", "away_team": "Liverpool", "match_date": "2026-06-01", "players": [], "lines": {}, "game": {}}
+
+            def score(self, match_inputs: dict[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
+                scores = []
+                for i in range(5):
+                    scores.append({"player": "Saka", "team": "ARS", "market": f"m{i}", "score": 0.95 - i * 0.01, "line": 2.5, "direction": "over", "confidence": "high", "explainability": {"risk_flags": []}})
+                return scores
+
+        module = SoccerDominantModule()
+        request = PickRequest(
+            sport="soccer",
+            event_date="2026-06-01",
+            home_team="Arsenal",
+            away_team="Liverpool",
+            markets=("passes", "shots"),
+            top_n=5,
+        )
+        runner = PipelineRunner()
+        result = runner.run(request=request, module=module)
+
+        from collections import Counter
+        player_counts = Counter(s["player"] for s in result.scores)
+        assert player_counts["Saka"] == 5

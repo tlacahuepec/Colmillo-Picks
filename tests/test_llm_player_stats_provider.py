@@ -347,12 +347,12 @@ class TestPromptRosterRules:
         rules_text = " ".join(prompt_data["rules"]).lower()
         assert "traded" in rules_text or "waived" in rules_text or "released" in rules_text
 
-    def test_prompt_requests_8_players_per_team(self) -> None:
+    def test_prompt_requests_4_players_per_team(self) -> None:
         module = load_script_module("llm_player_stats_provider.py")
         prompt = module.LLMPlayerStatsProvider._build_user_prompt(
             home_team="Knicks", away_team="Spurs", match_date="2026-06-08",
         )
         prompt_data = json.loads(prompt)
         rules_text = " ".join(prompt_data["rules"])
-        assert "8 from the home team" in rules_text
-        assert "8 from the away team" in rules_text
+        assert "4 from the home team" in rules_text
+        assert "4 from the away team" in rules_text

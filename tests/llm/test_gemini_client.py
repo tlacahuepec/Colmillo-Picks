@@ -588,6 +588,179 @@ def test_gemini_client_extracts_sources_from_search_entry_point_fallback() -> No
     assert client.last_sources[1].url == "https://www.transfermarkt.com/bayern"
 
 
+class TestMultiPartResponse:
+    """Gemini with grounding sometimes returns multiple text parts."""
+
+    def test_multipart_with_citations_in_second_part(self) -> None:
+        """When Gemini returns two text parts (clean + cited), parse the clean one."""
+        clean_json = '{"date_utc": "2026-06-08", "matches": [{"home_team": "NYK", "away_team": "SAS"}]}'
+        cited_json = '{"date_utc": "2026-06-08", "matches": [{"home_team": "NYK", "away_team": "SAS", "notes": "Game 2 [cite: 1, 2, 3]"}]}'
+
+        class _FakePart:
+            def __init__(self, text):
+                self.text = text
+
+        class _MultiPartResponse:
+            def __init__(self):
+                self.candidates = [
+                    type("C", (), {
+                        "content": type("Content", (), {
+                            "parts": [
+                                _FakePart(f"```json\n{clean_json}\n```"),
+                                _FakePart(f"```json\n{cited_json}\n```"),
+                            ]
+                        })(),
+                        "grounding_metadata": None,
+                    })()
+                ]
+
+            @property
+            def text(self):
+                raise ValueError("Multiple parts")
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _MultiPartResponse()
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+            search_grounding=True,
+        )
+        result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert result == {"date_utc": "2026-06-08", "matches": [{"home_team": "NYK", "away_team": "SAS"}]}
+
+    def test_multipart_concatenated_text_prefers_first_valid_json(self) -> None:
+        """When response.text concatenates parts, first fence block wins."""
+        clean_json = '{"ok": true, "sport": "baseball"}'
+        cited_json = '{"ok": true, "sport": "baseball [cite: 1]"}'
+
+        class _ConcatResponse:
+            def __init__(self):
+                self.text = f"```json\n{clean_json}\n```\n```json\n{cited_json}\n```"
+                self.candidates = []
+
+            @property
+            def usage_metadata(self):
+                return None
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _ConcatResponse()
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+            search_grounding=True,
+        )
+        result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert result == {"ok": True, "sport": "baseball"}
+
+    def test_multipart_falls_through_all_parts_to_find_valid_json(self) -> None:
+        """When first part is not valid JSON, try subsequent parts."""
+
+        class _FakePart:
+            def __init__(self, text):
+                self.text = text
+
+        class _MultiPartResponse:
+            def __init__(self):
+                self.candidates = [
+                    type("C", (), {
+                        "content": type("Content", (), {
+                            "parts": [
+                                _FakePart("I found the following information:"),
+                                _FakePart('```json\n{"valid": true}\n```'),
+                            ]
+                        })(),
+                        "grounding_metadata": None,
+                    })()
+                ]
+
+            @property
+            def text(self):
+                raise ValueError("Multiple parts")
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _MultiPartResponse()
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+            search_grounding=True,
+        )
+        result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert result == {"valid": True}
+
+    def test_citation_annotations_inside_string_preserved(self) -> None:
+        """[cite: N, N, N] inside a valid JSON string value doesn't break parsing."""
+        text_with_cites = '{"notes": "Important game [cite: 1, 2, 3]", "ok": true}'
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _FakeResponse(text_with_cites)
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+            search_grounding=True,
+        )
+        result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert result["ok"] is True
+        assert "Important game" in result["notes"]
+
+    def test_bare_numeric_citation_stripped_from_json(self) -> None:
+        """Bare [N, N, N] citations injected by SDK are stripped on parse failure."""
+        text_with_bare_cites = '{"notes": "Yankees lost Judge" [1, 2, 3, 4], "sources": [{"label": "CBS"}]}'
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _FakeResponse(text_with_bare_cites)
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+            search_grounding=True,
+        )
+        result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert result == {"notes": "Yankees lost Judge", "sources": [{"label": "CBS"}]}
+
+    def test_bare_citation_does_not_corrupt_json_arrays(self) -> None:
+        """Valid JSON arrays like [1, 2, 3] in values should NOT be stripped."""
+        valid_json = '{"ids": [1, 2, 3], "name": "test"}'
+
+        class _Client:
+            def __init__(self, *, api_key):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                return _FakeResponse(valid_json)
+
+        client = GeminiLLMClient(
+            api_key="test-key",
+            client_factory=_Client,
+            search_grounding=True,
+        )
+        result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+        assert result == {"ids": [1, 2, 3], "name": "test"}
+
+
 class TestJsonRepair:
     def test_repairs_trailing_comma_in_object(self) -> None:
         from llm.gemini_client import _repair_json
