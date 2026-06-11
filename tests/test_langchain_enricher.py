@@ -55,3 +55,48 @@ def test_enrich_with_chain_keeps_original_scores_when_no_explanations_match() ->
 
     assert result["scores"][0]["player_name"] == "A"
     assert "llm_rationale" not in result["scores"][0]
+
+
+def test_merge_explanations_with_grounding_adds_trace_keys() -> None:
+    from llm.client import GroundingMetadataResult, GroundingSource, GroundingSupport
+
+    module = load_script_module("llm/langchain_enricher.py")
+
+    grounding = GroundingMetadataResult(
+        sources=(
+            GroundingSource(url="https://stats.com/page", title="Stats Page"),
+            GroundingSource(url="https://news.com/article", title="News"),
+        ),
+        supports=(
+            GroundingSupport(start_index=0, end_index=10, text="sample", source_indices=(0,)),
+        ),
+        web_search_queries=("player stats 2026", "NBA points leader"),
+    )
+
+    payload = {"scores": [{"player_id": "p1"}], "trace": {"notes": []}}
+    result = module.merge_explanations(
+        scored_payload=payload,
+        explanations=[{"player_id": "p1", "rationale": "Good form"}],
+        grounding=grounding,
+    )
+
+    assert result["trace"]["grounding_sources"] == [
+        {"url": "https://stats.com/page", "title": "Stats Page"},
+        {"url": "https://news.com/article", "title": "News"},
+    ]
+    assert result["trace"]["web_search_queries"] == ["player stats 2026", "NBA points leader"]
+    assert result["trace"]["grounding_supports_count"] == 1
+
+
+def test_merge_explanations_without_grounding_unchanged() -> None:
+    module = load_script_module("llm/langchain_enricher.py")
+
+    payload = {"scores": [{"player_id": "p1"}], "trace": {"notes": []}}
+    result = module.merge_explanations(
+        scored_payload=payload,
+        explanations=[{"player_id": "p1", "rationale": "Good form"}],
+    )
+
+    assert "grounding_sources" not in result["trace"]
+    assert "web_search_queries" not in result["trace"]
+    assert "grounding_supports_count" not in result["trace"]

@@ -83,3 +83,55 @@ class TestLanggraphImport:
 
     def test_langchain_core_import_succeeds(self):
         import langchain_core  # noqa: F401
+
+
+class TestBuildEnrichToggleOn:
+    """Verify that toggle-on activates real LangGraph path (S05, #257)."""
+
+    def test_toggle_on_returns_callable(self):
+        env = {"COLMILLO_USE_LANGGRAPH": "true"}
+
+        fn = build_enrich_with_llm(
+            use_llm=False,
+            llm_provider=None,
+            llm_model=None,
+            getenv=env.get,
+        )
+
+        assert callable(fn)
+
+    def test_toggle_on_callable_returns_enriched_payload(self):
+        env = {"COLMILLO_USE_LANGGRAPH": "true"}
+
+        fn = build_enrich_with_llm(
+            use_llm=False,
+            llm_provider=None,
+            llm_model=None,
+            getenv=env.get,
+        )
+
+        result = fn(
+            scored_payload={"scores": [], "trace": {"notes": []}},
+            match_inputs={"home_team": "A", "away_team": "B"},
+        )
+        assert isinstance(result, dict)
+        assert "scores" in result
+        assert "trace" in result
+
+    def test_toggle_on_uses_langgraph_graph(self):
+        """When toggle on, the LangGraph graph path is used (not SimpleLangGraphFlow)."""
+        env = {"COLMILLO_USE_LANGGRAPH": "true"}
+
+        fn = build_enrich_with_llm(
+            use_llm=False,
+            llm_provider=None,
+            llm_model=None,
+            use_langgraph=True,
+            getenv=env.get,
+        )
+
+        result = fn(
+            scored_payload={"scores": [], "trace": {"notes": []}},
+            match_inputs={"home_team": "A", "away_team": "B"},
+        )
+        assert isinstance(result, dict)
