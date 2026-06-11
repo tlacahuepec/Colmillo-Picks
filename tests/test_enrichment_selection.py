@@ -216,3 +216,102 @@ class TestQualityTiebreaker:
         )
         assert winner.attempt == 2
         assert decision.reason == "highest_populated_fields"
+
+
+class TestGroundingTiebreaker:
+    """Tests for grounding-quality tie-breaker in best-of-N selection (S07, #259)."""
+
+    def test_grounding_count_breaks_confidence_tie(self) -> None:
+        from llm.client import GroundingMetadataResult, GroundingSource
+
+        grounding_rich = GroundingMetadataResult(
+            sources=(
+                GroundingSource(url="https://a.com", title="A"),
+                GroundingSource(url="https://b.com", title="B"),
+                GroundingSource(url="https://c.com", title="C"),
+            ),
+            supports=(),
+            web_search_queries=(),
+        )
+        grounding_sparse = GroundingMetadataResult(
+            sources=(GroundingSource(url="https://x.com", title="X"),),
+            supports=(),
+            web_search_queries=(),
+        )
+
+        c1 = EnrichmentCandidate(
+            attempt=1,
+            temperature=None,
+            result={"players": [{"name": "P", "points_avg": 20.0}], "confidence": "high"},
+            sources=[],
+            grounding_metadata=grounding_sparse,
+        )
+        c2 = EnrichmentCandidate(
+            attempt=2,
+            temperature=0.7,
+            result={"players": [{"name": "P", "points_avg": 21.0}], "confidence": "high"},
+            sources=[],
+            grounding_metadata=grounding_rich,
+        )
+
+        winner, decision = select_best_enrichment([c1, c2])
+
+        assert winner.attempt == 2
+        assert decision.reason == "most_grounding_sources"
+
+    def test_grounding_metadata_none_defaults_to_zero(self) -> None:
+        c1 = EnrichmentCandidate(
+            attempt=1,
+            temperature=None,
+            result={"players": [{"name": "P", "points_avg": 20.0}], "confidence": "high"},
+            sources=[],
+        )
+        c2 = EnrichmentCandidate(
+            attempt=2,
+            temperature=0.7,
+            result={"players": [{"name": "P", "points_avg": 21.0}], "confidence": "high"},
+            sources=[],
+        )
+
+        winner, decision = select_best_enrichment([c1, c2])
+
+        assert winner.attempt == 1
+        assert decision.reason == "first_attempt_preferred"
+
+    def test_backward_compat_no_grounding_field(self) -> None:
+        c1 = _make_candidate(1, players=[_player_with_fields(minutes_proj=30.0)])
+        c2 = _make_candidate(2, players=[_player_with_fields(minutes_proj=30.0, usage_rate=0.25)])
+
+        winner, decision = select_best_enrichment([c1, c2])
+
+        assert winner.attempt == 2
+        assert decision.reason == "highest_populated_fields"
+
+    def test_reason_most_grounding_sources_assigned(self) -> None:
+        from llm.client import GroundingMetadataResult, GroundingSource
+
+        grounding = GroundingMetadataResult(
+            sources=(GroundingSource(url="https://a.com", title="A"),),
+            supports=(),
+            web_search_queries=(),
+        )
+
+        c1 = EnrichmentCandidate(
+            attempt=1,
+            temperature=None,
+            result={"players": [{"name": "P", "stat": 10}], "confidence": "medium"},
+            sources=[],
+            grounding_metadata=None,
+        )
+        c2 = EnrichmentCandidate(
+            attempt=2,
+            temperature=0.7,
+            result={"players": [{"name": "P", "stat": 10}], "confidence": "medium"},
+            sources=[],
+            grounding_metadata=grounding,
+        )
+
+        winner, decision = select_best_enrichment([c1, c2])
+
+        assert winner.attempt == 2
+        assert decision.reason == "most_grounding_sources"
