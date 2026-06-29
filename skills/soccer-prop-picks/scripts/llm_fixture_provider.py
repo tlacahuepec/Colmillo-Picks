@@ -65,6 +65,15 @@ def _clean_string(value: Any, fallback: str) -> str:
     return cleaned or fallback
 
 
+def _safe_int(value: Any, fallback: int) -> int:
+    if value is None:
+        return fallback
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _normalize_name(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalpha())
 
@@ -451,9 +460,9 @@ class LLMFixtureProvider:
             standings = side_data.get("standings_context")
             if isinstance(standings, dict):
                 mapped["teams"][side]["standings_context"] = {
-                    "table_position": int(standings.get("table_position", 10)),
-                    "points": int(standings.get("points", 40)),
-                    "games_played": int(standings.get("games_played", 30)),
+                    "table_position": _safe_int(standings.get("table_position"), 10),
+                    "points": _safe_int(standings.get("points"), 40),
+                    "games_played": _safe_int(standings.get("games_played"), 30),
                     "motivation_tag": _clean_string(standings.get("motivation_tag"), "midtable"),
                 }
             last_5 = side_data.get("last_5_results")
