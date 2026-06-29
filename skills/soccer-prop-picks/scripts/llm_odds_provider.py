@@ -66,11 +66,13 @@ class LLMOddsProvider:
             "Return a JSON object with this exact shape:\n"
             '{"sportsbook_snapshots": [{"source": "sportsbook name", "odds_decimal": 1.85}]}\n\n'
             "Rules:\n"
-            "- Include odds from at least 5 sportsbooks (bet365, DraftKings, FanDuel, BetMGM, Pinnacle, etc.)\n"
+            "- Include odds from as many major sportsbooks as are offering this fixture (at least 1). "
+            "Check sportsbook sites (bet365, DraftKings, FanDuel, BetMGM, Pinnacle, Unibet, William Hill) "
+            "and aggregators (oddsportal.com, oddschecker.com) that publish soccer odds for both club "
+            "and international matches.\n"
             "- Use decimal format (European odds), not American or fractional\n"
             "- Return the home team win (1X2 market, home win) odds from each sportsbook\n"
             "- Use real current pre-match odds\n"
-            "- If odds are not yet available, return: {\"sportsbook_snapshots\": []}\n"
             "- Return JSON only, no explanation"
         )
 

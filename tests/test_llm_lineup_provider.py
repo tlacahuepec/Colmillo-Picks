@@ -216,6 +216,177 @@ def test_llm_lineup_provider_maps_players_with_required_fields() -> None:
     assert "shots" in kimmich["market_lines"]
 
 
+def _international_fixture():
+    return {
+        "match_id": "BRAJPN-2026-06-29",
+        "competition": "International Friendly",
+        "competition_type": "cup",
+        "kickoff_utc": "2026-06-29T20:00:00Z",
+        "teams": {
+            "home": {"team_id": "BRA", "team_name": "Brazil"},
+            "away": {"team_id": "JPN", "team_name": "Japan"},
+        },
+        "venue": {"name": "Maracana", "city": "Rio de Janeiro", "country": "Brazil"},
+    }
+
+
+def _international_llm_response():
+    return {
+        "teams": {
+            "home": {
+                "formation": "4-3-3",
+                "starters": [
+                    "Alisson", "Danilo", "Marquinhos",
+                    "Gabriel Magalhaes", "Wendell", "Casemiro",
+                    "Bruno Guimaraes", "Lucas Paqueta", "Vinicius Junior",
+                    "Rodrygo", "Endrick",
+                ],
+                "injuries": ["Neymar"],
+                "suspensions": [],
+            },
+            "away": {
+                "formation": "4-2-3-1",
+                "starters": [
+                    "Zion Suzuki", "Hiroki Sakai", "Ko Itakura",
+                    "Shogo Taniguchi", "Yukinari Sugawara", "Wataru Endo",
+                    "Hidemasa Morita", "Daichi Kamada", "Takefusa Kubo",
+                    "Kaoru Mitoma", "Ayase Ueda",
+                ],
+                "injuries": [],
+                "suspensions": [],
+            },
+        },
+        "players": [
+            {
+                "player_name": "Vinicius Junior",
+                "team": "home",
+                "role_tag": "LW",
+                "expected_minutes": 85,
+                "substitution_risk": "low",
+                "captain": False,
+                "is_lone_striker": False,
+                "expected_passes_per_game": 38.4,
+                "expected_shots_per_game": 4.6,
+            },
+            {
+                "player_name": "Casemiro",
+                "team": "home",
+                "role_tag": "CDM",
+                "expected_minutes": 90,
+                "substitution_risk": "low",
+                "captain": True,
+                "is_lone_striker": False,
+                "expected_passes_per_game": 64.2,
+                "expected_shots_per_game": 0.8,
+            },
+            {
+                "player_name": "Marquinhos",
+                "team": "home",
+                "role_tag": "CB",
+                "expected_minutes": 90,
+                "substitution_risk": "low",
+                "captain": False,
+                "is_lone_striker": False,
+                "expected_passes_per_game": 71.0,
+                "expected_shots_per_game": 0.4,
+            },
+            {
+                "player_name": "Kaoru Mitoma",
+                "team": "away",
+                "role_tag": "LW",
+                "expected_minutes": 85,
+                "substitution_risk": "low",
+                "captain": False,
+                "is_lone_striker": False,
+                "expected_passes_per_game": 27.6,
+                "expected_shots_per_game": 2.9,
+            },
+            {
+                "player_name": "Wataru Endo",
+                "team": "away",
+                "role_tag": "CDM",
+                "expected_minutes": 90,
+                "substitution_risk": "low",
+                "captain": True,
+                "is_lone_striker": False,
+                "expected_passes_per_game": 55.8,
+                "expected_shots_per_game": 0.6,
+            },
+            {
+                "player_name": "Ayase Ueda",
+                "team": "away",
+                "role_tag": "ST",
+                "expected_minutes": 80,
+                "substitution_risk": "medium",
+                "captain": False,
+                "is_lone_striker": True,
+                "expected_passes_per_game": 18.4,
+                "expected_shots_per_game": 2.5,
+            },
+        ],
+    }
+
+
+def test_lineup_prompt_supports_international_fixtures() -> None:
+    module = load_script_module("llm_lineup_provider.py")
+    captured_prompts = {}
+
+    class _CapturingClient:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            captured_prompts["user"] = user_prompt
+            return _international_llm_response()
+
+    provider = module.LLMLineupProvider(client=_CapturingClient())
+    provider.get_lineups_and_availability(_international_fixture())
+
+    user_prompt = captured_prompts["user"]
+    assert "Brazil" in user_prompt
+    assert "Japan" in user_prompt
+    assert "2026-06-29" in user_prompt
+    # The brittle club-only phrase must not appear; it caused the LLM to bail
+    # for national-team fixtures because internationals have no "season".
+    assert "current-season statistics, not estimates" not in user_prompt
+
+
+def test_lineup_prompt_unchanged_essentials_for_club_fixture() -> None:
+    module = load_script_module("llm_lineup_provider.py")
+    captured_prompts = {}
+
+    class _CapturingClient:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            captured_prompts["user"] = user_prompt
+            return _llm_response()
+
+    provider = module.LLMLineupProvider(client=_CapturingClient())
+    provider.get_lineups_and_availability(_fixture())
+
+    user_prompt = captured_prompts["user"]
+    assert "Bayern Munich" in user_prompt
+    assert "VfB Stuttgart" in user_prompt
+    assert "2026-05-23" in user_prompt
+
+
+def test_lineup_provider_maps_international_response() -> None:
+    module = load_script_module("llm_lineup_provider.py")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return _international_llm_response()
+
+    provider = module.LLMLineupProvider(client=_Client())
+    result = provider.get_lineups_and_availability(_international_fixture())
+
+    assert result is not None
+    assert len(result["teams"]["home"]["starters"]) == 11
+    assert len(result["teams"]["away"]["starters"]) == 11
+    assert result["teams"]["home"]["injuries"] == ["Neymar"]
+    assert len(result["players"]) == 6
+    vinicius = next(p for p in result["players"] if p["player_name"] == "Vinicius Junior")
+    assert vinicius["team_id"] == "BRA"
+    assert vinicius["expected_passes_baseline"] == 38.4
+    assert vinicius["expected_shots_baseline"] == 4.6
+
+
 def test_lineup_provider_captures_last_sources_from_client() -> None:
     module = load_script_module("llm_lineup_provider.py")
 
