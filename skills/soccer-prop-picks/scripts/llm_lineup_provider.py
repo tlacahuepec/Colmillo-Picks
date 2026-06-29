@@ -81,12 +81,14 @@ class LLMLineupProvider:
             "  ]\n"
             "}\n\n"
             "Rules:\n"
-            "- Include projected starting XI for both teams based on latest available information\n"
+            "- Include the latest projected starting XI for both teams based on the most recent available information "
+            "(official lineup announcements, manager press conferences, federation news, or pre-match reports). "
+            "This applies equally to club matches and national-team fixtures.\n"
             "- List all currently injured and suspended players\n"
             f"- In the players array, include exactly 6 key players: 3 from {home_name} "
             f"(1 midfielder, 1 forward, 1 defender) and 3 from {away_name} (1 midfielder, 1 forward, 1 defender)\n"
-            "- For each player, provide their season average passes per game and shots per game\n"
-            "- Use real current-season statistics, not estimates\n"
+            "- For each player, provide their current real-world average passes per game and shots per game. "
+            "For national-team fixtures, prefer the player's club-season averages since national-team match samples are small.\n"
             "- Return JSON only, no explanation"
         )
 
