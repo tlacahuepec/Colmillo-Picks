@@ -437,6 +437,67 @@ def test_map_fixture_omits_standings_when_not_in_response() -> None:
     assert "last_5_results" not in fixture["teams"]["home"]
 
 
+def test_map_fixture_handles_null_standings_fields_for_internationals() -> None:
+    """National-team fixtures have no league standings; the LLM legitimately returns
+    nulls for table_position/points/games_played. The mapper must coerce nulls to
+    sensible defaults rather than crashing with `int(None)`."""
+    module = load_script_module("llm_fixture_provider.py")
+    collector = load_script_module("collect_match_inputs.py")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {
+                "match_found": True,
+                "confidence": "high",
+                "match_id": "GERPAR-2026-06-29",
+                "competition": "International Friendly",
+                "competition_type": "cup",
+                "kickoff_utc": "2026-06-29T20:00:00Z",
+                "teams": {
+                    "home": {
+                        "team_id": "GER",
+                        "team_name": "Germany",
+                        "standings_context": {
+                            "table_position": None,
+                            "points": None,
+                            "games_played": None,
+                            "motivation_tag": None,
+                        },
+                        "last_5_results": ["W", "D", "W", "L", "W"],
+                    },
+                    "away": {
+                        "team_id": "PAR",
+                        "team_name": "Paraguay",
+                        "standings_context": {
+                            "table_position": None,
+                            "points": None,
+                            "games_played": None,
+                            "motivation_tag": None,
+                        },
+                        "last_5_results": ["L", "W", "D", "D", "W"],
+                    },
+                },
+                "venue": {"name": "Allianz Arena", "city": "Munich", "country": "Germany"},
+            }
+
+    provider = module.LLMFixtureProvider(config=_config(), client=_Client())
+    fixture = provider.lookup_fixture(
+        collector.MatchInputRequest(
+            home_team="Germany",
+            away_team="Paraguay",
+            match_date="2026-06-29",
+        )
+    )
+
+    assert fixture is not None
+    home_standings = fixture["teams"]["home"]["standings_context"]
+    assert isinstance(home_standings["table_position"], int)
+    assert isinstance(home_standings["points"], int)
+    assert isinstance(home_standings["games_played"], int)
+    assert isinstance(home_standings["motivation_tag"], str)
+    assert home_standings["motivation_tag"]
+
+
 def test_user_prompt_requests_standings_data() -> None:
     module = load_script_module("llm_fixture_provider.py")
     collector = load_script_module("collect_match_inputs.py")
