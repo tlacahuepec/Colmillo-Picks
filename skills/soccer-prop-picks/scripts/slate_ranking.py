@@ -29,6 +29,10 @@ class SlateCandidate:
     risk_flags: tuple[str, ...]
     availability_status: AvailabilityStatus
     source_pick: dict[str, Any]
+    subject_type: str = "player"
+    subject_name: str = ""
+    selection: str = ""
+    offer: dict[str, Any] | None = None
 
 
 def candidate_from_pick(
@@ -61,6 +65,10 @@ def candidate_from_pick(
         risk_flags=_risk_flags(pick, extra_flags=score_flags),
         availability_status=_availability_status(pick=pick, availability=availability),
         source_pick=dict(pick),
+        subject_type=pick.get("subject_type", "player"),
+        subject_name=pick.get("subject_name") or pick.get("player", ""),
+        selection=pick.get("selection") or pick.get("direction", ""),
+        offer=pick.get("offer"),
     )
 
 

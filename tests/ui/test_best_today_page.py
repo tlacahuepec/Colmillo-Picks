@@ -47,7 +47,7 @@ class TestBuildSlatePayload:
             top_n=10,
         )
 
-        assert payload["sports"] == ["soccer", "basketball", "baseball"]
+        assert payload["sports"] == ["soccer", "basketball", "baseball", "nfl"]
 
     def test_includes_timezone_when_provided(self) -> None:
         payload = build_slate_payload(

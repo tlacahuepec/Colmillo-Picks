@@ -138,11 +138,47 @@ SOCCER_ENRICHMENT_CONFIG = SportEnrichmentConfig(
 )
 
 
+NFL_ENRICHMENT_CONFIG = SportEnrichmentConfig(
+    sport_id="nfl",
+    system_prompt_guidance=(
+        "NFL-SPECIFIC GUIDANCE: Use https://www.nfl.com/stats/player-stats/, "
+        "https://www.nfl.com/injuries/, https://www.nfl.com/schedules/ and ESPN NFL game logs. "
+        "Confirm current roster, starting quarterback and injury status for this fixture. "
+        "Use only regular season and postseason games; exclude preseason. "
+        "Skip bye weeks and DNPs; use five actual completed games, with date and season on each. "
+        "Never replace a missing early-season sample with invented averages. "
+        "scorer_touchdowns means touchdowns scored by the player, including rushing/receiving/returns; "
+        "passing touchdowns do not count. interceptions_thrown means QB interceptions, not defensive interceptions. "
+        "opportunity_ratio = recent attempts/targets per game divided by season attempts/targets per game. "
+        "opponent_factor = opponent allowed production divided by league average (1.0 is neutral). "
+        "Return these ratios only when verified; otherwise null. "
+        "Team averages and last5 must be from completed games before the requested fixture. "
+        "If a team has not played in the current season, use its most recent completed season "
+        "and set the team season field to that historical year, never the upcoming season. "
+        "For team last5, compute points scored and allowed from the five actual most recent "
+        "regular/postseason final scores. For players, include per-game numeric stats, not just a roster. "
+        "Use exact provider search citation URLs. Never fabricate odds, source URLs or timestamps. "
+        "Return null rather than guessing when a source cannot verify a value."
+    ),
+    required_fields_per_market={
+        market: ("game_logs", "injury_status", "source_urls")
+        for market in ("passing_yards", "passing_touchdowns", "interceptions_thrown",
+                       "rushing_yards", "receiving_yards", "receptions", "anytime_touchdown")
+    } | {market: ("points_for_avg", "points_against_avg", "points_for_last5", "points_against_last5")
+         for market in ("moneyline", "spread", "total")},
+    field_format_rules=("Odds must be decimal, greater than 1.", "Ratios are decimals, not percentages.",
+                        "Use five games actually played, skipping byes and preseason."),
+    preferred_sources=("https://www.nfl.com/stats/player-stats/", "https://www.nfl.com/injuries/",
+                       "https://www.nfl.com/schedules/", "https://www.espn.com/nfl/"),
+)
+
+
 def _build_default_registry() -> SportEnrichmentConfigRegistry:
     registry = SportEnrichmentConfigRegistry()
     registry.register(BASKETBALL_ENRICHMENT_CONFIG)
     registry.register(BASEBALL_ENRICHMENT_CONFIG)
     registry.register(SOCCER_ENRICHMENT_CONFIG)
+    registry.register(NFL_ENRICHMENT_CONFIG)
     return registry
 
 

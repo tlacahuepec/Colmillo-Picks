@@ -1,0 +1,8 @@
+{
+  "player_weights": {"production": 0.55, "opportunity": 0.15, "matchup": 0.15, "availability": 0.15},
+  "game_weights": {"production": 0.7, "availability": 0.15, "rest": 0.1, "weather": 0.05},
+  "minimum_score": 0.55,
+  "medium_confidence": 0.65,
+  "recent_weight": 0.6,
+  "home_advantage_points": 1.5
+}

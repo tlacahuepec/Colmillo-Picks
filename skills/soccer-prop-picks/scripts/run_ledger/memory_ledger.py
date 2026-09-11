@@ -103,10 +103,11 @@ class InMemoryRunLedger:
                 team_id=pick.get("team_id", ""),
                 market=pick.get("market", ""),
                 direction=pick.get("direction", ""),
-                line=float(pick.get("line", 0)),
+                line=None if pick.get("line", 0) is None else float(pick.get("line", 0)),
                 score=float(pick.get("score", 0)),
                 confidence=pick.get("confidence", ""),
                 risk_notes=list(risk_flags),
+                source_pick=dict(pick),
             )
             saved.append(sp)
         self._picks.setdefault(run_id, []).extend(saved)

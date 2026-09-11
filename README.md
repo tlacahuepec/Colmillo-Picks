@@ -2,7 +2,7 @@
 
 This project follows the [Engineering Constitution](https://github.com/tlacahuepec/Constitution).
 
-Multi-sport AI prop pick assistant — generates ranked player prop picks with confidence levels, risk flags, grounding sources, and platform availability checks. Supports soccer, basketball, and baseball (MLB).
+Multi-sport AI pick assistant — generates ranked player props and NFL game bets with confidence levels, risk flags, grounding sources, and platform availability checks. Supports soccer, basketball, baseball (MLB), and NFL.
 
 ## Supported Sports
 
@@ -11,8 +11,15 @@ Multi-sport AI prop pick assistant — generates ranked player prop picks with c
 | Soccer | `score_player_props.py` | Passes, shots, tackles, cards | Production |
 | Basketball | `basketball_scoring.py` | Points, rebounds, assists, 3PM | Production |
 | Baseball (MLB) | `baseball_scoring.py` | Hits, HR, K, RBI, walks, total bases, pitcher outs | Production |
+| NFL | `nfl_scoring.py` | Seven player props plus moneyline, spread, total | Pregame; grounded data required |
 
 See `docs/mlb-architecture.md` for the full MLB pipeline documentation.
+
+For NFL, select **NFL** on Generate or Best Today and choose **All**, **Player props**,
+or **Game bets**. The existing Gemini search setup supplies data; no sports-data
+subscription is required. Offers without provider search citations are excluded.
+NFL scores are heuristic rankings, and outcomes are graded manually.
+See [NFL support](docs/nfl-support.md) for markets, evidence requirements and limitations.
 
 ## Quickstart (CLI)
 

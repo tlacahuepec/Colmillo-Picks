@@ -119,6 +119,8 @@ def _build_pick_payload(
         payload["markets"] = markets
     if league:
         payload["league"] = league
+    if sport == "nfl":
+        payload["timezone"] = os.getenv("COLMILLO_TIMEZONE") or "America/Chicago"
 
     return payload
 
@@ -370,8 +372,8 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
     with col_sports:
         discovery_sports = st.multiselect(
             "Suggestion sports",
-            options=["Soccer", "Basketball", "Baseball"],
-            default=["Soccer", "Basketball", "Baseball"],
+            options=["Soccer", "Basketball", "Baseball", "NFL"],
+            default=["Soccer", "Basketball", "Baseball", "NFL"],
             key="discover_sports",
         )
     with col_limit:
@@ -475,25 +477,22 @@ def render_generate_page(client: PicksAPIClient) -> None:
     if _render_match_suggestions(client):
         return
 
-    # Explicit widget keys prevent Streamlit from resetting values when
-    # the baseball conditional block adds/removes widgets between reruns.
+    # Sport and NFL group controls rerun immediately, outside the submit form.
+    sport = st.selectbox(
+        "Sport", options=["Soccer", "Basketball", "Baseball", "NFL"],
+        index=0, help="Select the sport for analysis.", key="gen_sport",
+    )
+    nfl_group = "All"
+    if sport == "NFL":
+        nfl_group = st.selectbox("NFL markets", ["All", "Player props", "Game bets"], key="gen_nfl_group")
     with st.form("generate_pick"):
-        col_sport, col_date = st.columns(2)
-        with col_sport:
-            sport = st.selectbox(
-                "Sport",
-                options=["Soccer", "Basketball", "Baseball"],
-                index=0,
-                help="Select the sport for prop analysis.",
-                key="gen_sport",
-            )
-        with col_date:
-            date = st.date_input("Match date", value=_date.today(), key="gen_date")
+        date = st.date_input("Match date", value=_date.today(), key="gen_date")
 
         _TEAM_HINTS: dict[str, tuple[str, str]] = {
             "soccer": ("e.g. Bayern Munich", "e.g. Stuttgart"),
             "basketball": ("e.g. Boston Celtics", "e.g. Los Angeles Lakers"),
             "baseball": ("e.g. New York Yankees", "e.g. Boston Red Sox"),
+            "nfl": ("e.g. Kansas City Chiefs", "e.g. Buffalo Bills"),
         }
         home_hint, away_hint = _TEAM_HINTS.get(sport.lower(), ("", ""))
 
@@ -524,6 +523,14 @@ def render_generate_page(client: PicksAPIClient) -> None:
                     key="gen_markets",
                 )
 
+        if sport == "NFL":
+            from nfl_domain import NFL_MARKETS, NFL_PLAYER_MARKETS, NFL_GAME_MARKETS
+            selected_league = "nfl"
+            options = NFL_PLAYER_MARKETS if nfl_group == "Player props" else NFL_GAME_MARKETS if nfl_group == "Game bets" else NFL_MARKETS
+            selected_markets = st.multiselect("Markets", options=list(options), default=list(options), key=f"gen_nfl_markets_{nfl_group}")
+            st.caption("Full-game pregame only. NFL results are graded manually.")
+            st.caption(f"NFL date timezone: {os.getenv('COLMILLO_TIMEZONE') or 'America/Chicago'}")
+
         col_n, col_explain, col_fallback, col_async = st.columns(4)
         with col_n:
             top_n = st.slider("Top N picks", min_value=1, max_value=10, value=10, key="gen_top_n")
@@ -546,6 +553,9 @@ def render_generate_page(client: PicksAPIClient) -> None:
         submitted = st.form_submit_button("Generate", type="primary")
 
     if not submitted:
+        return
+    if sport == "NFL" and not selected_markets:
+        st.error("Select at least one NFL market.")
         return
 
     try:
@@ -589,7 +599,7 @@ def render_history_page(client: PicksAPIClient) -> None:
 
     sport_filter = st.sidebar.selectbox(
         "Filter by sport",
-        options=["All", "Soccer", "Basketball", "Baseball"],
+        options=["All", "Soccer", "Basketball", "Baseball", "NFL"],
         index=0,
     )
     limit = st.sidebar.slider("Page size", min_value=5, max_value=50, value=20, step=5)
@@ -695,7 +705,7 @@ def _render_outcomes_section(client: PicksAPIClient, detail: dict[str, Any]) -> 
         rows: list[dict[str, Any]] = []
         for entry in scores:
             rank = int(entry.get("rank", len(rows) + 1))
-            player = str(entry.get("player", entry.get("name", "unknown")))
+            player = str(entry.get("subject_name") or entry.get("player", entry.get("name", "unknown")))
             market = str(entry.get("market", entry.get("prop", "unknown")))
             result = st.selectbox(
                 f"#{rank} \u00b7 {player} \u00b7 {market}",
@@ -742,7 +752,7 @@ def render_best_today_page(client: PicksAPIClient) -> None:
     from services.ui.best_today_helpers import format_slate_list_item
 
     st.title("Best Today")
-    st.caption("Generate a ranked cross-sport slate of today's best prop picks.")
+    st.caption("Generate a ranked cross-sport slate of player props and NFL game bets.")
 
     with st.form("best_today_form"):
         col_date, col_sports = st.columns([1, 2])
@@ -751,10 +761,12 @@ def render_best_today_page(client: PicksAPIClient) -> None:
         with col_sports:
             slate_sports = st.multiselect(
                 "Sports",
-                options=["Soccer", "Basketball", "Baseball"],
-                default=["Soccer", "Basketball", "Baseball"],
+                options=["Soccer", "Basketball", "Baseball", "NFL"],
+                default=["Soccer", "Basketball", "Baseball", "NFL"],
                 key="slate_sports",
             )
+
+        nfl_group = st.selectbox("NFL markets", ["All", "Player props", "Game bets"], key="slate_nfl_group")
 
         col_max, col_top = st.columns(2)
         with col_max:
@@ -777,6 +789,7 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                 sports=normalized_sports,
                 max_matches_per_sport=max_matches,
                 top_n=top_n,
+                nfl_market_group={"All": "all", "Player props": "player_props", "Game bets": "game_bets"}[nfl_group],
                 timezone=os.getenv("COLMILLO_TIMEZONE"),
             )
         except ValueError as exc:
@@ -851,7 +864,7 @@ def _render_candidate_card(candidate: dict[str, Any], badge: dict[str, Any] | No
 
     rank = candidate.get("rank", "?")
     sport = candidate.get("sport", "?")
-    player = candidate.get("player", "Unknown")
+    player = candidate.get("subject_name") or candidate.get("player", "Unknown")
     market = candidate.get("market", "?")
     line = candidate.get("line")
     direction = candidate.get("direction", "?")
@@ -953,7 +966,7 @@ def _render_slate_results(detail: dict[str, Any], client: PicksAPIClient) -> Non
         if st.button("Check Availability", key=f"avail_btn_{slate_id}"):
             batch_payload = build_availability_batch_payload(candidates)
             try:
-                avail_result = client.check_availability_batch(batch_payload)
+                avail_result = client.check_availability_batch(batch_payload) if batch_payload else {"badges": [], "fallback_mode": False}
                 st.session_state[avail_cache_key] = avail_result
             except Exception as exc:
                 st.warning(f"Availability check failed: {exc}", icon="\u26a0\ufe0f")

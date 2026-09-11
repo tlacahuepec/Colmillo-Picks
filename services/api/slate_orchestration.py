@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from baseball_module import BaseballDataQualityError
+from nfl_module import NflNoPicks
 from slate_ranking import SlateCandidate, candidates_from_picks, rank_slate_candidates
 
 
@@ -38,7 +39,7 @@ def execute_slate_job(
     t0 = time.perf_counter()
 
     date = request_dict["date"]
-    sports = request_dict.get("sports", ["soccer", "basketball", "baseball"])
+    sports = request_dict.get("sports", ["soccer", "basketball", "baseball", "nfl"])
     max_matches_per_sport = request_dict.get("max_matches_per_sport", 3)
     top_n = request_dict.get("top_n", 10)
     timezone = request_dict.get("timezone")
@@ -99,6 +100,13 @@ def execute_slate_job(
                     "error_message": None,
                     "pick_count": len(candidates),
                     "latency_ms": match_latency_ms,
+                })
+            except NflNoPicks as exc:
+                match_runs.append({
+                    "sport": sport, "home_team": home_team, "away_team": away_team,
+                    "event_date": event_date, "status": "no_picks", "error_stage": None,
+                    "error_message": str(exc)[:500], "pick_count": 0,
+                    "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
                 })
             except BaseballDataQualityError as exc:
                 match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))
