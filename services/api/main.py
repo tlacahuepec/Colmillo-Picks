@@ -79,7 +79,8 @@ class PicksRequest(BaseModel):
 class StructuredPicksRequest(BaseModel):
     """Request body for ``POST /picks`` (sport-aware structured format)."""
 
-    sport: str = Field(..., description="Sport: soccer, basketball, baseball")
+    sport: str = Field(..., description="Sport: soccer, basketball, baseball, nfl")
+    timezone: str | None = Field(None, description="IANA timezone for NFL event_date; defaults to COLMILLO_TIMEZONE or America/Chicago")
     event_date: str = Field(..., description="YYYY-MM-DD")
     home_team: str
     away_team: str
@@ -282,9 +283,11 @@ class MatchDiscoveryResponse(BaseModel):
 class SlateRequest(BaseModel):
     """Request body for ``POST /slates``."""
 
+    nfl_market_group: Literal["all", "player_props", "game_bets"] = "all"
+
     date: str = Field(..., description="YYYY-MM-DD")
     sports: list[str] = Field(
-        default_factory=lambda: ["soccer", "basketball", "baseball"], min_length=1
+        default_factory=lambda: ["soccer", "basketball", "baseball", "nfl"], min_length=1
     )
     max_matches_per_sport: int = Field(3, ge=1, le=5)
     top_n: int = Field(10, ge=1, le=20)
@@ -337,6 +340,10 @@ class SlateRankedCandidate(BaseModel):
     rank: int = 0
     sport: str
     player: str
+    subject_type: str = "player"
+    subject_name: str = ""
+    selection: str = ""
+    offer: dict[str, Any] | None = None
     market: str
     line: Any = None
     direction: str
@@ -398,10 +405,11 @@ class RunPickDetail(BaseModel):
     team_id: str
     market: str
     direction: str
-    line: float
+    line: float | None
     score: float
     confidence: str
     risk_notes: list[str]
+    source_pick: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunDetailResponse(BaseModel):
@@ -434,10 +442,19 @@ def _check_availability_for_picks(
 
     badges: list[AvailabilityBadge] = []
     for pick in scores:
+        if pick.get("subject_type", "player") != "player":
+            continue
         player = pick.get("player", "")
         market = pick.get("market", "")
         line = pick.get("line", 0.0)
         if not player or not market:
+            continue
+        if pick.get("sport") == "nfl":
+            if line is not None:
+                badges.append(AvailabilityBadge(
+                    player=player, market=market, line=line, status="unknown",
+                    platform=platform_name, last_checked=datetime.now(timezone.utc).isoformat(),
+                ))
             continue
         result = adapter.check_availability(player, market, line)
         if result.available:
@@ -656,6 +673,8 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
             "top_n": pick_req.top_n,
             "league": pick_req.league,
         }
+        if pick_req.sport == "nfl":
+            request_dict.update(llm_provider=payload.llm_provider, llm_model=payload.llm_model, timezone=payload.timezone)
         row = db_module.create_pending_pick_run(request_payload=request_dict)
         bundle_kwargs: dict[str, Any] = {}
         jobs_module.enqueue_pick_run(
@@ -715,7 +734,8 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
 
 
 def _filter_zero_line_scores(scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [s for s in scores if s.get("line")]
+    from nfl_domain import has_valid_pick_line
+    return [s for s in scores if has_valid_pick_line(s)]
 
 
 def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
@@ -726,6 +746,9 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
 
     sport = request_dict.get("sport", "basketball")
     module = get_sport_module(sport)
+    if sport == "nfl" and any(request_dict.get(k) for k in ("llm_provider", "llm_model", "timezone")):
+        from nfl_module import NflModule
+        module = NflModule(provider=request_dict.get("llm_provider"), model=request_dict.get("llm_model"), timezone_name=request_dict.get("timezone"))
     markets = tuple(request_dict.get("markets", ()))
     pick_req = PickRequest(
         sport=sport,
@@ -763,6 +786,9 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
 def _render_report_for_sport(
     sport: str, scores: list[dict[str, Any]], match_inputs: dict[str, Any]
 ) -> str:
+    if sport == "nfl":
+        from render_nfl_report import render_nfl_report
+        return render_nfl_report(scores, match_inputs)
     if sport == "baseball":
         from render_baseball_report import render_baseball_report
 
@@ -789,6 +815,13 @@ def _build_trace_for_sport(
     match_inputs: dict[str, Any],
     steps: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    if sport == "nfl":
+        return {"sport": "nfl", "steps": steps, "picks": scores,
+                "exclusions": match_inputs.get("exclusions", []),
+                "provider_statuses": match_inputs.get("provider_statuses", {}),
+                "grounding_sources": match_inputs.get("grounding_sources", []),
+                "provider_errors": match_inputs.get("provider_errors", {}),
+                "research_evidence": match_inputs.get("research_evidence", {})}
     if sport == "baseball":
         from baseball_trace import MLBTraceRecord, PickTrace, compute_input_hash
 
@@ -968,6 +1001,10 @@ def _run_next_queued_slate_job() -> None:
                 "rank": idx + 1,
                 "sport": c.sport,
                 "player": c.player,
+                "subject_type": c.subject_type,
+                "subject_name": c.subject_name,
+                "selection": c.selection,
+                "offer": c.offer,
                 "market": c.market,
                 "line": c.line,
                 "direction": c.direction,
@@ -1020,6 +1057,7 @@ def _build_slate_deps(request_dict: dict[str, Any]):
     discovery_client = MatchDiscoveryClient.from_env(
         provider=request_dict.get("llm_provider"),
         model=request_dict.get("llm_model"),
+        **({"max_output_tokens": 16000} if "nfl" in request_dict.get("sports", ["nfl"]) else {}),
     )
 
     def discover(*, date_utc: str, sports: list[str], limit_per_sport: int, timezone: str | None = None) -> dict[str, Any]:
@@ -1031,10 +1069,21 @@ def _build_slate_deps(request_dict: dict[str, Any]):
         *, sport: str, home_team: str, away_team: str, event_date: str, markets: tuple[str, ...]
     ) -> list[dict[str, Any]]:
         module = get_sport_module(sport)
+        if sport == "nfl":
+            from nfl_collection import NflCollector
+            from nfl_domain import NFL_PLAYER_MARKETS, NFL_GAME_MARKETS
+            from nfl_module import NflModule
+            module = NflModule(collector=NflCollector(discovery_client.client, timezone_name=request_dict.get("timezone")))
+            group = request_dict.get("nfl_market_group", "all")
+            markets = NFL_PLAYER_MARKETS if group == "player_props" else NFL_GAME_MARKETS if group == "game_bets" else markets
         match_inputs = module.collect_inputs(
             home_team=home_team, away_team=away_team, match_date=event_date
         )
-        return module.score(match_inputs, markets=markets)
+        scores = module.score(match_inputs, markets=markets)
+        if sport == "nfl" and not scores:
+            from nfl_module import NflNoPicks
+            raise NflNoPicks("; ".join(e["reason"] for e in match_inputs.get("exclusions", [])))
+        return scores
 
     def get_token_usage() -> tuple[int, int, int]:
         llm = getattr(discovery_client, "_client", None)
@@ -1412,6 +1461,7 @@ def create_app() -> FastAPI:
                     rank=p.rank, player=p.player, team_id=p.team_id,
                     market=p.market, direction=p.direction, line=p.line,
                     score=p.score, confidence=p.confidence, risk_notes=p.risk_notes,
+                    source_pick=p.source_pick,
                 )
                 for p in picks
             ],
@@ -1419,7 +1469,7 @@ def create_app() -> FastAPI:
 
     # ---- Slates (async) -------------------------------------------------- #
 
-    _SUPPORTED_SLATE_SPORTS = {"soccer", "basketball", "baseball"}
+    _SUPPORTED_SLATE_SPORTS = {"soccer", "basketball", "baseball", "nfl"}
 
     @app.get("/slates", response_model=SlateListResponse)
     def list_slates(

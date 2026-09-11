@@ -164,6 +164,71 @@ class GeminiLLMClient(LLMClient):
     def reset_cumulative_tokens(self) -> None:
         self._cumulative_tokens = [0, 0, 0]
 
+    def _record_research_usage(self, response: Any) -> None:
+        usage = getattr(response, "usage_metadata", None)
+        if usage is None:
+            self._last_token_usage = None
+            return
+        counts = [getattr(usage, key, 0) or 0 for key in
+                  ("prompt_token_count", "candidates_token_count", "total_token_count")]
+        self._last_token_usage = TokenUsage(*counts)
+        self._cumulative_tokens = [old + new for old, new in zip(self._cumulative_tokens, counts)]
+
+    def research_then_extract(self, *, research_prompt: str, schema: dict) -> dict:
+        """Research with citations first, then extract JSON without another search.
+
+        The extraction response never replaces the original grounding metadata.
+        Used by NFL collection; existing structured-generation behavior is unchanged.
+        """
+        from dataclasses import asdict
+
+        self._last_sources = []
+        self._last_grounding_metadata = None
+        self.last_research_evidence = None
+        if not self._search_grounding:
+            raise LLMError("Research requires a search-enabled client.")
+        try:
+            researched = self._client.models.generate_content(
+                model=self._model, contents=research_prompt,
+                config={"tools": [{"google_search": {}}], "max_output_tokens": self._max_output_tokens,
+                        "thinking_config": {"thinking_budget": 0},
+                        "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
+            )
+            self._record_research_usage(researched)
+            candidates = getattr(researched, "candidates", None) or []
+            raw_metadata = getattr(candidates[0], "grounding_metadata", None) if candidates else None
+            chunks = getattr(raw_metadata, "grounding_chunks", None) or []
+            metadata = self._extract_grounding_metadata(researched)
+            if not metadata or not metadata.sources or not any(getattr(c, "web", None) for c in chunks):
+                raise LLMError("Research returned no source citations; JSON extraction was skipped.")
+            research_text = getattr(researched, "text", None)
+            if not research_text:
+                raise LLMError("Research returned no evidence text.")
+            self._last_grounding_metadata = metadata
+            self._last_sources = list(metadata.sources)
+            evidence = {"text": research_text, "sources": [asdict(s) for s in metadata.sources],
+                        "supports": [asdict(s) for s in metadata.supports]}
+            self.last_research_evidence = evidence
+            extraction_prompt = {
+                "task": "Extract only facts present in the supplied research evidence into the schema. Do not research, use memory, invent values or infer missing prices. Use null or empty arrays for missing facts. source_urls/source_url must use the exact supplied citation URLs supporting that entity or offer. Source indices in supports refer to the sources array. Never assign an unrelated source just to fill a field. Preserve the exact book, selection, line, odds and observation time. Convert American odds to decimal only if explicitly observed. Follow the schema enum spellings. Return one JSON object.",
+                "request": research_prompt, "schema": schema, "evidence": evidence,
+            }
+            extracted = self._client.models.generate_content(
+                model=self._model, contents=json.dumps(extraction_prompt),
+                config={"response_mime_type": "application/json", "max_output_tokens": self._max_output_tokens,
+                        "thinking_config": {"thinking_budget": 0}, "temperature": 0,
+                        "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
+            )
+            self._record_research_usage(extracted)
+            result = _parse_first_json_object(_extract_json_text(extracted.text or ""))
+            if not isinstance(result, dict):
+                raise LLMError("Research extraction did not return an object.")
+            return result
+        except LLMError:
+            raise
+        except Exception as exc:
+            raise LLMError(f"Grounded research failed ({type(exc).__name__}).") from exc
+
     def _extract_grounding_metadata(self, response: Any) -> GroundingMetadataResult | None:
         if not self._search_grounding:
             return None

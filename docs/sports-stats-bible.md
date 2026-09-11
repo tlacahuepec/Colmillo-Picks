@@ -101,6 +101,23 @@ Consistent definitions help the LLM produce reliable, comparable outputs and hel
 
 Add new terms here as grounding recipes and scoring logic evolve.
 
+## NFL source matrix
+
+| Source | Fields | Collection |
+|---|---|---|
+| [NFL statistics](https://www.nfl.com/stats/player-stats/) | Passing, rushing, receiving production | Grounded search |
+| [NFL injuries](https://www.nfl.com/injuries/) | Practice participation and game status | Grounded search |
+| [NFL schedules](https://www.nfl.com/schedules/) | Fixture, kickoff, season type | Grounded search |
+| ESPN NFL game logs | Per-game player/team performance | Grounded search corroboration |
+| Named sportsbook offer pages | Selection, primary line, price, observation time | Grounded search; never consensus substitution |
+
+NFL grounding recipe: verify fixture and current roster first, then five actual
+completed regular/postseason games, then available sportsbook offers. Skip byes,
+DNPs and preseason; label prior-season samples. Keep unknown fields null. Passing
+TDs are separate from touchdowns scored, and interceptions thrown are separate
+from defensive interceptions. Require provider citation URLs; search-query links
+and model-claimed URLs alone do not establish evidence. See [NFL support](nfl-support.md).
+
 ## Basketball source matrix
 
 | Source | Data fields | Free API? | LLM grounding candidate | Risk/cost notes | Recommended use |

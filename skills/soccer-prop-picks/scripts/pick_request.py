@@ -6,10 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from nfl_domain import NFL_MARKETS
 
-SUPPORTED_SPORTS: set[str] = {"soccer", "basketball", "baseball"}
+
+SUPPORTED_SPORTS: set[str] = {"soccer", "basketball", "baseball", "nfl"}
 
 SPORT_MARKETS: dict[str, set[str]] = {
+    "nfl": set(NFL_MARKETS),
     "soccer": {"passes", "shots"},
     "basketball": {
         "points", "rebounds", "assists", "threes",
@@ -21,6 +24,7 @@ SPORT_MARKETS: dict[str, set[str]] = {
 }
 
 SPORT_LEAGUES: dict[str, set[str]] = {
+    "nfl": {"nfl"},
     "soccer": {"premier_league", "la_liga", "serie_a", "bundesliga", "ligue_1", "mls", "champions_league"},
     "basketball": {"nba", "euroleague", "ncaab"},
     "baseball": {"mlb"},

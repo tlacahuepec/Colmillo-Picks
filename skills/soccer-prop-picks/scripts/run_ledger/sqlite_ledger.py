@@ -77,6 +77,9 @@ class SqliteRunLedger:
         self._conn.execute(_CREATE_PICKS_TABLE_SQL)
         self._ensure_partial_reasons_column()
         self._ensure_multi_sport_columns()
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(run_picks)")}
+        if "source_pick_json" not in columns:
+            self._conn.execute("ALTER TABLE run_picks ADD COLUMN source_pick_json TEXT")
         self._conn.commit()
 
     def _ensure_partial_reasons_column(self) -> None:
@@ -243,31 +246,35 @@ class SqliteRunLedger:
             team_id = pick.get("team_id", "")
             market = pick.get("market", "")
             direction = pick.get("direction", "")
-            line = float(pick.get("line", 0))
+            line = None if pick.get("line", 0) is None else float(pick.get("line", 0))
             score = float(pick.get("score", 0))
             confidence = pick.get("confidence", "")
 
             self._conn.execute(
-                """INSERT INTO run_picks (run_id, rank, player, team_id, market, direction, line, score, confidence, risk_notes_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (run_id, rank, player, team_id, market, direction, line, score, confidence, risk_notes_json),
+                """INSERT INTO run_picks (run_id, rank, player, team_id, market, direction, line, score, confidence, risk_notes_json, source_pick_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                # Legacy numeric column remains NOT NULL; canonical line is in the JSON payload.
+                (run_id, rank, player, team_id, market, direction, line if line is not None else 0,
+                 score, confidence, risk_notes_json, json.dumps(pick)),
             )
             saved.append(SavedPick(
                 run_id=run_id, rank=rank, player=player, team_id=team_id,
                 market=market, direction=direction, line=line, score=score,
                 confidence=confidence, risk_notes=list(risk_flags),
+                source_pick=dict(pick),
             ))
         self._conn.commit()
         return saved
 
     def get_picks(self, run_id: str) -> list[SavedPick]:
         rows = self._conn.execute(
-            "SELECT run_id, rank, player, team_id, market, direction, line, score, confidence, risk_notes_json FROM run_picks WHERE run_id = ? ORDER BY rank",
+            "SELECT run_id, rank, player, team_id, market, direction, line, score, confidence, risk_notes_json, source_pick_json FROM run_picks WHERE run_id = ? ORDER BY rank",
             (run_id,),
         ).fetchall()
         result: list[SavedPick] = []
         for row in rows:
             risk_notes: list[str] = []
+            source_pick = json.loads(row["source_pick_json"]) if row["source_pick_json"] else {}
             if row["risk_notes_json"]:
                 try:
                     risk_notes = json.loads(row["risk_notes_json"])
@@ -276,8 +283,9 @@ class SqliteRunLedger:
             result.append(SavedPick(
                 run_id=row["run_id"], rank=row["rank"], player=row["player"],
                 team_id=row["team_id"], market=row["market"], direction=row["direction"],
-                line=row["line"], score=row["score"], confidence=row["confidence"],
+                line=source_pick.get("line", row["line"]), score=row["score"], confidence=row["confidence"],
                 risk_notes=risk_notes,
+                source_pick=source_pick,
             ))
         return result
 

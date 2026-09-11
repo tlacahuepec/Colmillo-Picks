@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- NFL pregame player props and game bets across Generate, discovery, Best Today and history, with grounded sportsbook offers and manual grading.
+- Subject-aware picks and lossless sportsbook evidence in run-history JSON; nullable market lines are preserved.
 - Basketball module skeleton with placeholder scoring
 - Basketball core prop scoring (points, assists, rebounds, threes)
 - Basketball data collection layer

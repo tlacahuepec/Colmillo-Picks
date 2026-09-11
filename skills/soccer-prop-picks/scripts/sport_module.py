@@ -251,6 +251,8 @@ def _build_default_registry() -> SportModuleRegistry:
     registry.register(SoccerModule())
     registry.register(_build_basketball_module())
     registry.register(_build_baseball_module())
+    from nfl_module import NflModule
+    registry.register(NflModule())
     return registry
 
 

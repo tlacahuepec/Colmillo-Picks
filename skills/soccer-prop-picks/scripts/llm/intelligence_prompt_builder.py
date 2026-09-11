@@ -118,6 +118,10 @@ def build_match_discovery_user_prompt(
         "sports": sports,
         "limit_per_sport": limit_per_sport,
         "selection_criteria_by_sport": {
+            "nfl": [
+                "NFL regular season and postseason only; exclude preseason and college football",
+                "Only upcoming games with verified kickoff, team names and league=nfl",
+            ],
             "soccer": [
                 "Major competitions, derbies, title races, relegation battles, knockout matches, and top-four races",
                 "Prefer matches with clear kickoff time and competition context",

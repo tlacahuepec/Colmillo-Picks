@@ -48,10 +48,11 @@ class SavedPick:
     team_id: str
     market: str
     direction: str
-    line: float
+    line: float | None
     score: float
     confidence: str
     risk_notes: list[str] = field(default_factory=list)
+    source_pick: dict[str, Any] = field(default_factory=dict)
 
 
 class RunLedger(Protocol):

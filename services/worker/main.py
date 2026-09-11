@@ -17,6 +17,8 @@ RESOLUTION_CHECK_INTERVAL_CYCLES = 60
 
 def _attempt_resolution(pick: db.PickRun) -> None:
     """Attempt LLM-based outcome resolution for a single pick."""
+    if getattr(pick, "sport", None) == "nfl":
+        return
     from llm_post_match_stats import LLMPostMatchStatsProvider
     from outcome_resolver import OutcomeResolver
 
@@ -53,6 +55,8 @@ def run_resolution_cycle() -> int:
     unresolved = db.list_unresolved_picks(settled_before=settled_before)
     resolved_count = 0
     for pick in unresolved:
+        if getattr(pick, "sport", None) == "nfl":
+            continue
         try:
             _attempt_resolution(pick)
             resolved_count += 1

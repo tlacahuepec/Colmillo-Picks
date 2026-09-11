@@ -11,7 +11,7 @@ from llm.intelligence_prompt_builder import (
 )
 
 
-SUPPORTED_DISCOVERY_SPORTS: tuple[str, ...] = ("soccer", "basketball", "baseball")
+SUPPORTED_DISCOVERY_SPORTS: tuple[str, ...] = ("soccer", "basketball", "baseball", "nfl")
 
 
 class MatchDiscoveryError(RuntimeError):
@@ -70,12 +70,17 @@ class MatchDiscoveryClient:
     def __init__(self, *, client: LLMClient) -> None:
         self._client = client
 
+    @property
+    def client(self) -> LLMClient:
+        return self._client
+
     @classmethod
     def from_env(
         cls,
         getenv: Callable[[str], str | None] = os.getenv,
         provider: str | None = None,
         model: str | None = None,
+        max_output_tokens: int = 4000,
     ) -> "MatchDiscoveryClient":
         resolved_provider = (
             provider
@@ -95,7 +100,7 @@ class MatchDiscoveryClient:
                 api_key=api_key,
                 model=model or getenv("GEMINI_MODEL") or "gemini-2.5-flash",
                 search_grounding=True,
-                max_output_tokens=4000,
+                max_output_tokens=max_output_tokens,
             )
         elif resolved_provider == "grok":
             api_key = getenv("XAI_API_KEY")
@@ -155,6 +160,7 @@ class MatchDiscoveryClient:
                     date_utc=date_utc,
                     sport=sport,
                     limit_per_sport=limit_per_sport,
+                    **({"timezone_name": timezone or os.getenv("COLMILLO_TIMEZONE") or "America/Chicago"} if sport == "nfl" else {}),
                 )
                 generated_at_utc = generated_at_utc or _string_or_none(
                     raw.get("generated_at_utc")
@@ -184,6 +190,7 @@ class MatchDiscoveryClient:
         date_utc: str,
         sport: str,
         limit_per_sport: int,
+        timezone_name: str | None = None,
     ) -> dict[str, Any]:
         system_prompt = build_match_discovery_system_prompt()
         user_prompt = build_match_discovery_user_prompt(
@@ -191,6 +198,8 @@ class MatchDiscoveryClient:
             sports=[sport],
             limit_per_sport=limit_per_sport,
         )
+        if timezone_name:
+            user_prompt += f"\nInterpret {date_utc} in {timezone_name}; kickoff_utc may fall on the next UTC day. event_date must be the requested local date."
         result = self._client.generate_structured(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -231,8 +240,25 @@ def _normalize_sport_result(
         if isinstance(item, dict)
     ]
 
-    matches = [m for m in matches if _matches_requested_date(m, date_utc, timezone=timezone)]
-    matches = [m for m in matches if _is_match_upcoming(m)]
+    if sport == "nfl":
+        from nfl_domain import timestamp
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        from datetime import timezone as utc_timezone
+
+        reference = datetime.now(utc_timezone.utc)
+        try:
+            zone = ZoneInfo(timezone or os.getenv("COLMILLO_TIMEZONE") or "America/Chicago")
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise MatchDiscoveryError("Invalid NFL date timezone.") from exc
+        matches = [m for m in matches
+                   if (kickoff := timestamp(m.get("kickoff_utc"))) is not None
+                   and kickoff > reference and kickoff.astimezone(zone).date().isoformat() == date_utc
+                   and (m.get("league") or "").lower() == "nfl"]
+        for match in matches:
+            match["event_date"] = date_utc
+    else:
+        matches = [m for m in matches if _matches_requested_date(m, date_utc, timezone=timezone)]
+        matches = [m for m in matches if _is_match_upcoming(m)]
 
     data_quality = sport_payload.get("data_quality")
     if not isinstance(data_quality, dict):
