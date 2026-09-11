@@ -73,7 +73,10 @@ response is a valid application result, not evidence of a successful live pick.
 ## Validation recorded on 2026-09-11
 
 - Full pytest suite: 1,530 passed, including 57 NFL-focused tests.
-- Ruff and whitespace checks passed. Streamlit AppTest verified immediate sport
+- Ruff 0.15.20 and whitespace checks passed. The dev dependency is pinned to the
+  version used by the last successful dev CI run; the previous broad range let
+  CI install 0.16.7 and report 355 findings across existing and new files.
+  Streamlit AppTest verified immediate sport
   switching and the NFL market groups; API tests verified reports, history,
   mixed-sport slates, nullable lines, migration compatibility and manual grading.
 - Live research verified an upcoming matchup and sourced context. A focused
