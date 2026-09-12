@@ -194,6 +194,7 @@ def test_byes_and_prior_season_samples():
     flags = pick["explainability"]["risk_flags"]
     assert "prior_season_data" in flags and "small_sample" in flags
     assert pick["confidence"] == "low"
+    assert pick["data_quality"]["status"] == "prior_season_only"
 
 
 def test_collection_failure_is_explicit_without_samples():
