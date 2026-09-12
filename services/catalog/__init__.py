@@ -10,6 +10,7 @@ from services.catalog.contracts import (
 )
 from services.catalog.storage import CatalogStore
 from services.catalog.providers import CatalogProvider, ProviderRequest, ProviderResult
+from services.catalog.importance import ImportanceConfig, rank_events, score_event, select_important_events
 
 __all__ = [
     "CatalogEvent",
@@ -22,4 +23,8 @@ __all__ = [
     "CatalogProvider",
     "ProviderRequest",
     "ProviderResult",
+    "ImportanceConfig",
+    "score_event",
+    "rank_events",
+    "select_important_events",
 ]

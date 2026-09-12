@@ -2,6 +2,9 @@
 
 Status: implementation in progress. The epic covers soccer, basketball, MLB/baseball and NFL.
 
+Progress: #310 contracts, #311 storage foundation, #312 provider ports and #313
+importance scoring are implemented and validated on `feat/daily-sports-catalog`.
+
 ## Goal
 
 Run a daily preparation job that discovers important matches, collects schedules,
