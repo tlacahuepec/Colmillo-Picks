@@ -1,7 +1,8 @@
 # Diagnostics validation
 
 Recorded September 11, 2026, on the local Windows development environment.
-Changes remain uncommitted and have not been deployed.
+Implementation commit: `5d5cf67`. [PR #308](https://github.com/tlacahuepec/Colmillo-Picks/pull/308)
+targets `dev`; the change has not been deployed.
 
 ## Regression checks
 
@@ -69,6 +70,6 @@ including CLI subprocesses. Some earlier regression tests used the existing
 `data/runs.db`, so it may contain synthetic test entries. No automatic cleanup is
 being performed without a reliable baseline that separates them from real runs.
 
-See [remaining work](diagnostics-remaining-work.md). **Create the PR next**, then
+See [remaining work](diagnostics-remaining-work.md) and [PR #308](https://github.com/tlacahuepec/Colmillo-Picks/pull/308). Complete CI and review, then
 validate persistent paths, real query visibility and performance after review and
 deployment. The original discarded Saints–Lions exception remains unknown.

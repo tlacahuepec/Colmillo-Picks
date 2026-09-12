@@ -4,7 +4,9 @@ Updated September 11, 2026. This is the active handoff checklist.
 
 Local implementation and verification are complete. The final full regression
 suite passed **1,610 tests** and the local benchmark met all three overhead
-targets. Changes remain uncommitted. The architecture and user instructions
+targets. Implementation is committed on `feat/application-diagnostics` and
+[PR #308](https://github.com/tlacahuepec/Colmillo-Picks/pull/308) targets `dev`.
+The architecture and user instructions
 are saved in [diagnostics.md](diagnostics.md), and the accepted scope is tracked
 in [diagnostics-implementation-plan.md](diagnostics-implementation-plan.md).
 
@@ -24,17 +26,17 @@ in [diagnostics-implementation-plan.md](diagnostics-implementation-plan.md).
 - [x] Complete the final lint and whitespace/diff review. Confirm no credentials,
   generated databases or unrelated changes are included.
 
-## Next step: create the PR
+## PR and review
 
-- [ ] **Create a pull request after implementation and verification.**
-- [ ] Check the base and branch history first: this work currently sits on
-  `feat/nfl-support`; the PR should contain the diagnostics change without
-  duplicating NFL work already merged into the target branch.
-- [ ] Include the user-facing behavior, architecture guide, validation evidence
+- [x] **Create a pull request after implementation and verification:** [#308](https://github.com/tlacahuepec/Colmillo-Picks/pull/308).
+- [x] Check base and branch history: `feat/application-diagnostics` branches from
+  `dev` at `9d5ad44`, after the NFL squash merge. The PR contains diagnostics changes.
+- [x] Include the user-facing behavior, architecture guide, validation evidence
   and deployment limitations in the PR description.
+- [ ] Confirm CI passes and complete review before merging.
 
-Creating the PR is the next task. Local implementation and verification are
-complete; no deployment has been performed.
+CI and review are next. Local implementation and verification are complete;
+no merge or deployment has been performed.
 
 ## After review and deployment
 

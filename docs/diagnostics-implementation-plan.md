@@ -2,7 +2,7 @@
 
 Owner: Colmillo-Picks. Agreed September 11, 2026.
 
-**Next step after implementation and verification: create a pull request.**
+**PR created: [#308](https://github.com/tlacahuepec/Colmillo-Picks/pull/308). Next: CI and review.**
 Do not deploy this change or rewrite historical run outcomes automatically.
 
 ## Accepted design
@@ -42,7 +42,8 @@ Debug mode follows the same metadata-only policy.
 - [x] Complete API/privacy/retention/fault regression verification: 1,610 tests passed.
 - [x] Measure enabled/disabled latency and memory overhead: local targets passed.
 - [x] Document operation and review final diff; lint and whitespace checks passed.
-- [ ] **Create PR** with validation evidence and deployment limitations.
+- [x] **Create PR** with validation evidence and deployment limitations: [#308](https://github.com/tlacahuepec/Colmillo-Picks/pull/308).
+- [ ] Complete CI and review before merging.
 - [ ] Deploy after review; confirm persistent paths and one real run in Diagnostics.
 
 Implementation notes and user instructions: [Diagnostics guide](diagnostics.md).

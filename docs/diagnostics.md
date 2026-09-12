@@ -156,4 +156,5 @@ After deployment, confirm persistent paths, inspect `/diagnostics/health`, gener
 one real query and verify that its ID, stages and download appear in the UI.
 Watch dropped-event/storage counters and measure overhead under actual traffic.
 See the [progress checklist](diagnostics-implementation-plan.md) and
-[local validation record](diagnostics-validation.md). **Create the PR next.**
+[local validation record](diagnostics-validation.md).
+[PR #308](https://github.com/tlacahuepec/Colmillo-Picks/pull/308) tracks CI and review.
