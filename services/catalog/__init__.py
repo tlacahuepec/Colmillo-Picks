@@ -12,6 +12,7 @@ from services.catalog.storage import CatalogStore
 from services.catalog.providers import CatalogProvider, ProviderRequest, ProviderResult
 from services.catalog.importance import ImportanceConfig, rank_events, score_event, select_important_events
 from services.catalog.scheduler import CatalogScheduler, DailySchedule
+from services.catalog.graph import CatalogGraphDeps, CatalogGraphState, build_catalog_graph, run_catalog_graph
 
 __all__ = [
     "CatalogEvent",
@@ -30,4 +31,8 @@ __all__ = [
     "select_important_events",
     "CatalogScheduler",
     "DailySchedule",
+    "CatalogGraphDeps",
+    "CatalogGraphState",
+    "build_catalog_graph",
+    "run_catalog_graph",
 ]
