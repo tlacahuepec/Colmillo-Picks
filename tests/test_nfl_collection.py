@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from nfl_collection import NflCollector
+from nfl_collection import normalize_offer_payload
 from tests.test_nfl import context, offer
 
 
@@ -155,3 +156,13 @@ def test_exact_research_citations_do_not_need_redirect_requests(monkeypatch):
         lambda url: pytest.fail("No redirect lookup needed"),
     )
     assert _source_urls(client, referenced_urls=[url]) == {url}
+def test_normalize_offer_payload_accepts_safe_provider_aliases():
+    normalized = normalize_offer_payload({
+        "market": "Anytime TD", "selection": " YES ", "book": " FanDuel ",
+        "price_decimal": 2.1, "observed_at_utc": "2026-09-12T04:00:00Z",
+    })
+    assert normalized["market"] == "anytime_touchdown"
+    assert normalized["selection"] == "yes"
+    assert normalized["sportsbook"] == "FanDuel"
+    assert normalized["odds_decimal"] == 2.1
+    assert normalized["observed_at"] == "2026-09-12T04:00:00Z"
