@@ -8,6 +8,7 @@ from services.catalog.contracts import (
     FreshnessStatus,
     SourceObservation,
 )
+from services.catalog.storage import CatalogStore
 
 __all__ = [
     "CatalogEvent",
@@ -16,4 +17,5 @@ __all__ = [
     "Confidence",
     "FreshnessStatus",
     "SourceObservation",
+    "CatalogStore",
 ]
