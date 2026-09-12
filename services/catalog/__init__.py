@@ -9,6 +9,7 @@ from services.catalog.contracts import (
     SourceObservation,
 )
 from services.catalog.storage import CatalogStore
+from services.catalog.providers import CatalogProvider, ProviderRequest, ProviderResult
 
 __all__ = [
     "CatalogEvent",
@@ -18,4 +19,7 @@ __all__ = [
     "FreshnessStatus",
     "SourceObservation",
     "CatalogStore",
+    "CatalogProvider",
+    "ProviderRequest",
+    "ProviderResult",
 ]
