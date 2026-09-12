@@ -50,6 +50,20 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "arsenal - li
 
 Both services auto-load `.env` from the project root via `python-dotenv`. No manual env exporting needed.
 
+### Quality checks
+
+Run the same checks required by CI from the repository root:
+
+```powershell
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m pyright
+.venv\Scripts\python.exe -m pytest -q
+```
+
+Pyright currently enforces basic checking for the typed catalog subsystem. New
+production modules should be added to its configured scope as they become
+type-clean; legacy dynamic scripts are not blanket-suppressed.
+
 ### Setup
 
 ```bash

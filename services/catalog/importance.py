@@ -108,7 +108,7 @@ def rank_events(events: Iterable[CatalogEvent], **score_kwargs) -> list[CatalogE
     for event in events:
         score, reasons = score_event(event, **score_kwargs)
         scored.append(replace(event, importance_score=score, importance_reasons=reasons))
-    return sorted(scored, key=lambda item: (-item.importance_score, item.start_time, item.event_id))
+    return sorted(scored, key=lambda item: (-(item.importance_score or 0.0), item.start_time, item.event_id))
 
 
 def select_important_events(events: Iterable[CatalogEvent], *, config: ImportanceConfig = DEFAULT_IMPORTANCE_CONFIG,
@@ -127,4 +127,4 @@ def select_important_events(events: Iterable[CatalogEvent], *, config: Importanc
         if event.event_id not in selected_ids and sport_count < config.per_sport_limit:
             selected.append(event)
             selected_ids.add(event.event_id)
-    return sorted(selected, key=lambda item: (-item.importance_score, item.start_time, item.event_id))
+    return sorted(selected, key=lambda item: (-(item.importance_score or 0.0), item.start_time, item.event_id))
