@@ -56,7 +56,12 @@ _ALIASES = {
     for code, name in _TEAM_NAMES.items()
     for alias in (code, name, name.split()[-1])
 }
-_ALIASES.update({"wsh": _TEAM_NAMES["WAS"], "jac": _TEAM_NAMES["JAX"]})
+_ALIASES.update({
+    "wsh": _TEAM_NAMES["WAS"],
+    "jac": _TEAM_NAMES["JAX"],
+    "new orleans": _TEAM_NAMES["NO"],
+    "detroit": _TEAM_NAMES["DET"],
+})
 
 
 def resolve_team(value: str) -> str:

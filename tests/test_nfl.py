@@ -276,3 +276,8 @@ def test_negative_rushing_yards_are_valid_game_stats():
     data["offers"] = [offer("rushing_yards", line=0.5, selection="under")]
     picks = score_nfl(data, now=NOW)
     assert len(picks) == 1 and picks[0]["projection"] == -2
+def test_resolve_team_accepts_city_only_aliases():
+    from nfl_domain import resolve_team
+
+    assert resolve_team("new orleans") == "New Orleans Saints"
+    assert resolve_team("detroit") == "Detroit Lions"
