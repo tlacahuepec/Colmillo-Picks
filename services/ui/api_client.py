@@ -79,6 +79,9 @@ class PicksAPIClient:
     def get_catalog_snapshot(self, event_id: str) -> dict[str, Any]:
         return self._request("GET", f"/catalog/events/{event_id}/snapshot")
 
+    def get_catalog_archive(self, archive_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/catalog/archive/{archive_id}")
+
     def create_pick(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST a pick request. Returns the ``202`` accepted body
         ``{id, status, created_at}``; the caller polls ``get_pick_status``

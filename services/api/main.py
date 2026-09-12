@@ -1173,6 +1173,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Catalog snapshot not found.")
         return snapshot
 
+    @app.get("/catalog/archive/{archive_id}")
+    def catalog_archive(archive_id: str) -> dict[str, Any]:
+        archive = catalog_store.get_raw_archive(archive_id)
+        if archive is None:
+            raise HTTPException(status_code=404, detail="Catalog archive not found.")
+        return archive
+
     # ---- Health ----------------------------------------------------------- #
     @app.get("/healthz", response_model=HealthResponse)
     def healthz() -> HealthResponse:

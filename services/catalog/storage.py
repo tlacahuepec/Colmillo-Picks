@@ -20,6 +20,7 @@ from services.catalog.contracts import (
     SourceObservation,
     to_catalog_dict,
 )
+from services.catalog.archive import ArchivePolicy, archive_expiry, prepare_archive, utc_now
 
 
 class CatalogStore:
@@ -92,6 +93,15 @@ class CatalogStore:
                     lease_owner TEXT,
                     lease_until TEXT,
                     attempt INTEGER NOT NULL DEFAULT 1
+                );
+                CREATE TABLE IF NOT EXISTS catalog_raw_archives (
+                    archive_id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    warning TEXT NOT NULL,
+                    read_count INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS catalog_job_runs_date
                     ON catalog_job_runs(run_date, updated_at DESC);
@@ -204,8 +214,37 @@ class CatalogStore:
                 "events": connection.execute("SELECT COUNT(*) FROM catalog_events").fetchone()[0],
                 "snapshots": connection.execute("SELECT COUNT(*) FROM catalog_snapshots").fetchone()[0],
                 "observations": connection.execute("SELECT COUNT(*) FROM catalog_observations").fetchone()[0],
+                "raw_archives": connection.execute("SELECT COUNT(*) FROM catalog_raw_archives").fetchone()[0],
             }
         return {"available": True, "path": self.path, **counts}
+
+    def save_raw_archive(self, *, provider: str, payload: object,
+                         created_at: str | None = None,
+                         policy: ArchivePolicy = ArchivePolicy()) -> str:
+        created = created_at or utc_now()
+        archive_id, encoded = prepare_archive(payload, policy=policy)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO catalog_raw_archives (archive_id,provider,created_at,expires_at,payload,warning) VALUES (?,?,?,?,?,?)",
+                (archive_id, provider, created, archive_expiry(created, policy), encoded,
+                 "Provider source archive; may contain unverified or sensitive source material."),
+            )
+        return archive_id
+
+    def get_raw_archive(self, archive_id: str) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT archive_id,provider,created_at,expires_at,payload,warning FROM catalog_raw_archives WHERE archive_id=?", (archive_id,)).fetchone()
+            if not row:
+                return None
+            connection.execute("UPDATE catalog_raw_archives SET read_count=read_count+1 WHERE archive_id=?", (archive_id,))
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def purge_expired_archives(self, *, now: str | None = None) -> int:
+        with self._connect() as connection:
+            result = connection.execute("DELETE FROM catalog_raw_archives WHERE expires_at<=?", (now or utc_now(),))
+        return result.rowcount
 
     def acquire_job(self, *, job_id: str, run_date: str, now: str,
                     lease_until: str) -> bool:
