@@ -18,6 +18,11 @@ _CITATION_ANNOTATION = re.compile(r"\s*\[cite:\s*[\d,\s]+\]")
 _BARE_CITATION = re.compile(r'"\s*\[\d+(?:,\s*\d+)*\]')
 
 
+def _sdk_http_options(timeout_seconds: float) -> dict[str, int]:
+    """Convert the public seconds setting to google-genai's milliseconds."""
+    return {"timeout": max(1, round(timeout_seconds * 1000))}
+
+
 def _strip_citations(text: str) -> str:
     """Remove both [cite: N, N] and bare [N, N] citation markers from text."""
     result = _CITATION_ANNOTATION.sub("", text)
@@ -141,7 +146,10 @@ class GeminiLLMClient(LLMClient):
         else:
             from google import genai
 
-            self._client = genai.Client(api_key=api_key)
+            self._client = genai.Client(
+                api_key=api_key,
+                http_options=_sdk_http_options(timeout_seconds),
+            )
 
     @property
     def last_sources(self) -> list[GroundingSource]:

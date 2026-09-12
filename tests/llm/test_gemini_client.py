@@ -7,8 +7,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from llm.client import LLMError, GroundingSource, GroundingSupport, TokenUsage
-from llm.gemini_client import GeminiLLMClient
+from llm.gemini_client import GeminiLLMClient, _sdk_http_options
 from llm.provider_adapter import build_enrich_with_llm, validate_llm_runtime_config
+
+
+def test_sdk_http_options_converts_seconds_to_milliseconds() -> None:
+    assert _sdk_http_options(20.0) == {"timeout": 20_000}
+    assert _sdk_http_options(0) == {"timeout": 1}
 
 
 class _FakeResponse:
