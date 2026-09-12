@@ -64,6 +64,10 @@ Pyright currently enforces basic checking for the typed catalog subsystem. New
 production modules should be added to its configured scope as they become
 type-clean; legacy dynamic scripts are not blanket-suppressed.
 
+Ruff targets Python 3.11 and uses a 100-character formatting policy. CI
+explicitly enforces import and syntax/error rules; existing `E501` debt is
+tracked for a dedicated remediation rather than being hidden by a bulk rewrite.
+
 ### Setup
 
 ```bash
