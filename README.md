@@ -169,19 +169,21 @@ Verify LLM enrichment ran by checking the report includes:
 
 If you see `LLM status: not_requested`, the run included only deterministic scoring. Add `--use-llm --llm-provider gemini` to enable LLM enrichment.
 
-### Debug fixture LLM
+### Diagnose a failed query
 
-```powershell
-$env:COLMILLO_FIXTURE_LLM_DEBUG = "1"
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "..." 2> fixture-debug.log
-```
+Open **Diagnostics** in the sidebar, or select **View diagnostics** on a pick or
+slate. Filter by date, sport, outcome, service or ID, then select **Refresh
+diagnostics**. The page explains the outcome, recorded stages and suggested next
+action. Use **Prepare diagnostic ZIP** and **Download diagnostic ZIP** to share
+a sanitized report. A UI timeout can leave a job running; check its status before
+submitting again.
 
-### Debug grounding sources
-
-```powershell
-$env:COLMILLO_DEBUG_GROUNDING = "1"
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "..." 2> grounding-debug.log
-```
+Diagnostics collect bounded metadata: timings, provider/model, counts, retries
+and classified errors. Raw prompts, provider responses and credentials are
+excluded, including when legacy debug flags are set. See the
+[user and architecture guide](docs/diagnostics.md),
+[implementation checklist](docs/diagnostics-implementation-plan.md), and
+[validation record](docs/diagnostics-validation.md).
 
 ## API surface
 

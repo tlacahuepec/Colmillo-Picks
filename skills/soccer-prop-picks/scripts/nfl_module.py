@@ -1,11 +1,16 @@
 """NFL integration with the shared sport pipeline."""
 
-import logging
+from diagnostics_support import emit, error_info
 
 from nfl_domain import NFL_MARKETS, resolve_team
 from nfl_scoring import score_nfl
 
-logger = logging.getLogger(__name__)
+class NflDataQualityError(RuntimeError):
+    """NFL provider collection failed, as opposed to verified absence of picks."""
+
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__("NFL collection failed.")
 
 
 class NflNoPicks(RuntimeError):
@@ -42,20 +47,18 @@ class NflModule:
                 match_date=match_date,
                 league=league,
             )
+            if not data.get("offers") and data.get("provider_errors"):
+                raise NflDataQualityError({
+                    "error_code": "nfl_provider_failure",
+                    "provider_errors": data["provider_errors"],
+                }) from getattr(collector, "last_provider_error", None)
         except Exception as exc:
-            logger.warning("NFL collection unavailable (%s)", type(exc).__name__)
-            data = {
-                "game": None,
-                "players": [],
-                "offers": [],
-                "provider_statuses": {"context": "unavailable"},
-                "exclusions": [
-                    {
-                        "subject": "game",
-                        "reason": "NFL collection unavailable or invalid. Check provider configuration and search support.",
-                    }
-                ],
-            }
+            reason = error_info(exc)
+            emit("nfl_collection_failed", stage="collect", level="ERROR",
+                 outcome="failed", sport="nfl", **reason)
+            if isinstance(exc, NflDataQualityError):
+                raise
+            raise NflDataQualityError(reason) from exc
         game = data.get("game") or {}
         data.update(
             home_team=game.get("home_team") or resolve_team(home_team),
@@ -67,7 +70,13 @@ class NflModule:
         return data
 
     def score(self, match_inputs, *, markets=()):
-        return score_nfl(match_inputs, markets=markets)
+        scores = score_nfl(match_inputs, markets=markets)
+        if not scores and match_inputs.get("provider_errors"):
+            raise NflDataQualityError({
+                "error_code": "nfl_provider_failure",
+                "provider_errors": match_inputs["provider_errors"],
+            })
+        return scores
 
     def explain(self, scored_pick):
         return scored_pick.get("explainability", {}).get(

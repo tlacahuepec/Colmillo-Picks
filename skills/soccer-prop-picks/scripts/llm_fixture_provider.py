@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from diagnostics_support import diagnostic_stage, emit
+
 import json
 import os
 import re
-import sys
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from typing import Any, Callable
@@ -192,6 +193,7 @@ class OpenAICompatibleChatClient:
         self.timeout_seconds = timeout_seconds
         self.urlopen_fn = urlopen_fn
 
+    @diagnostic_stage("llm_http", provider="openai_compatible")
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         body = {
             "model": self.model,
@@ -261,12 +263,9 @@ class LLMFixtureProvider:
         )
 
     def _debug(self, event: str, payload: dict[str, Any]) -> None:
-        if not self.debug_enabled:
-            return
-        rendered = json.dumps(payload, ensure_ascii=True, default=str)
-        clipped = _truncate_debug(rendered, max_chars=max(256, self.debug_max_chars))
-        print(f"[fixture-llm-debug] {event}: {clipped}", file=sys.stderr)
+        emit("provider_debug", stage="collection", level="DEBUG", phase=event)
 
+    @diagnostic_stage("llm_fixture_provider")
     def lookup_fixture(self, request: Any) -> dict[str, Any] | None:
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(request)

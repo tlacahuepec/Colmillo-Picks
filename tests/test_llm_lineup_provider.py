@@ -153,8 +153,10 @@ def test_llm_lineup_provider_returns_none_on_failure() -> None:
     assert result is None
 
 
-def test_llm_lineup_provider_emits_warning_on_failure(capsys) -> None:
+def test_llm_lineup_provider_emits_warning_on_failure(capsys, monkeypatch) -> None:
     module = load_script_module("llm_lineup_provider.py")
+    events = []
+    monkeypatch.setattr(module, "emit", lambda event, **fields: events.append((event, fields)))
 
     class _FailingClient:
         def generate_structured(self, *, system_prompt, user_prompt, schema):
@@ -164,8 +166,10 @@ def test_llm_lineup_provider_emits_warning_on_failure(capsys) -> None:
     provider.get_lineups_and_availability(_fixture())
 
     captured = capsys.readouterr()
-    assert "lineup provider failed" in captured.err.lower()
-    assert "LLM unavailable" in captured.err
+    assert captured.err == ""
+    assert events[0][0] == "provider_failed"
+    assert events[0][1]["exception_type"] == "RuntimeError"
+    assert "LLM unavailable" not in str(events)
 
 
 def test_llm_lineup_provider_prompt_includes_team_names_and_date() -> None:

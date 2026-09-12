@@ -300,7 +300,7 @@ class TestLLMPlayerStatsProviderDebug:
         )
 
         stderr = capsys.readouterr().err
-        assert "[player-stats-llm-debug] response:" in stderr
+        assert stderr == ""  # Even opt-in diagnostics remain metadata-only.
 
     def test_captures_last_sources(self) -> None:
         module = load_script_module("llm_player_stats_provider.py")

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from diagnostics_support import diagnostic_stage, emit, error_info
+
 import json
-import os
 import statistics
-import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,13 +24,13 @@ class LLMPropsProvider:
         self.last_sources: list = []
         self.last_grounding_metadata = None
 
+    @diagnostic_stage("llm_props_provider")
     def get_prop_lines(
         self,
         *,
         players: list[dict[str, Any]],
         markets: tuple[str, ...],
     ) -> dict[str, dict[str, Any]] | None:
-        debug = os.getenv("COLMILLO_PROPS_LLM_DEBUG", "").strip() not in ("", "0", "false")
         try:
             result = self._client.generate_structured(
                 system_prompt=self._build_system_prompt(),
@@ -39,18 +39,9 @@ class LLMPropsProvider:
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
             self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
-            if debug:
-                print(
-                    f"[props-llm-debug] response: {json.dumps(result, default=str)[:2000]}",
-                    file=sys.stderr,
-                )
             return self._map_response(result)
         except Exception as exc:
-            if debug:
-                print(
-                    f"[props-llm-debug] error: {type(exc).__name__}: {exc}",
-                    file=sys.stderr,
-                )
+            emit("provider_failed", stage="llm_props_provider", level="WARNING", outcome="failed", **error_info(exc))
             return None
 
     @staticmethod

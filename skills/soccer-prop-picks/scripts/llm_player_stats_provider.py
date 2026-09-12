@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from diagnostics_support import diagnostic_stage, emit, error_info
+
 import json
 import logging
-import os
-import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,10 +26,10 @@ class LLMPlayerStatsProvider:
         self.last_sources: list = []
         self.last_grounding_metadata = None
 
+    @diagnostic_stage("llm_player_stats_provider")
     def get_player_stats(
         self, *, home_team: str, away_team: str, match_date: str,
     ) -> list[dict[str, Any]] | None:
-        debug = os.getenv("COLMILLO_PLAYER_STATS_LLM_DEBUG", "").strip() not in ("", "0", "false")
         try:
             result = self._client.generate_structured(
                 system_prompt=self._build_system_prompt(),
@@ -40,11 +40,6 @@ class LLMPlayerStatsProvider:
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
             self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
-            if debug:
-                print(
-                    f"[player-stats-llm-debug] response: {json.dumps(result, default=str)[:2000]}",
-                    file=sys.stderr,
-                )
             mapped = self._map_response(result)
             if mapped is None:
                 logger.warning(
@@ -67,6 +62,7 @@ class LLMPlayerStatsProvider:
                 )
             return mapped
         except Exception as exc:
+            emit("provider_failed", stage="llm_player_stats_provider", level="WARNING", outcome="failed", **error_info(exc))
             logger.warning(
                 "basketball_player_stats_llm_error",
                 extra={
@@ -74,14 +70,9 @@ class LLMPlayerStatsProvider:
                     "away_team": away_team,
                     "match_date": match_date,
                     "error_type": type(exc).__name__,
-                    "error": str(exc)[:500],
+                    **error_info(exc),
                 },
             )
-            if debug:
-                print(
-                    f"[player-stats-llm-debug] error: {type(exc).__name__}: {exc}",
-                    file=sys.stderr,
-                )
             return None
 
     @staticmethod

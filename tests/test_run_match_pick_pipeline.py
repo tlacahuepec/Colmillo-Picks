@@ -163,7 +163,7 @@ def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
         check=True,
         capture_output=True,
         text=True,
-        env={"PATH": str(os.environ.get("PATH", ""))},
+        env={key: os.environ[key] for key in ("PATH", "COLMILLO_RUNS_DB_PATH", "COLMILLO_DIAGNOSTICS_DB_PATH") if key in os.environ},
     )
 
     report = result.stdout
@@ -171,6 +171,7 @@ def test_pipeline_cli_runs_end_to_end_with_single_command() -> None:
     assert "Milan" in report
     assert "Top 5 Recommended Picks" in report
     assert "| 1 |" in report
+    assert '"event":"operation.finished"' not in report
 
 
 @pytest.mark.parametrize("invalid_top_n", ["0", "-1"])
@@ -223,7 +224,7 @@ def test_pipeline_cli_rejects_llm_without_credentials() -> None:
         check=False,
         capture_output=True,
         text=True,
-        env={"PATH": str(os.environ.get("PATH", ""))},
+        env={key: os.environ[key] for key in ("PATH", "COLMILLO_RUNS_DB_PATH", "COLMILLO_DIAGNOSTICS_DB_PATH") if key in os.environ},
     )
 
     assert result.returncode != 0
@@ -714,5 +715,5 @@ def test_main_reports_pipeline_service_cause(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(pipeline, "build_dependency_bundle", lambda **kwargs: {})
     monkeypatch.setattr(pipeline, "run_pipeline_with_payload", fake_run_pipeline_with_payload)
 
-    with pytest.raises(SystemExit, match="Fixture lookup failed: No fixture matched"):
+    with pytest.raises(SystemExit, match="Pipeline failed during collect"):
         pipeline.main()

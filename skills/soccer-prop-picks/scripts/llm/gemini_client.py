@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from diagnostics_support import diagnostic_stage, emit, provider_attempt, retry_sleep
+
 import json
 import re
 from time import sleep
@@ -128,7 +130,7 @@ class GeminiLLMClient(LLMClient):
         self._max_retries = max_retries
         self._retry_delay_seconds = retry_delay_seconds
         self._search_grounding = search_grounding
-        self._sleep = sleep_fn
+        self._sleep = retry_sleep(sleep_fn, provider="gemini", model=model)
         self._last_sources: list[GroundingSource] = []
         self._last_grounding_metadata: GroundingMetadataResult | None = None
         self._last_token_usage: TokenUsage | None = None
@@ -173,7 +175,10 @@ class GeminiLLMClient(LLMClient):
                   ("prompt_token_count", "candidates_token_count", "total_token_count")]
         self._last_token_usage = TokenUsage(*counts)
         self._cumulative_tokens = [old + new for old, new in zip(self._cumulative_tokens, counts)]
+        emit("provider.usage", provider="gemini", model=self._model,
+             prompt_tokens=counts[0], completion_tokens=counts[1], total_tokens=counts[2])
 
+    @diagnostic_stage("llm_research_extract", provider="gemini")
     def research_then_extract(self, *, research_prompt: str, schema: dict) -> dict:
         """Research with citations first, then extract JSON without another search.
 
@@ -188,12 +193,13 @@ class GeminiLLMClient(LLMClient):
         if not self._search_grounding:
             raise LLMError("Research requires a search-enabled client.")
         try:
-            researched = self._client.models.generate_content(
-                model=self._model, contents=research_prompt,
-                config={"tools": [{"google_search": {}}], "max_output_tokens": self._max_output_tokens,
-                        "thinking_config": {"thinking_budget": 0},
-                        "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
-            )
+            with provider_attempt("gemini", model=self._model, stage="llm_research"):
+                researched = self._client.models.generate_content(
+                    model=self._model, contents=research_prompt,
+                    config={"tools": [{"google_search": {}}], "max_output_tokens": self._max_output_tokens,
+                            "thinking_config": {"thinking_budget": 0},
+                            "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
+                )
             self._record_research_usage(researched)
             candidates = getattr(researched, "candidates", None) or []
             raw_metadata = getattr(candidates[0], "grounding_metadata", None) if candidates else None
@@ -213,12 +219,13 @@ class GeminiLLMClient(LLMClient):
                 "task": "Extract only facts present in the supplied research evidence into the schema. Do not research, use memory, invent values or infer missing prices. Use null or empty arrays for missing facts. source_urls/source_url must use the exact supplied citation URLs supporting that entity or offer. Source indices in supports refer to the sources array. Never assign an unrelated source just to fill a field. Preserve the exact book, selection, line, odds and observation time. Convert American odds to decimal only if explicitly observed. Follow the schema enum spellings. Return one JSON object.",
                 "request": research_prompt, "schema": schema, "evidence": evidence,
             }
-            extracted = self._client.models.generate_content(
-                model=self._model, contents=json.dumps(extraction_prompt),
-                config={"response_mime_type": "application/json", "max_output_tokens": self._max_output_tokens,
-                        "thinking_config": {"thinking_budget": 0}, "temperature": 0,
-                        "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
-            )
+            with provider_attempt("gemini", model=self._model, stage="llm_extraction"):
+                extracted = self._client.models.generate_content(
+                    model=self._model, contents=json.dumps(extraction_prompt),
+                    config={"response_mime_type": "application/json", "max_output_tokens": self._max_output_tokens,
+                            "thinking_config": {"thinking_budget": 0}, "temperature": 0,
+                            "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
+                )
             self._record_research_usage(extracted)
             result = _parse_first_json_object(_extract_json_text(extracted.text or ""))
             if not isinstance(result, dict):
@@ -265,11 +272,6 @@ class GeminiLLMClient(LLMClient):
         search_entry_point = getattr(grounding_meta, "search_entry_point", None)
         if search_entry_point:
             rendered = getattr(search_entry_point, "rendered_content", "") or ""
-            if _DEBUG_GROUNDING:
-                import sys
-                print(f"[grounding-debug] search_entry_point rendered_content length: {len(rendered)}", file=sys.stderr)
-                if rendered:
-                    print(f"[grounding-debug] search_entry_point snippet: {rendered[:500]}", file=sys.stderr)
             if rendered:
                 for match in re.finditer(r'href="(https?://[^"]+)"', rendered):
                     url = match.group(1)
@@ -277,10 +279,6 @@ class GeminiLLMClient(LLMClient):
                         sources.append(GroundingSource(url=url, title=url.split("/")[2]))
         if sources:
             return sources
-        web_queries = getattr(grounding_meta, "web_search_queries", None) or []
-        if _DEBUG_GROUNDING and web_queries:
-            import sys
-            print("[grounding-debug] Falling back to web_search_queries as source indicators", file=sys.stderr)
         return sources
 
     def _extract_supports_from_metadata(self, grounding_meta: Any) -> tuple[GroundingSupport, ...]:
@@ -302,6 +300,7 @@ class GeminiLLMClient(LLMClient):
             ))
         return tuple(supports)
 
+    @diagnostic_stage("llm_generate", provider="gemini")
     def generate_structured(
         self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
     ) -> dict:
@@ -310,58 +309,62 @@ class GeminiLLMClient(LLMClient):
 
         for attempt in range(1, attempts + 1):
             try:
-                config: dict[str, Any] = {
-                    "max_output_tokens": self._max_output_tokens,
-                    "thinking_config": {"thinking_budget": 0},
-                }
-                if temperature is not None:
-                    config["temperature"] = temperature
-                if self._search_grounding:
-                    config["tools"] = [{"google_search": {}}]
-                else:
-                    config["response_mime_type"] = "application/json"
-                response = self._client.models.generate_content(
-                    model=self._model,
-                    contents=prompt,
-                    config=config,
-                )
-                try:
-                    text = response.text
-                except (ValueError, AttributeError):
-                    text = None
-                if not text and hasattr(response, "candidates") and response.candidates:
-                    parts = response.candidates[0].content.parts
-                    if parts:
-                        text = _best_json_part(parts)
-                if not text or not text.strip():
-                    raise LLMError("Gemini returned empty response")
-                json_text = _extract_json_text(text)
-                if not json_text:
-                    raise LLMError("Gemini returned empty response")
-                parsed = _parse_first_json_object(json_text)
-                if not isinstance(parsed, dict):
-                    raise LLMError("Gemini returned non-dict JSON output")
-                self._last_grounding_metadata = self._extract_grounding_metadata(response)
-                if self._last_grounding_metadata:
-                    self._last_sources = list(self._last_grounding_metadata.sources)
-                else:
-                    self._last_sources = []
-                usage = getattr(response, "usage_metadata", None)
-                if usage:
-                    prompt = getattr(usage, "prompt_token_count", 0) or 0
-                    completion = getattr(usage, "candidates_token_count", 0) or 0
-                    total = getattr(usage, "total_token_count", 0) or 0
-                    self._last_token_usage = TokenUsage(
-                        prompt_tokens=prompt,
-                        completion_tokens=completion,
-                        total_tokens=total,
+                with provider_attempt("gemini", attempt=attempt, model=self._model):
+                    config: dict[str, Any] = {
+                        "max_output_tokens": self._max_output_tokens,
+                        "thinking_config": {"thinking_budget": 0},
+                    }
+                    if temperature is not None:
+                        config["temperature"] = temperature
+                    if self._search_grounding:
+                        config["tools"] = [{"google_search": {}}]
+                    else:
+                        config["response_mime_type"] = "application/json"
+                    response = self._client.models.generate_content(
+                        model=self._model,
+                        contents=prompt,
+                        config=config,
                     )
-                    self._cumulative_tokens[0] += prompt
-                    self._cumulative_tokens[1] += completion
-                    self._cumulative_tokens[2] += total
-                else:
-                    self._last_token_usage = None
-                return parsed
+                    try:
+                        text = response.text
+                    except (ValueError, AttributeError):
+                        text = None
+                    if not text and hasattr(response, "candidates") and response.candidates:
+                        parts = response.candidates[0].content.parts
+                        if parts:
+                            text = _best_json_part(parts)
+                    if not text or not text.strip():
+                        raise LLMError("Gemini returned empty response")
+                    json_text = _extract_json_text(text)
+                    if not json_text:
+                        raise LLMError("Gemini returned empty response")
+                    parsed = _parse_first_json_object(json_text)
+                    if not isinstance(parsed, dict):
+                        raise LLMError("Gemini returned non-dict JSON output")
+                    self._last_grounding_metadata = self._extract_grounding_metadata(response)
+                    if self._last_grounding_metadata:
+                        self._last_sources = list(self._last_grounding_metadata.sources)
+                    else:
+                        self._last_sources = []
+                    usage = getattr(response, "usage_metadata", None)
+                    if usage:
+                        prompt = getattr(usage, "prompt_token_count", 0) or 0
+                        completion = getattr(usage, "candidates_token_count", 0) or 0
+                        total = getattr(usage, "total_token_count", 0) or 0
+                        self._last_token_usage = TokenUsage(
+                            prompt_tokens=prompt,
+                            completion_tokens=completion,
+                            total_tokens=total,
+                        )
+                        self._cumulative_tokens[0] += prompt
+                        self._cumulative_tokens[1] += completion
+                        self._cumulative_tokens[2] += total
+                        emit("provider.usage", provider="gemini", model=self._model,
+                             prompt_tokens=prompt, completion_tokens=completion, total_tokens=total,
+                             source_count=len(self._last_sources))
+                    else:
+                        self._last_token_usage = None
+                    return parsed
             except json.JSONDecodeError as exc:
                 if attempt >= attempts:
                     raise LLMError(f"Gemini returned invalid JSON: {exc}") from exc

@@ -200,11 +200,12 @@ def test_collection_failure_is_explicit_without_samples():
     module = NflModule(
         collector=lambda **kwargs: (_ for _ in ()).throw(ValueError("unavailable"))
     )
-    data = module.collect_inputs(
-        home_team="KC", away_team="BUF", match_date="2026-09-10"
-    )
-    assert module.score(data) == []
-    assert data["exclusions"]
+    from nfl_module import NflDataQualityError
+    import pytest
+    with pytest.raises(NflDataQualityError) as raised:
+        module.collect_inputs(home_team="KC", away_team="BUF", match_date="2026-09-10")
+    assert isinstance(raised.value.__cause__, ValueError)
+    assert raised.value.reason["exception_type"] == "ValueError"
 
 
 def test_request_and_slate_subject_contract():
