@@ -1168,7 +1168,7 @@ def create_app() -> FastAPI:
 
     @app.get("/catalog/health")
     def catalog_health() -> dict[str, Any]:
-        return catalog_store.health()
+        return catalog_store.health(operational=True)
 
     @app.get("/catalog/events/{event_id}/snapshot")
     def catalog_snapshot(event_id: str) -> dict[str, Any]:

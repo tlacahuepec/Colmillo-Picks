@@ -208,18 +208,22 @@ class CatalogStore:
             ).fetchall()
         return [self._decode_snapshot(row["payload"]) for row in rows]
 
-    def health(self) -> dict:
+    def health(self, *, operational: bool = False) -> dict:
         with self._connect() as connection:
             counts = {
                 "events": connection.execute("SELECT COUNT(*) FROM catalog_events").fetchone()[0],
                 "snapshots": connection.execute("SELECT COUNT(*) FROM catalog_snapshots").fetchone()[0],
                 "observations": connection.execute("SELECT COUNT(*) FROM catalog_observations").fetchone()[0],
-                "raw_archives": connection.execute("SELECT COUNT(*) FROM catalog_raw_archives").fetchone()[0],
             }
+            raw_archives = connection.execute("SELECT COUNT(*) FROM catalog_raw_archives").fetchone()[0]
             jobs = {row["state"]: row["count"] for row in connection.execute(
                 "SELECT state, COUNT(*) AS count FROM catalog_job_runs GROUP BY state"
             ).fetchall()}
-        return {"available": True, "path": self.path, "jobs_by_state": jobs, **counts}
+        result = {"available": True, "path": self.path, **counts}
+        if operational:
+            result["jobs_by_state"] = jobs
+            result["raw_archives"] = raw_archives
+        return result
 
     def save_raw_archive(self, *, provider: str, payload: object,
                          created_at: str | None = None,

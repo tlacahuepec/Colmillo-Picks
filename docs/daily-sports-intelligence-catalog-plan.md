@@ -6,8 +6,8 @@ Progress: #310 contracts, #311 storage foundation, #312 provider ports, #313
 importance scoring, #314 scheduling, #315 the deterministic LangGraph workflow,
 and #316 the soccer adapter, #317 the basketball adapter, #318 the MLB adapter,
 #319 the NFL adapter, #320 freshness decisions, #321 the catalog-first slate
-read seam, #322 catalog read endpoints, #323 archive governance and #324
-catalog health are
+read seam, #322 catalog read endpoints, #323 archive governance, #324 catalog
+health and #325 rollout policy are
 implemented and validated on
 `feat/daily-sports-catalog`.
 
