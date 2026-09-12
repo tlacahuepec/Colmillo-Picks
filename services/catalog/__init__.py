@@ -13,6 +13,7 @@ from services.catalog.providers import CatalogProvider, ProviderRequest, Provide
 from services.catalog.importance import ImportanceConfig, rank_events, score_event, select_important_events
 from services.catalog.scheduler import CatalogScheduler, DailySchedule
 from services.catalog.graph import CatalogGraphDeps, CatalogGraphState, build_catalog_graph, run_catalog_graph
+from services.catalog.freshness import FreshnessDecision, FreshnessPolicy, evaluate_field, evaluate_snapshot, resources_to_refresh
 from services.catalog.sport_adapters import BasketballCatalogAdapter, MlbCatalogAdapter, NflCatalogAdapter, SoccerCatalogAdapter, SportCatalogConfig
 
 __all__ = [
@@ -36,6 +37,11 @@ __all__ = [
     "CatalogGraphState",
     "build_catalog_graph",
     "run_catalog_graph",
+    "FreshnessDecision",
+    "FreshnessPolicy",
+    "evaluate_field",
+    "evaluate_snapshot",
+    "resources_to_refresh",
     "SoccerCatalogAdapter",
     "SportCatalogConfig",
     "BasketballCatalogAdapter",
