@@ -23,6 +23,7 @@ class SlateResult:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    discovery_failures: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +163,7 @@ def execute_slate_job(
             total_tokens = t
 
     return SlateResult(
+        discovery_failures=sum(bool(v.get("error")) for v in results.values() if isinstance(v, dict)),
         candidates=ranked,
         match_runs=match_runs,
         latency_ms=total_latency_ms,

@@ -232,7 +232,7 @@ def test_end_to_end_user_path_is_single_command_cli() -> None:
         check=True,
         capture_output=True,
         text=True,
-        env={"PATH": str(os.environ.get("PATH", ""))},
+        env={key: os.environ[key] for key in ("PATH", "COLMILLO_RUNS_DB_PATH", "COLMILLO_DIAGNOSTICS_DB_PATH") if key in os.environ},
     )
 
     report = result.stdout

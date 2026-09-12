@@ -190,9 +190,7 @@ def test_llm_fixture_provider_debug_logs_request_and_response(monkeypatch, capsy
     )
 
     stderr = capsys.readouterr().err
-    assert "[fixture-llm-debug] request:" in stderr
-    assert "[fixture-llm-debug] response:" in stderr
-    assert "Bayern Munich" in stderr
+    assert stderr == ""  # Legacy switches must never restore raw prompt/response dumps.
 
 
 def test_llm_fixture_provider_debug_logs_reason_when_match_not_found(monkeypatch, capsys) -> None:
@@ -219,8 +217,7 @@ def test_llm_fixture_provider_debug_logs_reason_when_match_not_found(monkeypatch
 
     assert fixture is None
     stderr = capsys.readouterr().err
-    assert "[fixture-llm-debug] match_not_found:" in stderr
-    assert "Could not verify fixture for requested date." in stderr
+    assert stderr == ""  # Model-provided explanations stay out of console diagnostics.
 
 
 def test_llm_fixture_provider_soft_accepts_high_confidence_team_date_match() -> None:

@@ -48,6 +48,7 @@ from services.api.middleware import (  # noqa: E402
 )
 from services.api.sentry import init_sentry_if_configured  # noqa: E402
 from services.catalog.storage import CatalogStore  # noqa: E402
+from services.diagnostics import emit, error_info, finish_operation, instrument, operation, public_trace  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -100,7 +101,12 @@ class StructuredPicksRequest(BaseModel):
     availability_provider: str | None = None
 
 
-class PickAcceptedResponse(BaseModel):
+class DiagnosticReference(BaseModel):
+    operation_id: str | None = None
+    outcome: str | None = None
+
+
+class PickAcceptedResponse(DiagnosticReference):
     """Body of the ``202`` returned by ``POST /picks``."""
 
     id: str
@@ -108,7 +114,7 @@ class PickAcceptedResponse(BaseModel):
     created_at: datetime
 
 
-class PickStatusResponse(BaseModel):
+class PickStatusResponse(DiagnosticReference):
     id: str
     status: str
     error_stage: str | None = None
@@ -117,7 +123,7 @@ class PickStatusResponse(BaseModel):
     error_details: dict[str, Any] | None = None  # Rich observability context for failures (Epic #219)
 
 
-class PickSummary(BaseModel):
+class PickSummary(DiagnosticReference):
     """Lightweight row used by ``GET /picks`` listings."""
 
     id: str
@@ -139,7 +145,7 @@ class PicksListResponse(BaseModel):
     offset: int
 
 
-class PickDetailResponse(BaseModel):
+class PickDetailResponse(DiagnosticReference):
     id: str
     created_at: datetime
     match_query: str
@@ -297,13 +303,13 @@ class SlateRequest(BaseModel):
     timezone: str | None = Field(None, description="IANA timezone for date filtering (e.g., America/Chicago)")
 
 
-class SlateAcceptedResponse(BaseModel):
+class SlateAcceptedResponse(DiagnosticReference):
     id: str
     status: str
     created_at: datetime
 
 
-class SlateStatusResponse(BaseModel):
+class SlateStatusResponse(DiagnosticReference):
     id: str
     status: str
     error_stage: str | None = None
@@ -311,7 +317,7 @@ class SlateStatusResponse(BaseModel):
     latency_ms: int | None = None
 
 
-class SlateSummary(BaseModel):
+class SlateSummary(DiagnosticReference):
     id: str
     created_at: datetime
     status: str
@@ -356,7 +362,7 @@ class SlateRankedCandidate(BaseModel):
     source_pick: dict[str, Any] = Field(default_factory=dict)
 
 
-class SlateDetailResponse(BaseModel):
+class SlateDetailResponse(DiagnosticReference):
     id: str
     created_at: datetime
     status: str
@@ -374,7 +380,7 @@ class SlateDetailResponse(BaseModel):
     error_message: str | None = None
 
 
-class RunSummary(BaseModel):
+class RunSummary(DiagnosticReference):
     """Lightweight row used by ``GET /runs`` listings."""
 
     id: str
@@ -413,7 +419,7 @@ class RunPickDetail(BaseModel):
     source_pick: dict[str, Any] = Field(default_factory=dict)
 
 
-class RunDetailResponse(BaseModel):
+class RunDetailResponse(DiagnosticReference):
     id: str
     source: str
     match_query: str
@@ -433,6 +439,7 @@ class RunDetailResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
+@instrument("availability")
 def _check_availability_for_picks(
     scores: list[dict[str, Any]], platforms: list[str]
 ) -> list[AvailabilityBadge]:
@@ -507,6 +514,8 @@ def _build_request_dict(payload: PicksRequest) -> dict[str, Any]:
 
 def _row_to_summary(row: db_module.PickRun) -> PickSummary:
     return PickSummary(
+        operation_id=getattr(row, "operation_id", None),
+        outcome=getattr(row, "outcome", None),
         id=row.id,
         created_at=row.created_at,
         match_query=row.match_query,
@@ -531,6 +540,8 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
         except Exception:
             error_details = None
     return PickDetailResponse(
+        operation_id=getattr(row, "operation_id", None),
+        outcome=getattr(row, "outcome", None),
         id=row.id,
         created_at=row.created_at,
         match_query=row.match_query,
@@ -542,11 +553,11 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
         latency_ms=row.latency_ms,
         error_stage=row.error_stage,
         error_message=row.error_message,
-        error_details=error_details,
+        error_details=public_trace(error_details),
         request=json.loads(row.request_json) if row.request_json else {},
         report_markdown=row.report_markdown or "",
         scores=json.loads(row.scores_json) if row.scores_json else [],
-        trace=json.loads(row.trace_json) if row.trace_json else None,
+        trace=public_trace(json.loads(row.trace_json)) if row.trace_json else None,
         sport=getattr(row, "sport", None),
         league=getattr(row, "league", None),
         markets=json.loads(row.markets_json) if getattr(row, "markets_json", None) else None,
@@ -557,7 +568,8 @@ def _build_run_ledger():
     from run_ledger import InMemoryRunLedger, SqliteRunLedger
     try:
         return SqliteRunLedger()
-    except Exception:
+    except Exception as exc:
+        emit("ledger.unavailable", stage="save", level="WARNING", **error_info(exc))
         return InMemoryRunLedger()
 
 
@@ -613,6 +625,7 @@ def _handle_legacy_picks(body: dict[str, Any], background_tasks: Any) -> PickAcc
             _run_next_queued_job, row.id, request_dict, bundle_kwargs
         )
     return PickAcceptedResponse(
+        operation_id=row.operation_id,
         id=row.id,
         status=db_module.PICK_STATUS_PENDING,
         created_at=row.created_at,
@@ -688,6 +701,7 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
                 _run_next_queued_job, row.id, request_dict, bundle_kwargs
             )
         return PickAcceptedResponse(
+            operation_id=row.operation_id,
             id=row.id,
             status=db_module.PICK_STATUS_PENDING,
             created_at=row.created_at,
@@ -728,6 +742,7 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
             _run_next_queued_job, row.id, request_dict, bundle_kwargs
         )
     return PickAcceptedResponse(
+        operation_id=row.operation_id,
         id=row.id,
         status=db_module.PICK_STATUS_PENDING,
         created_at=row.created_at,
@@ -776,6 +791,7 @@ def _run_sport_module_pipeline(request_dict: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
+        "outcome": getattr(pipeline_result, "outcome", None) or ("partial" if pipeline_result.scores and pipeline_result.match_inputs.get("provider_errors") else "success" if pipeline_result.scores else "no_picks"),
         "scores": _filter_zero_line_scores(pipeline_result.scores),
         "match_inputs": pipeline_result.match_inputs,
         "steps": pipeline_result.steps,
@@ -859,9 +875,29 @@ def _execute_pipeline_job(
     request_dict: dict[str, Any],
     bundle_kwargs: dict[str, Any],
 ) -> bool:
+    ident = request_dict.get("operation_id") or pick_id
+    request_dict = {**request_dict, "operation_id": ident}
+    with operation("generate", operation_id=ident, service="worker" if os.getenv("COLMILLO_WORKER_MODE") == "external" else "api",
+                   pick_id=pick_id, **{k: request_dict[k] for k in ("request_id", "job_id", "sport", "home_team", "away_team", "event_date", "attempt", "queue_ms") if k in request_dict}) as diagnostic:
+        success = _execute_pipeline_job_inner(pick_id=pick_id, request_dict=request_dict, bundle_kwargs=bundle_kwargs)
+        outcome, summary = "success" if success else "failed", {}
+        try:
+            row = db_module.get_pick_run(pick_id)
+            outcome = getattr(row, "outcome", None) or outcome
+            summary = json.loads(row.diagnostics_json) if row and row.diagnostics_json else {}
+            if not isinstance(summary, dict):
+                summary = {}
+        except Exception as exc:
+            emit("diagnostics.summary_unavailable", level="WARNING", **error_info(exc))
+        diagnostic.finish(outcome, **{k: v for k, v in summary.items() if k not in {"outcome", "summary"}})
+        return success
+
+
+def _execute_pipeline_job_inner(*, pick_id: str, request_dict: dict[str, Any], bundle_kwargs: dict[str, Any]) -> bool:
     """Background task body: run the pipeline and update the pending row."""
     ledger = _build_run_ledger()
     run_ctx = ledger.start_run(source="api", request=request_dict)
+    emit("ledger.started", run_id=run_ctx.id)
 
     started = time.perf_counter()
     try:
@@ -871,8 +907,10 @@ def _execute_pipeline_job(
             deps = build_dependency_bundle(**bundle_kwargs)
             result = run_pipeline_with_payload(request=request_dict, deps=deps)
     except PipelineRunError as exc:
+        diagnostic_error = error_info(exc)
+        emit("pipeline.failed", stage=exc.stage, level="ERROR", **diagnostic_error)
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
-        error_details = getattr(exc, "error_details", None)
+        error_details = {**diagnostic_error, **(getattr(exc, "error_details", None) or {})}
         db_module.mark_pick_failed(
             pick_id=pick_id,
             stage=exc.stage,
@@ -907,10 +945,11 @@ def _execute_pipeline_job(
 
         return False
     except PipelineServiceError as exc:
+        emit("pipeline.failed", stage=exc.stage, level="ERROR", **error_info(exc))
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         cause = exc.__cause__
         message = str(cause) if cause else str(exc)
-        error_details = getattr(exc, "error_details", None)
+        error_details = {**error_info(exc), **(getattr(exc, "error_details", None) or {})}
         db_module.mark_pick_failed(
             pick_id=pick_id, stage=exc.stage, message=message, latency_ms=latency_ms, error_details=error_details
         )
@@ -918,8 +957,9 @@ def _execute_pipeline_job(
         ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage, provider_status=provider_status)
         return False
     except Exception as exc:  # configuration / unexpected errors
+        emit("pipeline.failed", level="ERROR", **error_info(exc))
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
-        error_details = getattr(exc, "error_details", None)
+        error_details = {**error_info(exc), **(getattr(exc, "error_details", None) or {})}
         db_module.mark_pick_failed(
             pick_id=pick_id, stage="unknown", message=str(exc), latency_ms=latency_ms, error_details=error_details
         )
@@ -941,6 +981,7 @@ def _execute_pipeline_job(
     except Exception as exc:
         _logger = logging.getLogger("colmillo")
         _logger.error("mark_pick_success_failed", extra={"pick_id": pick_id, "error": str(exc)})
+        emit("persistence.failed", stage="save", level="ERROR", **error_info(exc))
         ledger.fail_run(run_ctx.id, error_summary=f"post-success persistence: {exc}", error_stage="persistence")
         return False
 
@@ -949,14 +990,17 @@ def _execute_pipeline_job(
             ledger.record_step(run_ctx.id, step["name"], status=step["status"], duration_ms=step["duration_ms"])
         ledger.save_picks(run_ctx.id, result.get("scores", []))
         failed_steps = [s for s in result.get("steps", []) if s["status"] == "failed"]
-        if failed_steps:
+        if failed_steps or result.get("outcome") == "partial":
             reasons = [f"{s['name']} failed" for s in failed_steps]
+            if not reasons:
+                reasons = ["Some provider inputs were unavailable."]
             ledger.partial_run(run_ctx.id, reasons=reasons)
         else:
-            ledger.complete_run(run_ctx.id)
+            ledger.complete_run(run_ctx.id, outcome="success" if result.get("scores") else "no_picks")
     except Exception as exc:
         _logger = logging.getLogger("colmillo")
         _logger.error("ledger_post_success_failed", extra={"pick_id": pick_id, "error": str(exc)})
+        emit("ledger.failed", stage="save", level="ERROR", **error_info(exc))
 
     return True
 
@@ -988,6 +1032,15 @@ def _run_next_queued_slate_job() -> None:
     if item is None:
         return
     slate_id, request_dict, job_id = item
+    with operation("slate", operation_id=request_dict.get("operation_id") or slate_id,
+                   slate_id=slate_id, job_id=job_id,
+                   **{k: request_dict[k] for k in ("request_id", "attempt", "queue_ms") if k in request_dict}) as diagnostic:
+        _execute_slate_record(slate_id, request_dict, job_id)
+        row = db_module.get_slate_run(slate_id)
+        diagnostic.finish(getattr(row, "outcome", None) or "failed")
+
+
+def _execute_slate_record(slate_id, request_dict, job_id):
 
     from services.api.slate_orchestration import (
         execute_slate_job,
@@ -1019,7 +1072,7 @@ def _run_next_queued_slate_job() -> None:
             for idx, c in enumerate(result.candidates)
         ]
 
-        if not result.candidates and result.matches_attempted > 0:
+        if not result.candidates and (getattr(result, "discovery_failures", 0) or any(m.get("status") in {"failed", "pending_data"} for m in result.match_runs)):
             db_module.mark_slate_failed(
                 slate_id=slate_id,
                 stage="aggregation",
@@ -1038,9 +1091,15 @@ def _run_next_queued_slate_job() -> None:
                 prompt_tokens=result.prompt_tokens,
                 completion_tokens=result.completion_tokens,
                 total_tokens=result.total_tokens,
+                partial=bool(getattr(result, "discovery_failures", 0)),
             )
-        jobs_module.mark_slate_job_done(job_id)
+        row = db_module.get_slate_run(slate_id)
+        if row and row.status == "failed":
+            jobs_module.mark_slate_job_failed(job_id, "No viable results; see diagnostics.")
+        else:
+            jobs_module.mark_slate_job_done(job_id)
     except Exception as exc:
+        emit("slate.failed", level="ERROR", **error_info(exc))
         db_module.mark_slate_failed(
             slate_id=slate_id,
             stage="discovery",
@@ -1069,6 +1128,18 @@ def _build_slate_deps(request_dict: dict[str, Any]):
     def run_pipeline(
         *, sport: str, home_team: str, away_team: str, event_date: str, markets: tuple[str, ...]
     ) -> list[dict[str, Any]]:
+        with operation("slate_match", sport=sport, home_team=home_team, away_team=away_team, event_date=event_date) as diagnostic:
+            try:
+                scores = run_match(sport=sport, home_team=home_team, away_team=away_team, event_date=event_date, markets=markets)
+            except Exception as exc:
+                from nfl_module import NflNoPicks
+                if isinstance(exc, NflNoPicks):
+                    diagnostic.finish("no_picks")
+                raise
+            diagnostic.finish("success" if scores else "no_picks", pick_count=len(scores))
+            return scores
+
+    def run_match(*, sport, home_team, away_team, event_date, markets):
         module = get_sport_module(sport)
         if sport == "nfl":
             from nfl_collection import NflCollector
@@ -1105,6 +1176,8 @@ def _slate_row_to_detail(row: Any) -> SlateDetailResponse:
     candidates = json.loads(row.candidates_json) if row.candidates_json else []
     match_runs = json.loads(row.match_runs_json) if row.match_runs_json else []
     return SlateDetailResponse(
+        operation_id=getattr(row, "operation_id", None),
+        outcome=getattr(row, "outcome", None),
         id=row.id,
         created_at=row.created_at,
         status=row.status,
@@ -1184,6 +1257,10 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Catalog archive not found.")
         return archive
 
+    from services.api.diagnostics_routes import admin_router, router as diagnostics_router
+    app.include_router(diagnostics_router)
+    app.include_router(admin_router)
+
     # ---- Health ----------------------------------------------------------- #
     @app.get("/healthz", response_model=HealthResponse)
     def healthz() -> HealthResponse:
@@ -1212,6 +1289,7 @@ def create_app() -> FastAPI:
 
     # ---- Match Discovery ------------------------------------------------- #
     @app.post("/matches/discover", response_model=MatchDiscoveryResponse)
+    @instrument("discovery")
     def discover_matches(payload: MatchDiscoveryRequest) -> MatchDiscoveryResponse:
         import time as _time
 
@@ -1260,6 +1338,9 @@ def create_app() -> FastAPI:
             len(sport_result.get("matches", []))
             for sport_result in result.get("results", {}).values()
         )
+        failures = sum(bool(v.get("error")) for v in result.get("results", {}).values())
+        finish_operation("partial" if failures and total_matches else "failed" if failures else "success" if total_matches else "no_picks",
+                         count=total_matches, failed_count=failures)
         logger.info(
             "match_discovery_completed",
             extra={
@@ -1312,12 +1393,14 @@ def create_app() -> FastAPI:
             except Exception:
                 error_details = None
         return PickStatusResponse(
+            operation_id=getattr(row, "operation_id", None),
+            outcome=getattr(row, "outcome", None),
             id=row.id,
             status=row.status,
             error_stage=row.error_stage,
             error_message=row.error_message,
             latency_ms=row.latency_ms,
-            error_details=error_details,
+            error_details=public_trace(error_details),
         )
 
     # ---- Outcomes (Story 9) ---------------------------------------------- #
@@ -1449,6 +1532,8 @@ def create_app() -> FastAPI:
         return RunsListResponse(
             items=[
                 RunSummary(
+                    operation_id=getattr(r, "operation_id", None),
+                    outcome=getattr(r, "outcome", None),
                     id=r.id,
                     source=r.source,
                     match_query=r.match_query,
@@ -1474,6 +1559,8 @@ def create_app() -> FastAPI:
         steps = ledger.get_steps(run_id)
         picks = ledger.get_picks(run_id)
         return RunDetailResponse(
+            operation_id=getattr(run, "operation_id", None) or run.request_snapshot.get("operation_id"),
+            outcome=getattr(run, "outcome", None),
             id=run.id,
             source=run.source,
             match_query=run.match_query,
@@ -1511,6 +1598,8 @@ def create_app() -> FastAPI:
         rows = db_module.list_slate_runs(limit=limit, offset=offset)
         items = [
             SlateSummary(
+                operation_id=getattr(row, "operation_id", None),
+                outcome=getattr(row, "outcome", None),
                 id=row.id,
                 created_at=row.created_at,
                 status=row.status,
@@ -1543,7 +1632,7 @@ def create_app() -> FastAPI:
         if worker_mode != "external":
             background_tasks.add_task(_run_next_queued_slate_job)
 
-        return SlateAcceptedResponse(id=row.id, status=row.status, created_at=row.created_at)
+        return SlateAcceptedResponse(id=row.id, status=row.status, created_at=row.created_at, operation_id=row.operation_id)
 
     @app.get("/slates/{slate_id}", response_model=SlateDetailResponse)
     def get_slate(slate_id: str) -> SlateDetailResponse:
@@ -1558,6 +1647,8 @@ def create_app() -> FastAPI:
         if row is None:
             raise HTTPException(status_code=404, detail="Slate not found.")
         return SlateStatusResponse(
+            operation_id=getattr(row, "operation_id", None),
+            outcome=getattr(row, "outcome", None),
             id=row.id,
             status=row.status,
             error_stage=row.error_stage,

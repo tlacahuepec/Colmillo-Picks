@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- In-app Diagnostics with correlated operation timelines, readable failure guidance, sanitized report downloads, and separately authenticated technical details.
+- Bounded background diagnostic storage with retention, health counters, queue and provider instrumentation, and a reproducible local overhead benchmark.
 - NFL pregame player props and game bets across Generate, discovery, Best Today and history, with grounded sportsbook offers and manual grading.
 - Subject-aware picks and lossless sportsbook evidence in run-history JSON; nullable market lines are preserved.
 - Basketball module skeleton with placeholder scoring
@@ -26,6 +28,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Gemini-backed missing-input enrichment fallback for basketball and baseball
 
 ### Changed
+- NFL collector exceptions now preserve their classified causes and fail explicitly; valid empty analyses use a distinct `no_picks` outcome.
+- Logs, Sentry events, and diagnostic exports exclude raw research payloads and credentials, including under legacy provider debug flags.
 - Basketball scoring now rejects missing prop lines instead of producing zero-line picks
 - Sport module registry initialization is lazy so runtime provider wiring reflects current environment
 - Soccer collection now disables deterministic lineup, player, odds, fixture, and weather fallbacks unless demo fallback is explicitly enabled

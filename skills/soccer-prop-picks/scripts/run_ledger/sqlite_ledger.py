@@ -10,6 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from diagnostics_support import current_operation_id
+from services.diagnostics import MESSAGES, valid_id
+
 from run_ledger.contract import RunContext, RunStep, SavedPick
 
 _DEFAULT_DB_PATH = os.path.join("data", "runs.db")
@@ -77,6 +80,10 @@ class SqliteRunLedger:
         self._conn.execute(_CREATE_PICKS_TABLE_SQL)
         self._ensure_partial_reasons_column()
         self._ensure_multi_sport_columns()
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(run_ledger)")}
+        for name, definition in (("operation_id", "TEXT"), ("outcome", "TEXT"), ("diagnostic_summary", "TEXT")):
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE run_ledger ADD COLUMN {name} {definition}")
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(run_picks)")}
         if "source_pick_json" not in columns:
             self._conn.execute("ALTER TABLE run_picks ADD COLUMN source_pick_json TEXT")
@@ -103,6 +110,11 @@ class SqliteRunLedger:
                 pass
 
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext:
+        request = dict(request)
+        operation_id = request.get("operation_id") or current_operation_id()
+        operation_id = operation_id if valid_id(operation_id) else None
+        if operation_id:
+            request["operation_id"] = operation_id
         run_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         match_query = str(request.get("match_query", ""))
@@ -116,9 +128,9 @@ class SqliteRunLedger:
         platform = request.get("platform")
 
         self._conn.execute(
-            """INSERT INTO run_ledger (id, source, match_query, competition, request_json, status, started_at, sport, league, markets_json, platform)
-               VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)""",
-            (run_id, source, match_query, competition, request_json, now.isoformat(), sport, league, markets_json, platform),
+            """INSERT INTO run_ledger (id, source, match_query, competition, request_json, status, started_at, sport, league, markets_json, platform, operation_id, outcome)
+               VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, 'running')""",
+            (run_id, source, match_query, competition, request_json, now.isoformat(), sport, league, markets_json, platform, operation_id),
         )
         self._conn.commit()
 
@@ -129,6 +141,7 @@ class SqliteRunLedger:
             competition=competition,
             request_snapshot=request,
             status="running",
+            operation_id=operation_id,
             started_at=now,
             sport=sport,
             league=league,
@@ -136,15 +149,17 @@ class SqliteRunLedger:
             platform=platform,
         )
 
-    def complete_run(self, run_id: str) -> RunContext:
+    def complete_run(self, run_id: str, *, outcome: str = "success") -> RunContext:
+        if outcome not in {"success", "no_picks"}:
+            raise ValueError("Completion outcome must be success or no_picks")
         now = datetime.now(timezone.utc)
         row = self._conn.execute("SELECT started_at FROM run_ledger WHERE id = ?", (run_id,)).fetchone()
         started_at = datetime.fromisoformat(row["started_at"])
         duration_ms = max(0, round((now - started_at).total_seconds() * 1000))
 
         self._conn.execute(
-            "UPDATE run_ledger SET status = 'success', completed_at = ?, duration_ms = ? WHERE id = ?",
-            (now.isoformat(), duration_ms, run_id),
+            "UPDATE run_ledger SET status = 'success', outcome = ?, diagnostic_summary = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
+            (outcome, MESSAGES[outcome], now.isoformat(), duration_ms, run_id),
         )
         self._conn.commit()
 
@@ -158,8 +173,8 @@ class SqliteRunLedger:
         reasons_json = json.dumps(reasons)
 
         self._conn.execute(
-            "UPDATE run_ledger SET status = 'partial', partial_reasons_json = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
-            (reasons_json, now.isoformat(), duration_ms, run_id),
+            "UPDATE run_ledger SET status = 'partial', outcome = 'partial', diagnostic_summary = ?, partial_reasons_json = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
+            (MESSAGES["partial"], reasons_json, now.isoformat(), duration_ms, run_id),
         )
         self._conn.commit()
 
@@ -170,6 +185,7 @@ class SqliteRunLedger:
         run_id: str,
         *,
         error_summary: str,
+        error_code: str | None = None,
         error_stage: str | None = None,
         provider_status: dict[str, Any] | None = None,
     ) -> RunContext:
@@ -179,8 +195,8 @@ class SqliteRunLedger:
         duration_ms = max(0, round((now - started_at).total_seconds() * 1000))
 
         self._conn.execute(
-            "UPDATE run_ledger SET status = 'failed', error_summary = ?, error_stage = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
-            (error_summary, error_stage, now.isoformat(), duration_ms, run_id),
+            "UPDATE run_ledger SET status = 'failed', outcome = 'failed', diagnostic_summary = ?, error_summary = ?, error_stage = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
+            (MESSAGES.get(error_code, MESSAGES["unexpected_error"]), error_summary, error_stage, now.isoformat(), duration_ms, run_id),
         )
         if provider_status:
             status_json = json.dumps(provider_status)
@@ -293,7 +309,7 @@ class SqliteRunLedger:
         rows = self._conn.execute(
             "SELECT id, source, match_query, home_team, away_team, match_date, competition, status, "
             "error_summary, error_stage, started_at, completed_at, duration_ms, partial_reasons_json, "
-            "sport, league, markets_json, platform, provider_status_json "
+            "sport, league, markets_json, platform, provider_status_json, operation_id, outcome, diagnostic_summary "
             "FROM run_ledger ORDER BY started_at DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
@@ -332,6 +348,9 @@ class SqliteRunLedger:
                 competition=row["competition"],
                 request_snapshot={},
                 status=row["status"],
+                operation_id=row["operation_id"],
+                outcome=row["outcome"] or row["status"],
+                diagnostic_summary=row["diagnostic_summary"],
                 error_summary=row["error_summary"],
                 error_stage=row["error_stage"],
                 started_at=started_at,
@@ -395,6 +414,9 @@ class SqliteRunLedger:
             competition=row["competition"],
             request_snapshot=request_snapshot,
             status=row["status"],
+                operation_id=row["operation_id"],
+                outcome=row["outcome"] or row["status"],
+                diagnostic_summary=row["diagnostic_summary"],
             error_summary=row["error_summary"],
             error_stage=row["error_stage"],
             started_at=started_at,

@@ -22,7 +22,7 @@ def test_one_command_cli_prints_required_report_sections() -> None:
         check=True,
         capture_output=True,
         text=True,
-        env={"PATH": str(os.environ.get("PATH", ""))},
+        env={key: os.environ[key] for key in ("PATH", "COLMILLO_RUNS_DB_PATH", "COLMILLO_DIAGNOSTICS_DB_PATH") if key in os.environ},
     )
 
     report = result.stdout

@@ -15,6 +15,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from diagnostics_support import operation, stage
+
 from daily_intelligence import DailyIntelligenceClient, DailyIntelligenceError
 
 
@@ -77,6 +79,11 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_cli_args(argv)
+    with operation("daily_intelligence", service="cli"):
+        _run_cli(args)
+
+
+def _run_cli(args) -> None:
 
     try:
         client = DailyIntelligenceClient.from_env(provider=args.provider)
@@ -84,7 +91,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(f"Error: {exc}") from exc
 
     try:
-        briefing = client.fetch_daily_briefing(date_utc=args.date, top_n=args.top_n)
+        with stage("daily_briefing"):
+            briefing = client.fetch_daily_briefing(date_utc=args.date, top_n=args.top_n)
     except DailyIntelligenceError as exc:
         raise SystemExit(f"Error: {exc}") from exc
 

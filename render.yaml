@@ -17,6 +17,8 @@ services:
     envVars:
       - key: COLMILLO_DB_PATH
         value: /var/data/colmillo.db
+      - key: COLMILLO_DIAGNOSTICS_DB_PATH
+        value: /var/data/diagnostics.db
       - key: COLMILLO_API_KEY
         sync: false  # set in the Render dashboard
       - key: COLMILLO_UI_ORIGIN

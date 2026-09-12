@@ -6,6 +6,8 @@ collect → score → rank. No sport-specific branching.
 
 from __future__ import annotations
 
+from diagnostics_support import emit, pipeline_operation, stage, summarize_inputs
+
 from collections import Counter
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -36,39 +38,46 @@ class PipelineResult:
 
 
 class PipelineRunner:
+    @pipeline_operation
     def run(self, *, request: PickRequest, module: SportModule) -> PipelineResult:
         steps: list[dict[str, Any]] = []
 
         t0 = perf_counter()
         try:
-            match_inputs = module.collect_inputs(
-                home_team=request.home_team,
-                away_team=request.away_team,
-                match_date=request.event_date,
-                league=request.league,
-            )
+            with stage("collect"):
+                match_inputs = module.collect_inputs(
+                    home_team=request.home_team,
+                    away_team=request.away_team,
+                    match_date=request.event_date,
+                    league=request.league,
+                )
         except Exception as exc:
             steps.append({"name": "collect", "status": "failed", "duration_ms": _elapsed(t0)})
             error_details = {"reason": exc.reason, "sport": getattr(module, "sport_id", None)} if hasattr(exc, "reason") else None
             raise PipelineRunError(stage="collect", message=str(exc), error_details=error_details) from exc
         steps.append({"name": "collect", "status": "success", "duration_ms": _elapsed(t0)})
+        summarize_inputs(match_inputs)
 
         t0 = perf_counter()
         try:
-            scores = module.score(match_inputs, markets=request.markets)
+            with stage("score"):
+                scores = module.score(match_inputs, markets=request.markets)
         except Exception as exc:
             steps.append({"name": "score", "status": "failed", "duration_ms": _elapsed(t0)})
             error_details = {"reason": exc.reason, "sport": getattr(module, "sport_id", None)} if hasattr(exc, "reason") else None
             raise PipelineRunError(stage="score", message=str(exc), error_details=error_details) from exc
         steps.append({"name": "score", "status": "success", "duration_ms": _elapsed(t0)})
 
-        ranked = sorted(scores, key=lambda s: s.get("score", 0), reverse=True)
+        with stage("rank"):
+            ranked = sorted(scores, key=lambda s: s.get("score", 0), reverse=True)
 
         if request.sport in _DIVERSITY_SPORTS:
             ranked = _apply_pick_diversity(ranked, request.top_n, match_inputs)
         else:
             ranked = ranked[: request.top_n]
 
+        emit("pipeline_finished", outcome="success" if ranked else "no_picks", pick_count=len(ranked))
+        summarize_inputs(match_inputs, event="score.summary", pick_count=len(ranked))
         return PipelineResult(
             status="success",
             scores=ranked,

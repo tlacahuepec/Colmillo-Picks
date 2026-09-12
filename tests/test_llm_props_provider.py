@@ -217,7 +217,7 @@ class TestLLMPropsProviderDebug:
         )
 
         stderr = capsys.readouterr().err
-        assert "[props-llm-debug] response:" in stderr
+        assert stderr == ""  # Even opt-in diagnostics remain metadata-only.
 
     def test_captures_last_sources(self) -> None:
         module = load_script_module("llm_props_provider.py")
