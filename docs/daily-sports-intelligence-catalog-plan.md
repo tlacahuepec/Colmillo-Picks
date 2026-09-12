@@ -1,6 +1,6 @@
 # Epic: Daily sports intelligence catalog
 
-Status: implementation in progress. The epic covers soccer, basketball, MLB/baseball and NFL.
+Status: complete. The epic covers soccer, basketball, MLB/baseball and NFL.
 
 Progress: #310 contracts, #311 storage foundation, #312 provider ports, #313
 importance scoring, #314 scheduling, #315 the deterministic LangGraph workflow,
@@ -10,6 +10,10 @@ read seam, #322 catalog read endpoints, #323 archive governance, #324 catalog
 health and #325 rollout policy are
 implemented and validated on
 `feat/daily-sports-catalog`.
+
+Completion record: child issues #310–#325 were delivered in merged PR #326.
+The catalog retains its shadow-mode default and catalog-first/live rollback
+configuration for staged operational use.
 
 ## Goal
 
