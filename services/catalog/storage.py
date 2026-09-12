@@ -88,12 +88,19 @@ class CatalogStore:
                     started_at TEXT,
                     updated_at TEXT NOT NULL,
                     checkpoint TEXT,
-                    summary TEXT
+                    summary TEXT,
+                    lease_owner TEXT,
+                    lease_until TEXT,
+                    attempt INTEGER NOT NULL DEFAULT 1
                 );
                 CREATE INDEX IF NOT EXISTS catalog_job_runs_date
                     ON catalog_job_runs(run_date, updated_at DESC);
                 """
             )
+            existing = {row[1] for row in connection.execute("PRAGMA table_info(catalog_job_runs)")}
+            for name, definition in (("lease_owner", "TEXT"), ("lease_until", "TEXT"), ("attempt", "INTEGER NOT NULL DEFAULT 1")):
+                if name not in existing:
+                    connection.execute(f"ALTER TABLE catalog_job_runs ADD COLUMN {name} {definition}")
 
     def upsert_event(self, event: CatalogEvent) -> None:
         payload = json.dumps(to_catalog_dict(event), ensure_ascii=True, allow_nan=False)
@@ -199,3 +206,55 @@ class CatalogStore:
                 "observations": connection.execute("SELECT COUNT(*) FROM catalog_observations").fetchone()[0],
             }
         return {"available": True, "path": self.path, **counts}
+
+    def acquire_job(self, *, job_id: str, run_date: str, now: str,
+                    lease_until: str) -> bool:
+        """Claim one daily run, or reclaim it after its lease expires."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT job_id,state,lease_until,attempt FROM catalog_job_runs WHERE run_date=? ORDER BY updated_at DESC LIMIT 1",
+                (run_date,),
+            ).fetchone()
+            if row and row["state"] == "success":
+                return False
+            if row and row["state"] == "running" and (row["lease_until"] or "") > now:
+                return False
+            attempt = (row["attempt"] if row else 0) + 1
+            if row:
+                connection.execute(
+                    """UPDATE catalog_job_runs SET job_id=?,state='running',updated_at=?,
+                       lease_owner=?,lease_until=?,attempt=? WHERE job_id=?""",
+                    (job_id, now, job_id, lease_until, attempt, row["job_id"]),
+                )
+            else:
+                connection.execute(
+                    """INSERT INTO catalog_job_runs
+                       (job_id,run_date,state,started_at,updated_at,checkpoint,summary,lease_owner,lease_until,attempt)
+                       VALUES (?,?, 'running',?,?,?,?,?,?,?)""",
+                    (job_id, run_date, now, now, None, None, job_id, lease_until, attempt),
+                )
+            return True
+
+    def update_job(self, job_id: str, *, now: str, checkpoint: str | None = None,
+                   lease_until: str | None = None, state: str | None = None,
+                   summary: str | None = None) -> bool:
+        """Update only the claimed job; stale workers cannot mutate a new attempt."""
+        assignments, values = ["updated_at=?"], [now]
+        for column, value in (("checkpoint", checkpoint), ("lease_until", lease_until),
+                              ("state", state), ("summary", summary)):
+            if value is not None:
+                assignments.append(f"{column}=?")
+                values.append(value)
+        values.append(job_id)
+        with self._connect() as connection:
+            result = connection.execute(
+                "UPDATE catalog_job_runs SET " + ",".join(assignments) + " WHERE job_id=? AND state='running'",
+                values,
+            )
+        return bool(result.rowcount)
+
+    def get_job(self, job_id: str) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM catalog_job_runs WHERE job_id=?", (job_id,)).fetchone()
+        return dict(row) if row else None
