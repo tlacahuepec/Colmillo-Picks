@@ -49,6 +49,12 @@ BASKETBALL_CATALOG_CONFIG = SportCatalogConfig(
     required_fields=("lineups", "injuries", "markets"),
 )
 
+MLB_CATALOG_CONFIG = SportCatalogConfig(
+    sport="baseball",
+    league="mlb",
+    required_fields=("lineups", "injuries", "markets"),
+)
+
 
 def _now_utc() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -152,6 +158,16 @@ class BasketballCatalogAdapter(SoccerCatalogAdapter):
                  clock: Callable[[], str] = _now_utc) -> None:
         super().__init__(schedule_provider=schedule_provider, providers=providers,
                          clock=clock, config=BASKETBALL_CATALOG_CONFIG)
+
+
+class MlbCatalogAdapter(SoccerCatalogAdapter):
+    """MLB adapter using the shared normalized resource pipeline."""
+
+    def __init__(self, *, schedule_provider: CatalogProvider,
+                 providers: Mapping[str, CatalogProvider],
+                 clock: Callable[[], str] = _now_utc) -> None:
+        super().__init__(schedule_provider=schedule_provider, providers=providers,
+                         clock=clock, config=MLB_CATALOG_CONFIG)
 
 
 def _lineups(event: CatalogEvent, facts: Mapping[str, Any], result: ProviderResult) -> list[LineupSnapshot]:
