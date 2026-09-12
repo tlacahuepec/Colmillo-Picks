@@ -114,6 +114,36 @@ class NflOffers(BaseModel):
     offers: list[NflOffer] = Field(default_factory=list)
 
 
+_OFFER_KEY_ALIASES = {
+    "book": "sportsbook",
+    "operator": "sportsbook",
+    "price_decimal": "odds_decimal",
+    "observed_at_utc": "observed_at",
+}
+_MARKET_ALIASES = {
+    "anytime_td": "anytime_touchdown",
+    "anytime_tds": "anytime_touchdown",
+    "interceptions": "interceptions_thrown",
+    "passing_td": "passing_touchdowns",
+}
+
+
+def normalize_offer_payload(raw_offer: dict) -> dict:
+    """Normalize only unambiguous provider spelling differences before validation."""
+    normalized = {
+        _OFFER_KEY_ALIASES.get(str(key).casefold(), key): value
+        for key, value in raw_offer.items()
+    }
+    if isinstance(normalized.get("market"), str):
+        market = normalized["market"].casefold().strip().replace(" ", "_").replace("-", "_")
+        normalized["market"] = _MARKET_ALIASES.get(market, market)
+    if isinstance(normalized.get("selection"), str):
+        normalized["selection"] = normalized["selection"].casefold().strip()
+    if isinstance(normalized.get("sportsbook"), str):
+        normalized["sportsbook"] = normalized["sportsbook"].strip()
+    return normalized
+
+
 @lru_cache(maxsize=256)
 def _resolve_citation_url(url):
     # Resolve only Google's citation wrapper, without following the destination.
@@ -302,6 +332,7 @@ class NflCollector:
         data.update(
             offers=[], exclusions=[], provider_statuses={}, grounding_sources=[]
         )
+        data["offer_rejections"] = []
         data["research_evidence"] = {
             "context": getattr(self.client, "last_research_evidence", None)
         }
@@ -357,6 +388,7 @@ class NflCollector:
         data["provider_statuses"]["offers"] = "ok" if data["offers"] else "unavailable"
         return data
 
+
     def _collect_offer_group(self, data, request, system, markets):
         game = data["game"]
         group = "game_offers" if markets == NFL_GAME_MARKETS else "player_offers"
@@ -393,8 +425,13 @@ class NflCollector:
             )
             for raw_offer in raw.get("offers", []):
                 try:
-                    offer = NflOffer.model_validate(raw_offer).model_dump()
-                except ValidationError:
+                    offer = NflOffer.model_validate(normalize_offer_payload(raw_offer)).model_dump()
+                except ValidationError as exc:
+                    data["offer_rejections"].append({
+                        "code": "malformed_offer",
+                        "fields": _validation_fields(raw_offer, exc),
+                        "group": group,
+                    })
                     data["exclusions"].append(
                         {"subject": "offer", "reason": "Malformed sportsbook offer."}
                     )
@@ -434,3 +471,14 @@ class NflCollector:
                 }
             )
         return data
+
+
+def _validation_fields(raw_offer: object, error: ValidationError | None = None) -> list[str]:
+    """Return only bounded field names for diagnostics; never retain raw values."""
+    if not isinstance(raw_offer, dict):
+        return ["offer"]
+    expected = {"market", "subject_name", "selection", "line", "sportsbook",
+                "odds_decimal", "source_url", "observed_at", "period",
+                "includes_overtime", "is_live", "is_primary"}
+    invalid = {str(item["loc"][0]) for item in error.errors() if item.get("loc")} if error else set()
+    return sorted((expected - set(raw_offer)) | invalid)[:8] or ["value"]

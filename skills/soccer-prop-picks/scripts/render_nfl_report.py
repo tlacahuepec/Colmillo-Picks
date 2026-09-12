@@ -13,8 +13,17 @@ def render_nfl_report(scores, match_inputs):
         "Sportsbook prices are snapshots; platform availability is checked separately. Grade NFL results manually.",
         "",
     ]
-    if not scores:
-        lines.append("No verified NFL picks qualified.")
+    if match_inputs.get("provider_errors"):
+        lines.append("NFL data collection failed for one or more provider groups.")
+    elif match_inputs.get("data_quality", {}).get("status") != "current_season":
+        lines.append("Analysis completed with limited current-season data; review confidence and risks.")
+        if not scores:
+            lines.append("No verified NFL picks qualified.")
+    elif not scores:
+        lines.append("Analysis completed, but no verified NFL picks qualified.")
+    quality = match_inputs.get("data_quality") or {}
+    if quality:
+        lines.extend(["", "Data quality: " + _text(quality.get("status", "unknown"))])
     for rank, pick in enumerate(scores, 1):
         offer = pick["offer"]
         line = (

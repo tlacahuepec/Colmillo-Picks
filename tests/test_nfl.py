@@ -194,6 +194,7 @@ def test_byes_and_prior_season_samples():
     flags = pick["explainability"]["risk_flags"]
     assert "prior_season_data" in flags and "small_sample" in flags
     assert pick["confidence"] == "low"
+    assert pick["data_quality"]["status"] == "prior_season_only"
 
 
 def test_collection_failure_is_explicit_without_samples():
@@ -276,3 +277,8 @@ def test_negative_rushing_yards_are_valid_game_stats():
     data["offers"] = [offer("rushing_yards", line=0.5, selection="under")]
     picks = score_nfl(data, now=NOW)
     assert len(picks) == 1 and picks[0]["projection"] == -2
+def test_resolve_team_accepts_city_only_aliases():
+    from nfl_domain import resolve_team
+
+    assert resolve_team("new orleans") == "New Orleans Saints"
+    assert resolve_team("detroit") == "Detroit Lions"

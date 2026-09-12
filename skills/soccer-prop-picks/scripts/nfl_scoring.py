@@ -228,6 +228,7 @@ def score_nfl(context: dict, *, markets=(), now: datetime | None = None) -> list
             "Game is not verified as an upcoming regular-season or postseason fixture.",
         )
         return []
+    context["data_quality"] = _data_quality(context, game)
     requested = set(markets or NFL_MARKETS)
     results = {}
     for offer in context.get("offers", []):
@@ -283,6 +284,7 @@ def score_nfl(context: dict, *, markets=(), now: datetime | None = None) -> list
             else "low",
             "projection": round(projected, 3),
             "availability_status": "unknown",
+            "data_quality": context["data_quality"],
             "explainability": {
                 "risk_flags": flags,
                 "top_contributing_factors": [
@@ -310,3 +312,19 @@ def score_nfl(context: dict, *, markets=(), now: datetime | None = None) -> list
         results.values(),
         key=lambda p: (-p["score"], p["subject_name"], p["market"], str(p["line"])),
     )
+
+
+def _data_quality(context: dict, game: dict) -> dict:
+    """Classify evidence age without treating prior-season data as current."""
+    season = game.get("season")
+    players = context.get("players", [])
+    current = sum(any(log.get("season") == season for log in p.get("game_logs", [])) for p in players)
+    prior_only = sum(bool(p.get("game_logs")) and not any(log.get("season") == season for log in p.get("game_logs", [])) for p in players)
+    teams = context.get("teams", [])
+    team_current = sum(t.get("season") == season for t in teams)
+    return {
+        "current_season_player_entities": current,
+        "prior_season_only_player_entities": prior_only,
+        "current_season_team_entities": team_current,
+        "status": "current_season" if current else "prior_season_only" if prior_only else "missing",
+    }
