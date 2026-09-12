@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol, cast, runtime_checkable
 
 from services.catalog.contracts import (
     CanonicalRef,
@@ -118,6 +118,7 @@ def normalize_event(*, raw: Mapping[str, Any], sport: str, league: str,
         extraction_method="direct",
         confidence=Confidence.CONFIRMED,
     )
+    venue = raw.get("venue")
     event = CatalogEvent(
         event_id=event_id,
         sport=sport,
@@ -128,7 +129,7 @@ def normalize_event(*, raw: Mapping[str, Any], sport: str, league: str,
                                 provider=provider, provider_id=str(raw.get("home_team_id")) if raw.get("home_team_id") else None),
         away_team=canonical_ref(sport, "team", display_name=str(away_name) if away_name else None,
                                 provider=provider, provider_id=str(raw.get("away_team_id")) if raw.get("away_team_id") else None),
-        venue=raw.get("venue") if isinstance(raw.get("venue"), Mapping) else {},
+        venue=cast(Mapping[str, Any], venue) if isinstance(venue, Mapping) else {},
         source_observation_ids=(observation.observation_id,),
     )
     return event, observation

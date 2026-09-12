@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, TypedDict
+from typing import Any, Callable, Iterable, Mapping, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
 
@@ -38,10 +38,10 @@ class CatalogGraphDeps:
     importance_config: ImportanceConfig = DEFAULT_IMPORTANCE_CONFIG
 
 
-def _mark(state: CatalogGraphState, name: str, deps: CatalogGraphDeps) -> dict:
+def _mark(state: Mapping[str, Any], name: str, deps: CatalogGraphDeps) -> dict[str, Any]:
     completed = [*state.get("completed_nodes", []), name]
     update = {"completed_nodes": completed, "checkpoint": name}
-    merged = {**state, **update}
+    merged = cast(CatalogGraphState, {**state, **update})
     deps.checkpoint(name, merged)
     return update
 
@@ -50,9 +50,9 @@ def build_catalog_graph(deps: CatalogGraphDeps):
     """Compile the daily graph; all provider behavior remains injected."""
     graph = StateGraph(CatalogGraphState)
 
-    def discover(state: CatalogGraphState) -> dict:
+    def discover(state: CatalogGraphState) -> dict[str, Any]:
         try:
-            events = sorted(deps.discover(state["run_date"]), key=lambda item: item.event_id)
+            events = sorted(deps.discover(state.get("run_date", "")), key=lambda item: item.event_id)
             update = {"events": events, "errors": list(state.get("errors", []))}
         except Exception as exc:
             update = {"events": [], "errors": [*state.get("errors", []),
@@ -60,13 +60,13 @@ def build_catalog_graph(deps: CatalogGraphDeps):
         update.update(_mark({**state, **update}, "discover", deps))
         return update
 
-    def prioritize(state: CatalogGraphState) -> dict:
+    def prioritize(state: CatalogGraphState) -> dict[str, Any]:
         selected = select_important_events(state.get("events", []), config=deps.importance_config)
         update = {"selected_events": selected}
         update.update(_mark({**state, **update}, "prioritize", deps))
         return update
 
-    def collect(state: CatalogGraphState) -> dict:
+    def collect(state: CatalogGraphState) -> dict[str, Any]:
         collected, errors = dict(state.get("collected", {})), list(state.get("errors", []))
         for event in state.get("selected_events", []):
             try:
@@ -78,7 +78,7 @@ def build_catalog_graph(deps: CatalogGraphDeps):
         update.update(_mark({**state, **update}, "collect", deps))
         return update
 
-    def normalize(state: CatalogGraphState) -> dict:
+    def normalize(state: CatalogGraphState) -> dict[str, Any]:
         snapshots, errors = list(state.get("snapshots", [])), list(state.get("errors", []))
         selected_by_id = {event.event_id: event for event in state.get("selected_events", [])}
         for event_id, raw in state.get("collected", {}).items():
@@ -91,7 +91,7 @@ def build_catalog_graph(deps: CatalogGraphDeps):
         update.update(_mark({**state, **update}, "normalize", deps))
         return update
 
-    def validate(state: CatalogGraphState) -> dict:
+    def validate(state: CatalogGraphState) -> dict[str, Any]:
         missing, errors = dict(state.get("missing_fields", {})), list(state.get("errors", []))
         valid_snapshots = []
         for snapshot in state.get("snapshots", []):
@@ -107,7 +107,7 @@ def build_catalog_graph(deps: CatalogGraphDeps):
         update.update(_mark({**state, **update}, "validate", deps))
         return update
 
-    def publish(state: CatalogGraphState) -> dict:
+    def publish(state: CatalogGraphState) -> dict[str, Any]:
         errors = list(state.get("errors", []))
         for snapshot in state.get("snapshots", []):
             try:
@@ -119,7 +119,7 @@ def build_catalog_graph(deps: CatalogGraphDeps):
         update.update(_mark({**state, **update}, "publish", deps))
         return update
 
-    def finish(state: CatalogGraphState) -> dict:
+    def finish(state: CatalogGraphState) -> dict[str, Any]:
         errors = state.get("errors", [])
         has_missing = any(state.get("missing_fields", {}).values())
         if errors or has_missing:
@@ -152,4 +152,4 @@ def run_catalog_graph(deps: CatalogGraphDeps, *, job_id: str, run_date: str) -> 
         "collected": {}, "snapshots": [], "errors": [], "missing_fields": {},
         "completed_nodes": [], "checkpoint": "queued",
     }
-    return build_catalog_graph(deps).invoke(initial)
+    return cast(CatalogGraphState, build_catalog_graph(deps).invoke(initial))

@@ -168,7 +168,7 @@ def to_catalog_dict(value: Any) -> Any:
     ``CatalogField.value`` must already be JSON-compatible provider output.
     """
 
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         payload = {key: to_catalog_dict(item) for key, item in asdict(value).items()}
         if isinstance(value, CatalogSnapshot):
             payload["schema_version"] = value.schema_version
