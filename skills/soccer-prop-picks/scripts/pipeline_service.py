@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from diagnostics_support import emit, pipeline_operation, stage
+
 from time import perf_counter
 from typing import Any, Callable
 
@@ -50,6 +52,7 @@ def run_pipeline(request: dict[str, Any], deps: dict[str, Callable[..., Any]]) -
     return run_pipeline_with_payload(request, deps)["report_markdown"]
 
 
+@pipeline_operation
 def run_pipeline_with_payload(
     request: dict[str, Any], deps: dict[str, Callable[..., Any]]
 ) -> dict[str, Any]:
@@ -71,20 +74,23 @@ def run_pipeline_with_payload(
 
     t0 = perf_counter()
     try:
-        parsed = deps["parse_match_query"](request["match_query"])
+        with stage("parse"):
+            parsed = deps["parse_match_query"](request["match_query"])
     except Exception as exc:  # pragma: no cover - intentionally broad boundary
         steps.append({"name": "parse", "status": "failed", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
         _raise_stage_error("parse", exc)
     steps.append({"name": "parse", "status": "success", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
 
-    match_input_request = deps["build_match_input_request"](
-        parsed=parsed,
-        competition=str(request.get("competition", "League")),
-    )
+    with stage("build_request"):
+        match_input_request = deps["build_match_input_request"](
+            parsed=parsed,
+            competition=str(request.get("competition", "League")),
+        )
 
     t0 = perf_counter()
     try:
-        match_inputs = deps["collect_inputs"](match_input_request)
+        with stage("collect"):
+            match_inputs = deps["collect_inputs"](match_input_request)
     except Exception as exc:  # pragma: no cover - intentionally broad boundary
         steps.append({"name": "collect", "status": "failed", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
         _raise_stage_error("collect", exc)
@@ -92,7 +98,8 @@ def run_pipeline_with_payload(
 
     t0 = perf_counter()
     try:
-        scored_payload = deps["score_props"](match_inputs=match_inputs, include_trace=True)
+        with stage("score"):
+            scored_payload = deps["score_props"](match_inputs=match_inputs, include_trace=True)
     except Exception as exc:  # pragma: no cover - intentionally broad boundary
         steps.append({"name": "score", "status": "failed", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
         _raise_stage_error("score", exc)
@@ -101,10 +108,11 @@ def run_pipeline_with_payload(
     if use_llm:
         llm_started_at = perf_counter()
         try:
-            scored_payload = deps["enrich_with_llm"](
-                scored_payload=scored_payload,
-                match_inputs=match_inputs,
-            )
+            with stage("llm_enrichment"):
+                scored_payload = deps["enrich_with_llm"](
+                    scored_payload=scored_payload,
+                    match_inputs=match_inputs,
+                )
             llm_latency_ms = max(0, round((perf_counter() - llm_started_at) * 1000))
             scored_payload = dict(scored_payload)
             scored_payload["trace"] = _set_llm_trace_fields(
@@ -152,21 +160,24 @@ def run_pipeline_with_payload(
                 {"player_id": p.get("player_id", ""), "market": p.get("market", "")}
                 for p in scored_payload["scores"][:top_n]
             ]
-            availability_data = check_availability(pick_list)
+            with stage("availability"):
+                availability_data = check_availability(pick_list)
             steps.append({"name": "availability", "status": "success", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
         except Exception:
             steps.append({"name": "availability", "status": "failed", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
 
     t0 = perf_counter()
-    report_markdown = deps["render_report"](
-        scored_props=scored_payload["scores"],
-        match_inputs=match_inputs,
-        availability_data=availability_data,
-        top_n=top_n,
-        trace=scored_payload.get("trace"),
-    )
+    with stage("render"):
+        report_markdown = deps["render_report"](
+            scored_props=scored_payload["scores"],
+            match_inputs=match_inputs,
+            availability_data=availability_data,
+            top_n=top_n,
+            trace=scored_payload.get("trace"),
+        )
     steps.append({"name": "render", "status": "success", "duration_ms": max(0, round((perf_counter() - t0) * 1000))})
 
+    emit("pipeline_finished", outcome="partial" if any(s["status"] == "failed" for s in steps) else ("success" if scored_payload["scores"] else "no_picks"), pick_count=len(scored_payload["scores"]))
     return {
         "report_markdown": report_markdown,
         "scores": scored_payload["scores"],

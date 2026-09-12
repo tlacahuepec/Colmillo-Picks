@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
-import os
-import sys
+from diagnostics_support import diagnostic_stage, emit, error_info
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,8 +27,8 @@ class LLMLineupProvider:
         self.last_sources: list = []
         self.last_grounding_metadata = None
 
+    @diagnostic_stage("llm_lineup_provider")
     def get_lineups_and_availability(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
-        debug = os.getenv("COLMILLO_LINEUP_LLM_DEBUG", "").strip() not in ("", "0", "false")
         try:
             result = self._client.generate_structured(
                 system_prompt=self._build_system_prompt(),
@@ -38,13 +37,9 @@ class LLMLineupProvider:
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
             self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
-            if debug:
-                print(f"[lineup-llm-debug] response: {json.dumps(result, default=str)[:2000]}", file=sys.stderr)
             return self._map_response(result, fixture)
         except Exception as exc:
-            print(f"[lineup-provider] WARNING: Lineup provider failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-            if debug:
-                print(f"[lineup-llm-debug] error: {type(exc).__name__}: {exc}", file=sys.stderr)
+            emit("provider_failed", stage="llm_lineup_provider", level="WARNING", outcome="failed", **error_info(exc))
             return None
 
     @staticmethod

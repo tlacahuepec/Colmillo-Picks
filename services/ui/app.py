@@ -35,6 +35,12 @@ load_dotenv(_REPO_ROOT / ".env")
 import streamlit as st  # noqa: E402
 
 from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient  # noqa: E402
+from services.ui.diagnostics import (  # noqa: E402
+    render_connection_failure,
+    render_diagnostics_link,
+    render_diagnostics_page,
+    safe_text,
+)
 from services.ui.best_today_helpers import (  # noqa: E402
     build_slate_payload,
     clear_slate_cache,
@@ -51,7 +57,7 @@ from services.ui.best_today_helpers import (  # noqa: E402
 )
 
 
-PAGES = ("Generate", "History", "Best Today", "Grounding Audit")
+PAGES = ("Generate", "History", "Best Today", "Grounding Audit", "Diagnostics")
 
 
 def _format_utc_to_local(utc_str: str) -> str:
@@ -213,12 +219,12 @@ def _config_warning_banner(config: APIClientConfig) -> None:
 def _render_pipeline_error(error: APIError) -> None:
     if isinstance(error.detail, dict) and "stage" in error.detail:
         st.error(
-            f"Pipeline failed at stage **{error.detail.get('stage')}**: "
-            f"{error.detail.get('message', 'unknown error')}",
+            f"Pipeline failed at stage **{safe_text(error.detail.get('stage'))}**: "
+            f"{safe_text(error.detail.get('message'), 'Unknown error')}",
             icon="🛑",
         )
     else:
-        st.error(f"API returned {error.status_code}: {error.detail}", icon="🛑")
+        render_connection_failure(error, key="pipeline_api")
 
 
 def _render_pick_payload(payload: dict[str, Any]) -> None:
@@ -249,10 +255,11 @@ def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any], *, 
             _render_pipeline_error(exc)
             return
         except Exception as exc:
-            st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
+            render_connection_failure(exc, key="generate_submit")
             return
 
     pick_id = accepted.get("id", "")
+    render_diagnostics_link(accepted, key="generate_diagnostics")
 
     if not wait:
         st.success(
@@ -273,15 +280,15 @@ def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any], *, 
         _render_pipeline_error(exc)
         return
     except Exception as exc:
-        st.error(f"Pipeline status polling failed: {exc}", icon="\U0001f6d1")
+        render_connection_failure(exc, key="generate_poll")
         return
     finally:
         progress_box.empty()
 
     if final.get("status") == "failed":
         st.error(
-            f"Pipeline failed at stage **{final.get('error_stage')}**: "
-            f"{final.get('error_message', 'unknown error')}",
+            f"Pipeline failed at stage **{safe_text(final.get('error_stage'))}**: "
+            f"{safe_text(final.get('error_message'), 'Unknown error')}",
             icon="\U0001f6d1",
         )
         return
@@ -291,10 +298,21 @@ def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any], *, 
     except APIError as exc:
         _render_pipeline_error(exc)
         return
+    except Exception as exc:
+        render_connection_failure(exc, key="generate_detail")
+        return
 
-    st.success(f"Pick saved as id `{pick_id}`.", icon="\u2705")
+    if detail.get("operation_id"):
+        render_diagnostics_link(detail, key="generate_result_diagnostics")
+    if detail.get("outcome") == "no_picks":
+        st.info("Analysis completed, but no verified picks qualified. View diagnostics for the recorded reasons.")
+    elif detail.get("outcome") == "partial":
+        st.warning(f"Partial results saved as id `{pick_id}`. View diagnostics for the incomplete stages.")
+    else:
+        st.success(f"Pick saved as id `{pick_id}`.", icon="\u2705")
     _render_pick_payload(detail)
-    _render_availability_section(client, pick_id)
+    if detail.get("outcome") != "no_picks":
+        _render_availability_section(client, pick_id)
 
 
 def _render_availability_section(client: PicksAPIClient, pick_id: str) -> None:
@@ -620,7 +638,7 @@ def render_history_page(client: PicksAPIClient) -> None:
         _render_pipeline_error(exc)
         return
     except Exception as exc:
-        st.error(f"Failed to reach API: {exc}", icon="🛑")
+        render_connection_failure(exc, key="history_list")
         return
 
     items: list[dict[str, Any]] = listing.get("items", [])
@@ -641,7 +659,11 @@ def render_history_page(client: PicksAPIClient) -> None:
     except APIError as exc:
         _render_pipeline_error(exc)
         return
+    except Exception as exc:
+        render_connection_failure(exc, key="history_detail")
+        return
 
+    render_diagnostics_link(detail, key="history_diagnostics")
     st.subheader(detail.get("match_query", ""))
     st.caption(
         f"id `{detail['id']}` \u00b7 status `{detail.get('status', '?')}` \u00b7 "
@@ -649,8 +671,8 @@ def render_history_page(client: PicksAPIClient) -> None:
     )
     if detail.get("status") == "failed":
         st.error(
-            f"Pipeline failed at stage **{detail.get('error_stage')}**: "
-            f"{detail.get('error_message', 'unknown error')}",
+            f"Pipeline failed at stage **{safe_text(detail.get('error_stage'))}**: "
+            f"{safe_text(detail.get('error_message'), 'Unknown error')}",
             icon="\U0001f6d1",
         )
     with st.expander("Original request"):
@@ -799,15 +821,16 @@ def render_best_today_page(client: PicksAPIClient) -> None:
         try:
             accepted = client.create_slate(payload)
         except APIError as exc:
-            st.error(f"API error {exc.status_code}: {exc.detail}", icon="\U0001f6d1")
+            render_connection_failure(exc, key="slate_submit")
             return
         except Exception as exc:
-            st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
+            render_connection_failure(exc, key="slate_submit")
             return
 
         slate_id = accepted.get("id", "")
         st.toast(f"Slate `{slate_id}` submitted! It will appear in Recent Slates below.", icon="\u2705")
         st.session_state["selected_slate_id"] = slate_id
+        render_diagnostics_link(accepted, key="slate_accepted_diagnostics")
 
     st.divider()
     st.subheader("Recent Slates")
@@ -821,7 +844,8 @@ def render_best_today_page(client: PicksAPIClient) -> None:
     try:
         slates_response = client.list_slates(limit=10)
         slates = slates_response.get("items", [])
-    except Exception:
+    except Exception as exc:
+        render_connection_failure(exc, key="slate_list")
         slates = []
 
     if not slates:
@@ -845,6 +869,10 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                 (s.get("status") for s in slates if s.get("id") == selected_id), None
             )
             if selected_status in ("pending", "queued", "running"):
+                render_diagnostics_link(
+                    next(s for s in slates if s.get("id") == selected_id),
+                    key="slate_pending_diagnostics",
+                )
                 st.info(f"Slate `{selected_id}` is still **{selected_status}**... Click Refresh to check progress.", icon="\u23f3")
             elif should_render_cached_slate(st.session_state) and st.session_state.get("last_slate_detail", {}).get("id") == selected_id:
                 _render_slate_results(st.session_state["last_slate_detail"], client)
@@ -854,9 +882,9 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                     store_slate_result(st.session_state, detail)
                     _render_slate_results(detail, client)
                 except APIError as exc:
-                    st.error(f"Failed to load slate: {exc.detail}", icon="\U0001f6d1")
+                    render_connection_failure(exc, key="slate_detail")
                 except Exception as exc:
-                    st.error(f"Error loading slate: {exc}", icon="\U0001f6d1")
+                    render_connection_failure(exc, key="slate_detail")
 
 
 def _render_candidate_card(candidate: dict[str, Any], badge: dict[str, Any] | None = None) -> None:
@@ -924,11 +952,12 @@ def _render_candidate_card(candidate: dict[str, Any], badge: dict[str, Any] | No
 def _render_slate_results(detail: dict[str, Any], client: PicksAPIClient) -> None:
     from services.ui.best_today_helpers import build_availability_batch_payload, match_badges_to_candidates
 
+    render_diagnostics_link(detail, key="slate_diagnostics")
     status = detail.get("status", "?")
     if status == "failed":
         st.error(
-            f"Slate failed at stage **{detail.get('error_stage', '?')}**: "
-            f"{detail.get('error_message', 'unknown error')}",
+            f"Slate failed at stage **{safe_text(detail.get('error_stage'))}**: "
+            f"{safe_text(detail.get('error_message'), 'Unknown error')}",
             icon="\U0001f6d1",
         )
         return
@@ -1200,7 +1229,7 @@ def main() -> None:
     st.set_page_config(page_title="Colmillo-Picks", layout="wide")
     config = APIClientConfig.from_env()
     _config_warning_banner(config)
-    page = st.sidebar.radio("Page", PAGES, index=0)
+    page = st.sidebar.radio("Page", PAGES, index=0, key="ui_page")
     client = _get_client()
     if page == "Generate":
         render_generate_page(client)
@@ -1208,6 +1237,8 @@ def main() -> None:
         render_history_page(client)
     elif page == "Grounding Audit":
         render_grounding_audit_page()
+    elif page == "Diagnostics":
+        render_diagnostics_page(client)
     else:
         render_best_today_page(client)
 

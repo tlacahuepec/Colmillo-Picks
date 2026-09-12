@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from diagnostics_support import provider_attempt, emit, error_info
+
 import re
 import time
 from dataclasses import dataclass
@@ -76,7 +78,11 @@ def _fetch_with_retry(
 
     while attempts < max_attempts:
         try:
-            response = client.get(url, params=params, timeout=cfg.timeout_seconds)
+            with provider_attempt("mlb_statsapi", attempt=attempts + 1) as diagnostic:
+                response = client.get(url, params=params, timeout=cfg.timeout_seconds)
+                diagnostic["http_status"] = response.status_code
+                if response.status_code >= 400:
+                    diagnostic["outcome"] = "failed"
             if response.status_code < 400:
                 return response
             if response.status_code not in _RETRYABLE_STATUS_CODES:
@@ -122,7 +128,8 @@ class StatsAPIScheduleAdapter:
 
             return MLBScheduleResult(meta=_build_meta(available=True), games=games)
         except Exception as exc:
-            return MLBScheduleResult(meta=_build_meta(available=False, error=str(exc)))
+            emit("provider_failed", provider="mlb_statsapi", level="WARNING", outcome="failed", **error_info(exc))
+            return MLBScheduleResult(meta=_build_meta(available=False, error=error_info(exc)["error_code"]))
 
 
 class StatsAPIPitcherAdapter:
@@ -161,7 +168,8 @@ class StatsAPIPitcherAdapter:
                 away_pitcher=away_pitcher,
             )
         except Exception as exc:
-            return ProbablePitcherResult(meta=_build_meta(available=False, error=str(exc)))
+            emit("provider_failed", provider="mlb_statsapi", level="WARNING", outcome="failed", **error_info(exc))
+            return ProbablePitcherResult(meta=_build_meta(available=False, error=error_info(exc)["error_code"]))
 
     def _find_game(self, data: dict[str, Any], game_pk: int) -> dict[str, Any] | None:
         for date_entry in data.get("dates", []):
@@ -207,7 +215,8 @@ class StatsAPILineupsAdapter:
                 confirmed=confirmed,
             )
         except Exception as exc:
-            return MLBLineupsResult(meta=_build_meta(available=False, error=str(exc)))
+            emit("provider_failed", provider="mlb_statsapi", level="WARNING", outcome="failed", **error_info(exc))
+            return MLBLineupsResult(meta=_build_meta(available=False, error=error_info(exc)["error_code"]))
 
     def _parse_order(self, team_data: dict[str, Any]) -> list[dict[str, Any]]:
         batting_order = team_data.get("battingOrder", [])
@@ -274,7 +283,8 @@ class StatsAPIPlayerStatsAdapter:
                 game_log=game_log,
             )
         except Exception as exc:
-            return MLBPlayerStatsResult(meta=_build_meta(available=False, error=str(exc)))
+            emit("provider_failed", provider="mlb_statsapi", level="WARNING", outcome="failed", **error_info(exc))
+            return MLBPlayerStatsResult(meta=_build_meta(available=False, error=error_info(exc)["error_code"]))
 
 
 class StatsAPISplitsAdapter:
@@ -318,7 +328,8 @@ class StatsAPISplitsAdapter:
 
             return SplitsResult(meta=_build_meta(available=True), splits=splits)
         except Exception as exc:
-            return SplitsResult(meta=_build_meta(available=False, error=str(exc)))
+            emit("provider_failed", provider="mlb_statsapi", level="WARNING", outcome="failed", **error_info(exc))
+            return SplitsResult(meta=_build_meta(available=False, error=error_info(exc)["error_code"]))
 
 
 class StatsAPIBullpenAdapter:
@@ -359,7 +370,8 @@ class StatsAPIBullpenAdapter:
 
             return BullpenResult(meta=_build_meta(available=True), arms=arms)
         except Exception as exc:
-            return BullpenResult(meta=_build_meta(available=False, error=str(exc)))
+            emit("provider_failed", provider="mlb_statsapi", level="WARNING", outcome="failed", **error_info(exc))
+            return BullpenResult(meta=_build_meta(available=False, error=error_info(exc)["error_code"]))
 
 
 class StatsAPIWeatherAdapter:
@@ -403,7 +415,8 @@ class StatsAPIWeatherAdapter:
                 dome=dome,
             )
         except Exception as exc:
-            return MLBWeatherResult(meta=_build_meta(available=False, error=str(exc)))
+            emit("provider_failed", provider="mlb_statsapi", level="WARNING", outcome="failed", **error_info(exc))
+            return MLBWeatherResult(meta=_build_meta(available=False, error=error_info(exc)["error_code"]))
 
 
 class StatsAPIBallparkAdapter:
@@ -442,7 +455,8 @@ class StatsAPIBallparkAdapter:
                 venue_name=venue_name,
             )
         except Exception as exc:
-            return BallparkResult(meta=_build_meta(available=False, error=str(exc)))
+            emit("provider_failed", provider="mlb_statsapi", level="WARNING", outcome="failed", **error_info(exc))
+            return BallparkResult(meta=_build_meta(available=False, error=error_info(exc)["error_code"]))
 
 
 def _is_numeric(value: Any) -> bool:

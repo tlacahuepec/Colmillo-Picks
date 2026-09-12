@@ -10,6 +10,7 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -63,6 +64,39 @@ class PicksAPIClient:
 
     def health(self) -> dict[str, Any]:
         return self._request("GET", "/healthz")
+
+    def list_diagnostic_operations(
+        self, *, limit: int = 20, offset: int = 0,
+        sport: str | None = None, outcome: str | None = None,
+        service: str | None = None, operation_id: str | None = None,
+        since: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        for name, value in (
+            ("sport", sport), ("outcome", outcome), ("service", service),
+            ("operation_id", operation_id), ("since", since),
+        ):
+            if value:
+                params[name] = value
+        return self._request("GET", "/diagnostics/operations", params=params)
+
+    def get_diagnostic_operation(self, operation_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/diagnostics/operations/{quote(operation_id, safe='')}")
+
+    def diagnostics_health(self) -> dict[str, Any]:
+        return self._request("GET", "/diagnostics/health")
+
+    def export_diagnostic_operation(self, operation_id: str) -> bytes:
+        """Return the backend ZIP unchanged; never decode it as JSON or text."""
+        with self._client() as client:
+            response = client.get(f"/diagnostics/operations/{quote(operation_id, safe='')}/export")
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("detail", response.text)
+            except ValueError:
+                detail = response.text
+            raise APIError(response.status_code, detail)
+        return response.content
 
     def create_pick(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST a pick request. Returns the ``202`` accepted body

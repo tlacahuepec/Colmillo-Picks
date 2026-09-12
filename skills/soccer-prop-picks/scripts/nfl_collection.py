@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, ValidationError
 
+from diagnostics_support import diagnostic_stage, emit, error_info, submit_with_context
+
 from nfl_domain import (
     NFL_GAME_MARKETS,
     NFL_PLAYER_MARKETS,
@@ -157,7 +159,8 @@ def _source_urls(client, *, referenced_urls=None):
     ):
         return {url for url in urls if not _is_search_url(url)}
     with ThreadPoolExecutor(max_workers=4) as pool:
-        pairs = zip(sorted(urls), pool.map(_resolve_citation_url, sorted(urls)))
+        futures = [submit_with_context(pool, _resolve_citation_url, url) for url in sorted(urls)]
+        pairs = zip(sorted(urls), (future.result() for future in futures))
         # Existing clients may expose search queries as fallback "sources".
         # Those are discovery hints, not evidence pages.
         return {
@@ -182,10 +185,12 @@ def _grounded_sources(values, verified):
 class NflCollector:
     def __init__(self, client, *, timezone_name=None):
         self.client = client
+        self.last_provider_error = None
         self.timezone_name = (
             timezone_name or os.getenv("COLMILLO_TIMEZONE") or "America/Chicago"
         )
 
+    @diagnostic_stage("nfl_provider", sport="nfl")
     def _generate(self, *, system_prompt, user_prompt, schema, temperature=0):
         research = getattr(self.client, "research_then_extract", None)
         if not callable(research):
@@ -257,6 +262,7 @@ class NflCollector:
     def __call__(self, *, home_team, away_team, match_date, league=None):
         from sport_enrichment_config import get_enrichment_config
 
+        self.last_provider_error = None
         now = datetime.now(timezone.utc).isoformat()
         guidance = get_enrichment_config("nfl").system_prompt_guidance
         request = {
@@ -408,15 +414,19 @@ class NflCollector:
                 "ok" if len(data["offers"]) > starting_count else "unavailable"
             )
         except Exception as exc:
+            self.last_provider_error = exc
             data["provider_statuses"][group] = "unavailable"
             data["research_evidence"][group] = getattr(
                 self.client, "last_research_evidence", None
             )
             data.setdefault("provider_errors", {})[group] = {
+                **error_info(exc),
                 "type": type(exc).__name__,
                 "cause_type": type(exc.__cause__).__name__ if exc.__cause__ else None,
                 "research_cited": bool(data["research_evidence"][group]),
             }
+            emit("nfl_provider_failed", stage=group, level="WARNING", outcome="failed",
+                 sport="nfl", **error_info(exc))
             data["exclusions"].append(
                 {
                     "subject": group,
