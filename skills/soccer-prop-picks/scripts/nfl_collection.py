@@ -332,6 +332,7 @@ class NflCollector:
         data.update(
             offers=[], exclusions=[], provider_statuses={}, grounding_sources=[]
         )
+        data["offer_rejections"] = []
         data["research_evidence"] = {
             "context": getattr(self.client, "last_research_evidence", None)
         }
@@ -387,6 +388,7 @@ class NflCollector:
         data["provider_statuses"]["offers"] = "ok" if data["offers"] else "unavailable"
         return data
 
+
     def _collect_offer_group(self, data, request, system, markets):
         game = data["game"]
         group = "game_offers" if markets == NFL_GAME_MARKETS else "player_offers"
@@ -424,7 +426,12 @@ class NflCollector:
             for raw_offer in raw.get("offers", []):
                 try:
                     offer = NflOffer.model_validate(normalize_offer_payload(raw_offer)).model_dump()
-                except ValidationError:
+                except ValidationError as exc:
+                    data["offer_rejections"].append({
+                        "code": "malformed_offer",
+                        "fields": _validation_fields(raw_offer, exc),
+                        "group": group,
+                    })
                     data["exclusions"].append(
                         {"subject": "offer", "reason": "Malformed sportsbook offer."}
                     )
@@ -464,3 +471,14 @@ class NflCollector:
                 }
             )
         return data
+
+
+def _validation_fields(raw_offer: object, error: ValidationError | None = None) -> list[str]:
+    """Return only bounded field names for diagnostics; never retain raw values."""
+    if not isinstance(raw_offer, dict):
+        return ["offer"]
+    expected = {"market", "subject_name", "selection", "line", "sportsbook",
+                "odds_decimal", "source_url", "observed_at", "period",
+                "includes_overtime", "is_live", "is_primary"}
+    invalid = {str(item["loc"][0]) for item in error.errors() if item.get("loc")} if error else set()
+    return sorted((expected - set(raw_offer)) | invalid)[:8] or ["value"]

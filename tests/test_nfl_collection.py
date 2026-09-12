@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from nfl_collection import NflCollector
-from nfl_collection import normalize_offer_payload
+from nfl_collection import normalize_offer_payload, _validation_fields
 from tests.test_nfl import context, offer
 
 
@@ -166,3 +166,9 @@ def test_normalize_offer_payload_accepts_safe_provider_aliases():
     assert normalized["sportsbook"] == "FanDuel"
     assert normalized["odds_decimal"] == 2.1
     assert normalized["observed_at"] == "2026-09-12T04:00:00Z"
+
+
+def test_validation_diagnostics_contain_only_bounded_field_names():
+    fields = _validation_fields({"market": "passing_yards", "secret": "do-not-log"})
+    assert "secret" not in fields
+    assert all(field.isidentifier() for field in fields)
