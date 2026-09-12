@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone as utc_timezone
 from typing import Any, Callable
 
 from baseball_module import BaseballDataQualityError
@@ -29,6 +30,7 @@ class SlateOrchestrationDeps:
     discover_matches: Callable[..., dict[str, Any]]
     run_match_pipeline: Callable[..., list[dict[str, Any]]]
     get_token_usage: Callable[[], tuple[int, int, int]] | None = None
+    read_catalog: Callable[..., Any] | None = None
 
 
 def execute_slate_job(
@@ -73,6 +75,12 @@ def execute_slate_job(
 
             t_match = time.perf_counter()
             try:
+                catalog_read = None
+                if deps.read_catalog:
+                    catalog_read = deps.read_catalog(
+                        sport=sport, home_team=home_team, away_team=away_team,
+                        event_date=event_date, now=datetime.now(utc_timezone.utc),
+                    )
                 scores = deps.run_match_pipeline(
                     sport=sport,
                     home_team=home_team,
@@ -86,7 +94,9 @@ def execute_slate_job(
                 candidates = candidates_from_picks(
                     scores,
                     sport=sport,
-                    source_match=match,
+                    source_match={**match, **({"catalog_source": catalog_read.source,
+                                               "catalog_refresh_resources": list(catalog_read.refresh_resources)}
+                                              if catalog_read else {})},
                 )
                 all_candidates.extend(candidates)
 
@@ -100,6 +110,8 @@ def execute_slate_job(
                     "error_message": None,
                     "pick_count": len(candidates),
                     "latency_ms": match_latency_ms,
+                    "catalog_source": catalog_read.source if catalog_read else None,
+                    "catalog_refresh_resources": list(catalog_read.refresh_resources) if catalog_read else [],
                 })
             except NflNoPicks as exc:
                 match_runs.append({

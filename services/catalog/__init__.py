@@ -14,6 +14,7 @@ from services.catalog.importance import ImportanceConfig, rank_events, score_eve
 from services.catalog.scheduler import CatalogScheduler, DailySchedule
 from services.catalog.graph import CatalogGraphDeps, CatalogGraphState, build_catalog_graph, run_catalog_graph
 from services.catalog.freshness import FreshnessDecision, FreshnessPolicy, evaluate_field, evaluate_snapshot, resources_to_refresh
+from services.catalog.read_service import CatalogFirstReader, CatalogReadResult
 from services.catalog.sport_adapters import BasketballCatalogAdapter, MlbCatalogAdapter, NflCatalogAdapter, SoccerCatalogAdapter, SportCatalogConfig
 
 __all__ = [
@@ -42,6 +43,8 @@ __all__ = [
     "evaluate_field",
     "evaluate_snapshot",
     "resources_to_refresh",
+    "CatalogFirstReader",
+    "CatalogReadResult",
     "SoccerCatalogAdapter",
     "SportCatalogConfig",
     "BasketballCatalogAdapter",

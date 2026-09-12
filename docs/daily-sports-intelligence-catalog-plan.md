@@ -5,7 +5,8 @@ Status: implementation in progress. The epic covers soccer, basketball, MLB/base
 Progress: #310 contracts, #311 storage foundation, #312 provider ports, #313
 importance scoring, #314 scheduling, #315 the deterministic LangGraph workflow,
 and #316 the soccer adapter, #317 the basketball adapter, #318 the MLB adapter,
-#319 the NFL adapter and #320 freshness decisions are implemented and validated on
+#319 the NFL adapter, #320 freshness decisions and #321 the catalog-first slate
+read seam are implemented and validated on
 `feat/daily-sports-catalog`.
 
 ## Goal
