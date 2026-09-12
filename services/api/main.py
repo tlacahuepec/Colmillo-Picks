@@ -47,6 +47,7 @@ from services.api.middleware import (  # noqa: E402
     RequestLoggingMiddleware,
 )
 from services.api.sentry import init_sentry_if_configured  # noqa: E402
+from services.catalog.storage import CatalogStore  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -1151,6 +1152,26 @@ def create_app() -> FastAPI:
         )
 
     db_module.init_db()
+    catalog_store = CatalogStore(os.getenv("COLMILLO_CATALOG_DB", str(_REPO_ROOT / "data" / "catalog.db")))
+
+    @app.get("/catalog/events")
+    def catalog_events(
+        sport: str | None = Query(None),
+        start_from: str | None = Query(None),
+        start_to: str | None = Query(None),
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+    ) -> dict[str, Any]:
+        return {"items": catalog_store.list_events(sport=sport, start_from=start_from,
+                                                     start_to=start_to, limit=limit, offset=offset),
+                "limit": limit, "offset": offset, "catalog": catalog_store.health()}
+
+    @app.get("/catalog/events/{event_id}/snapshot")
+    def catalog_snapshot(event_id: str) -> dict[str, Any]:
+        snapshot = catalog_store.get_latest_snapshot(event_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Catalog snapshot not found.")
+        return snapshot
 
     # ---- Health ----------------------------------------------------------- #
     @app.get("/healthz", response_model=HealthResponse)
