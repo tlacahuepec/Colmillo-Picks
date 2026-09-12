@@ -1166,6 +1166,10 @@ def create_app() -> FastAPI:
                                                      start_to=start_to, limit=limit, offset=offset),
                 "limit": limit, "offset": offset, "catalog": catalog_store.health()}
 
+    @app.get("/catalog/health")
+    def catalog_health() -> dict[str, Any]:
+        return catalog_store.health()
+
     @app.get("/catalog/events/{event_id}/snapshot")
     def catalog_snapshot(event_id: str) -> dict[str, Any]:
         snapshot = catalog_store.get_latest_snapshot(event_id)

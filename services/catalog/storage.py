@@ -216,7 +216,10 @@ class CatalogStore:
                 "observations": connection.execute("SELECT COUNT(*) FROM catalog_observations").fetchone()[0],
                 "raw_archives": connection.execute("SELECT COUNT(*) FROM catalog_raw_archives").fetchone()[0],
             }
-        return {"available": True, "path": self.path, **counts}
+            jobs = {row["state"]: row["count"] for row in connection.execute(
+                "SELECT state, COUNT(*) AS count FROM catalog_job_runs GROUP BY state"
+            ).fetchall()}
+        return {"available": True, "path": self.path, "jobs_by_state": jobs, **counts}
 
     def save_raw_archive(self, *, provider: str, payload: object,
                          created_at: str | None = None,
