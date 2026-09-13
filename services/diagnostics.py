@@ -28,10 +28,10 @@ from typing import Protocol
 SCHEMA_VERSION = 1
 MAX_EVENT_BYTES = 8192
 MAX_OPERATION_EVENTS = 500
-_context = contextvars.ContextVar("diagnostics_operation", default=None)
-_span = contextvars.ContextVar("diagnostics_span", default=None)
-_parent_span = contextvars.ContextVar("diagnostics_parent_span", default=None)
-_request = contextvars.ContextVar("diagnostics_request", default=None)
+_context: contextvars.ContextVar[Operation | None] = contextvars.ContextVar("diagnostics_operation", default=None)
+_span: contextvars.ContextVar[str | None] = contextvars.ContextVar("diagnostics_span", default=None)
+_parent_span: contextvars.ContextVar[str | None] = contextvars.ContextVar("diagnostics_parent_span", default=None)
+_request: contextvars.ContextVar[str | None] = contextvars.ContextVar("diagnostics_request", default=None)
 _SAFE_KEYS = frozenset("""sport home_team away_team event_date match_date provider model
     request_id pick_id slate_id run_id job_id attempt attempt_id parent_operation_id
     exception_type cause_types error_code http_status status_code retryable retry_count
@@ -572,7 +572,7 @@ def emit(event, *, stage=None, level="INFO", outcome=None, duration_ms=None, **m
                   "service": op.service if op else meta.get("service", "api"),
                   "stage": safe_text(stage or "", 64), "level": level if level in {"DEBUG", "INFO", "WARNING", "ERROR"} else "INFO",
                   "outcome": outcome if outcome in {"running", "queued", "success", "partial", "no_picks", "failed"} else None,
-                  "duration_ms": duration_ms if type(duration_ms) in (int, float) and math.isfinite(duration_ms) else None,
+                  "duration_ms": duration_ms if isinstance(duration_ms, (int, float)) and math.isfinite(duration_ms) else None,
                   "metadata": meta}
         if len(json.dumps(record).encode()) > MAX_EVENT_BYTES:
             record["metadata"] = {"error_code": "metadata_truncated"}
