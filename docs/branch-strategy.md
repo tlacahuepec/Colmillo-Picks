@@ -54,9 +54,12 @@ docs/release-process          — documentation only
 | Merge type | Strategy | When |
 |-----------|----------|------|
 | Feature → dev | **Squash merge** | Always |
-| Release → main | **Merge commit** | Release cut |
+| Release → main | **Squash merge** | Release cut (enforced by `main` GitHub ruleset) |
 | Hotfix → main | **Squash merge** | Critical fixes |
 | Hotfix → dev | **Cherry-pick** | After main merge |
+
+> [!NOTE]
+> The active GitHub ruleset on `main` strictly requires squash merging for all pull requests. All release-to-main PRs must therefore use squash merge. Administrator bypass of rulesets is reserved strictly for operational emergencies (such as hotfix deployment during CI provider outages) and must be retroactively documented in a pull request or issue.
 
 ## Review Expectations
 
