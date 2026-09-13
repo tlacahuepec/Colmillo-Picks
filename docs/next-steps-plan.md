@@ -16,19 +16,13 @@ The following files have been prepared and verified:
 
 ## Prioritized Execution Tracks
 
-### Track 1: Release v0.9.0 Delivery (Immediate Priority)
-1. **Branch & Commit**: Create `chore/v0.9.0-governance-and-release-prep` from `dev`, commit the 3 files, and push.
-2. **Pull Request to dev**: Open PR to `dev` with title `chore: v0.9.0 governance alignment and changelog cut`.
-3. **Squash Merge**: Merge to `dev` using squash merge.
-4. **Release Branch**:
-   ```bash
-   git checkout dev && git pull
-   git checkout -b release/v0.9.0
-   git tag v0.9.0-rc.1
-   git push origin release/v0.9.0 --tags
-   ```
-5. **CI Verification**: Ensure the `release-readiness` job passes on GitHub Actions.
-6. **Deploy & Tag**: Squash merge `release/v0.9.0` into `main` and tag `v0.9.0`.
+### Track 1: Release v0.9.0 Delivery (Completed — September 12, 2026)
+1. **Branch & Commit**: Created `chore/v0.9.0-governance-and-release-prep` from `dev`, committed files, and pushed.
+2. **Pull Request to dev**: Opened [PR #344](https://github.com/tlacahuepec/Colmillo-Picks/pull/344) (`chore: v0.9.0 governance alignment and changelog cut`).
+3. **Squash Merge**: Merged PR #344 to `dev` using squash merge.
+4. **Release Branch & RC**: Created `release/v0.9.0`, tagged `v0.9.0-rc.1`, pushed branch and tags. Verified pre-release workflow and artifacts.
+5. **CI Verification**: `release-readiness` and full CI suite passed cleanly on GitHub Actions.
+6. **Deploy & Tag**: Opened [PR #345](https://github.com/tlacahuepec/Colmillo-Picks/pull/345) to merge `release/v0.9.0` into `main`, verified checks, squash merged, and tagged stable `v0.9.0`. Verified stable release artifacts and published Docker images on GHCR.
 
 ---
 
