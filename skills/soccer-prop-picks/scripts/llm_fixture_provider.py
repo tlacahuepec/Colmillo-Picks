@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from diagnostics_support import diagnostic_stage, emit
+
 import json
 import os
 import re
-import sys
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from typing import Any, Callable
@@ -63,6 +64,15 @@ def _clean_string(value: Any, fallback: str) -> str:
         return fallback
     cleaned = str(value).strip()
     return cleaned or fallback
+
+
+def _safe_int(value: Any, fallback: int) -> int:
+    if value is None:
+        return fallback
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _normalize_name(value: str) -> str:
@@ -183,6 +193,7 @@ class OpenAICompatibleChatClient:
         self.timeout_seconds = timeout_seconds
         self.urlopen_fn = urlopen_fn
 
+    @diagnostic_stage("llm_http", provider="openai_compatible")
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         body = {
             "model": self.model,
@@ -252,12 +263,9 @@ class LLMFixtureProvider:
         )
 
     def _debug(self, event: str, payload: dict[str, Any]) -> None:
-        if not self.debug_enabled:
-            return
-        rendered = json.dumps(payload, ensure_ascii=True, default=str)
-        clipped = _truncate_debug(rendered, max_chars=max(256, self.debug_max_chars))
-        print(f"[fixture-llm-debug] {event}: {clipped}", file=sys.stderr)
+        emit("provider_debug", stage="collection", level="DEBUG", phase=event)
 
+    @diagnostic_stage("llm_fixture_provider")
     def lookup_fixture(self, request: Any) -> dict[str, Any] | None:
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(request)
@@ -451,9 +459,9 @@ class LLMFixtureProvider:
             standings = side_data.get("standings_context")
             if isinstance(standings, dict):
                 mapped["teams"][side]["standings_context"] = {
-                    "table_position": int(standings.get("table_position", 10)),
-                    "points": int(standings.get("points", 40)),
-                    "games_played": int(standings.get("games_played", 30)),
+                    "table_position": _safe_int(standings.get("table_position"), 10),
+                    "points": _safe_int(standings.get("points"), 40),
+                    "games_played": _safe_int(standings.get("games_played"), 30),
                     "motivation_tag": _clean_string(standings.get("motivation_tag"), "midtable"),
                 }
             last_5 = side_data.get("last_5_results")

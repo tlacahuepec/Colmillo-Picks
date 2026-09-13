@@ -6,27 +6,38 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-12
+
 ### Added
-- Basketball module skeleton with placeholder scoring
-- Basketball core prop scoring (points, assists, rebounds, threes)
-- Basketball data collection layer
-- Basketball report explanations
-- Baseball module skeleton with placeholder scoring
-- Baseball domain model foundation
-- Sport-aware market registry
-- Multi-sport run ledger fields
-- Provider-agnostic domain models
-- App version and channel metadata
-- API health version endpoint
-- Branch-aware CI workflow
-- GitHub release workflow
-- Changelog validation
-- Gemini-backed missing-input enrichment fallback for basketball and baseball
+- Daily sports intelligence catalog foundation (#309–#326) with canonical contracts, local SQLite storage, provider ports, deterministic match importance scoring, LangGraph workflow, sport adapters (soccer, basketball, MLB, NFL), freshness management, and catalog-first read integration.
+- In-app Diagnostics (#308) with correlated operation timelines, readable failure guidance, sanitized report downloads, separately authenticated technical details, bounded background diagnostic storage with retention, and reproducible local benchmark.
+- NFL pregame player props and game bets (#307, #327, #333) across Generate, discovery, Best Today and history, with grounded sportsbook offers, city-only team resolution, and manual grading.
+- LangGraph orchestration state graph (#253–#260) with state schema, modular nodes, and feature toggle.
+- Grounding quality metrics, audit UI, and quality tiebreaker (#271–#273).
+- Expanded basketball markets (#293) covering combos (PRA, rebs_asts, blks_stls), field goals, steals, blocks, and turnovers.
+- Enforced Pyright type-checking baseline (#334) for typed catalog subsystems.
+- Enforced Ruff project policy (#335) targeting Python 3.11 with 100-character line policy.
+- Dependabot dependency update automation (#336) for GitHub Actions and pip packages.
+- Repository governance audit (#337) documenting branch protection and ruleset controls.
+- Bounded Gemini transport timeouts (20s deadline) and baseball reliability audit runner (#250, #343).
+- Subject-aware picks and lossless sportsbook evidence in run-history JSON; nullable market lines are preserved.
+- Basketball module skeleton, data collection layer, report explanations, and core prop scoring.
+- Baseball module skeleton, domain model foundation, and StatsAPI collection adapters.
+- Sport-aware market registry and multi-sport run ledger fields.
+- App version and channel metadata with API health version endpoint.
+- Branch-aware CI workflow and GitHub release workflow.
+- Changelog validation script.
+- Gemini-backed missing-input enrichment fallback for basketball and baseball.
 
 ### Changed
-- Basketball scoring now rejects missing prop lines instead of producing zero-line picks
-- Sport module registry initialization is lazy so runtime provider wiring reflects current environment
-- Soccer collection now disables deterministic lineup, player, odds, fixture, and weather fallbacks unless demo fallback is explicitly enabled
+- NFL collector exceptions now preserve their classified causes and fail explicitly; valid empty analyses use a distinct `no_picks` outcome.
+- Logs, Sentry events, and diagnostic exports exclude raw research payloads and credentials, including under legacy provider debug flags.
+- Basketball scoring now rejects missing prop lines instead of producing zero-line picks.
+- Sport module registry initialization is lazy so runtime provider wiring reflects current environment.
+- Soccer collection now disables deterministic lineup, player, odds, fixture, and weather fallbacks unless demo fallback is explicitly enabled.
+- International fixture handling now safely coerces standings fields and unifies prompt formats (#304).
+- Match discovery and Best Today slate generation are now timezone-aware and filter past matches (#263, #265, #288).
+
 
 ## [0.3.0] — 2026-05-20
 

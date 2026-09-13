@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 from datetime import datetime, timedelta, timezone
+
+from diagnostics_support import emit, error_info, operation
 
 from collect_match_inputs import MatchInputRequest, collect_inputs
 from dependency_bundle import (
@@ -55,7 +56,7 @@ class ParsedMatchQuery(tuple):
 
 
 _MIN_TOP_N = 1
-_MAX_TOP_N = 5
+_MAX_TOP_N = 10
 
 
 def _normalize_team_name(raw_team: str) -> str:
@@ -119,7 +120,7 @@ def _cli_top_n(raw_value: str) -> int:
     except ValueError as exc:
         raise argparse.ArgumentTypeError("top-n must be an integer") from exc
     if not _MIN_TOP_N <= value <= _MAX_TOP_N:
-        raise argparse.ArgumentTypeError("top-n must be a positive integer between 1 and 5")
+        raise argparse.ArgumentTypeError("top-n must be a positive integer between 1 and 10")
     return value
 
 
@@ -202,13 +203,19 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _build_ledger():
     try:
         return SqliteRunLedger()
-    except Exception:
-        print("Warning: could not initialize run ledger, using in-memory fallback.", file=sys.stderr)
+    except Exception as exc:
+        emit("ledger_fallback", stage="ledger", level="WARNING", outcome="fallback", **error_info(exc))
         return InMemoryRunLedger()
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_cli_args(argv)
+    with operation("pipeline", service="cli") as handle:
+        outcome = _run_cli(args)
+        handle.finish(outcome)
+
+
+def _run_cli(args) -> str:
     ledger = _build_ledger()
 
     request_dict = {
@@ -234,14 +241,17 @@ def main(argv: list[str] | None = None) -> None:
             fixture_llm_base_url=getattr(args, "fixture_llm_base_url", None),
         )
     except ValueError as exc:
-        ledger.fail_run(run_ctx.id, error_summary=str(exc), error_stage="config")
+        ledger.fail_run(run_ctx.id, error_summary="Provider configuration failed.", error_stage="config",
+                        error_code="configuration_error")
+        emit("cli_failed", stage="config", level="ERROR", outcome="failed", **error_info(exc))
         raise SystemExit(f"Error: {exc}") from exc
     try:
         result = run_pipeline_with_payload(request=request_dict, deps=deps)
     except PipelineServiceError as exc:
-        cause = exc.__cause__
-        message = str(cause) if cause else str(exc)
-        ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage)
+        message = f"Pipeline failed during {exc.stage}."
+        emit("cli_failed", stage=exc.stage, level="ERROR", outcome="failed", **error_info(exc))
+        ledger.fail_run(run_ctx.id, error_summary=message, error_stage=exc.stage,
+                        error_code=error_info(exc)["error_code"])
         raise SystemExit(f"Error: {message}") from exc
 
     for step in result.get("steps", []):
@@ -254,8 +264,9 @@ def main(argv: list[str] | None = None) -> None:
         reasons = [f"{s['name']} failed" for s in failed_steps]
         ledger.partial_run(run_ctx.id, reasons=reasons)
     else:
-        ledger.complete_run(run_ctx.id)
+        ledger.complete_run(run_ctx.id, outcome="success" if result.get("scores") else "no_picks")
     print(result["report_markdown"])
+    return "partial" if failed_steps else ("success" if result.get("scores") else "no_picks")
 
 
 if __name__ == "__main__":

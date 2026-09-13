@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from diagnostics_support import diagnostic_stage, emit, error_info
+
 import json
-import os
-import sys
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from llm.client import LLMClient
+
+logger = logging.getLogger("colmillo.basketball")
 
 
 def _utc_now_z() -> str:
@@ -23,10 +26,10 @@ class LLMPlayerStatsProvider:
         self.last_sources: list = []
         self.last_grounding_metadata = None
 
+    @diagnostic_stage("llm_player_stats_provider")
     def get_player_stats(
         self, *, home_team: str, away_team: str, match_date: str,
     ) -> list[dict[str, Any]] | None:
-        debug = os.getenv("COLMILLO_PLAYER_STATS_LLM_DEBUG", "").strip() not in ("", "0", "false")
         try:
             result = self._client.generate_structured(
                 system_prompt=self._build_system_prompt(),
@@ -37,18 +40,39 @@ class LLMPlayerStatsProvider:
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
             self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
-            if debug:
-                print(
-                    f"[player-stats-llm-debug] response: {json.dumps(result, default=str)[:2000]}",
-                    file=sys.stderr,
+            mapped = self._map_response(result)
+            if mapped is None:
+                logger.warning(
+                    "basketball_player_stats_empty_response",
+                    extra={
+                        "home_team": home_team,
+                        "away_team": away_team,
+                        "match_date": match_date,
+                        "raw_keys": list(result.keys()) if isinstance(result, dict) else str(type(result)),
+                    },
                 )
-            return self._map_response(result)
+            else:
+                logger.info(
+                    "basketball_player_stats_fetched",
+                    extra={
+                        "home_team": home_team,
+                        "away_team": away_team,
+                        "player_count": len(mapped),
+                    },
+                )
+            return mapped
         except Exception as exc:
-            if debug:
-                print(
-                    f"[player-stats-llm-debug] error: {type(exc).__name__}: {exc}",
-                    file=sys.stderr,
-                )
+            emit("provider_failed", stage="llm_player_stats_provider", level="WARNING", outcome="failed", **error_info(exc))
+            logger.warning(
+                "basketball_player_stats_llm_error",
+                extra={
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "match_date": match_date,
+                    "error_type": type(exc).__name__,
+                    **error_info(exc),
+                },
+            )
             return None
 
     @staticmethod
@@ -90,6 +114,18 @@ class LLMPlayerStatsProvider:
                             "threes_avg": "season 3PM per game (float)",
                             "threes_last5": "last 5 games 3PM avg (float)",
                             "three_point_attempts": "3PA per game (float)",
+                            "steals_avg": "season steals per game (float)",
+                            "steals_last5": "last 5 games steals avg (float)",
+                            "blocks_avg": "season blocks per game (float)",
+                            "blocks_last5": "last 5 games blocks avg (float)",
+                            "turnovers_avg": "season turnovers per game (float)",
+                            "turnovers_last5": "last 5 games turnovers avg (float)",
+                            "fg_made_avg": "season FG made per game (float)",
+                            "fg_made_last5": "last 5 games FG made avg (float)",
+                            "fg_attempted_avg": "season FGA per game (float)",
+                            "fg_attempted_last5": "last 5 games FGA avg (float)",
+                            "two_pt_made_avg": "season 2PT FG made per game (float)",
+                            "two_pt_made_last5": "last 5 games 2PT FG made avg (float)",
                             "rotation_risk": "locked_in|normal|elevated|high",
                             "injury_status": "healthy|questionable|doubtful|out",
                             "is_starter": "true|false",
@@ -97,14 +133,17 @@ class LLMPlayerStatsProvider:
                     ]
                 },
                 "rules": [
-                    "Include exactly 6 players: 3 from the home team and 3 from the away team.",
-                    "Select the 3 players with the highest usage rates who are expected to play.",
+                    "Include exactly 8 players: 4 from the home team and 4 from the away team.",
+                    "Select the top 4 players per team by usage rate who are expected to play (starters preferred).",
+                    "CRITICAL: Only include players on the team's CURRENT active roster as of today. Players who were traded, waived, released, or sent to G-League before today MUST NOT be included.",
+                    "If uncertain whether a player is currently on the team, exclude them and include a different active roster player instead.",
                     "Use current-season statistics, not career averages.",
                     "Last 5 game averages should be from the most recent 5 games played.",
                     "Projected minutes should reflect the player's typical workload this season.",
                     "Usage rate is the percentage of team plays used by the player (0.15-0.35 typical range).",
                     "Rotation risk: locked_in=star starter, normal=regular starter, elevated=minutes fluctuating, high=bench player or injury concern.",
-                    "Use null for any field you cannot determine with reasonable confidence.",
+                    "CRITICAL: Do NOT return null for usage_rate, minutes_proj, points_avg, or rebound_avg — these are required. If you cannot find a value, estimate from available data.",
+                    "Use null only for fields you truly cannot determine with reasonable confidence.",
                     "Return JSON only — no markdown, no prose.",
                 ],
             },
@@ -138,6 +177,18 @@ class LLMPlayerStatsProvider:
                 "threes_avg": self._safe_float(p.get("threes_avg")),
                 "threes_last5": self._safe_float(p.get("threes_last5")),
                 "three_point_attempts": self._safe_float(p.get("three_point_attempts")),
+                "steals_avg": self._safe_float(p.get("steals_avg")),
+                "steals_last5": self._safe_float(p.get("steals_last5")),
+                "blocks_avg": self._safe_float(p.get("blocks_avg")),
+                "blocks_last5": self._safe_float(p.get("blocks_last5")),
+                "turnovers_avg": self._safe_float(p.get("turnovers_avg")),
+                "turnovers_last5": self._safe_float(p.get("turnovers_last5")),
+                "fg_made_avg": self._safe_float(p.get("fg_made_avg")),
+                "fg_made_last5": self._safe_float(p.get("fg_made_last5")),
+                "fg_attempted_avg": self._safe_float(p.get("fg_attempted_avg")),
+                "fg_attempted_last5": self._safe_float(p.get("fg_attempted_last5")),
+                "two_pt_made_avg": self._safe_float(p.get("two_pt_made_avg")),
+                "two_pt_made_last5": self._safe_float(p.get("two_pt_made_last5")),
                 "rotation_risk": self._safe_str(p.get("rotation_risk"), "normal"),
                 "injury_status": self._safe_str(p.get("injury_status"), "healthy"),
                 "is_starter": bool(p.get("is_starter", True)),

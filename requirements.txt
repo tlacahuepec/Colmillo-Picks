@@ -16,6 +16,9 @@ jsonschema>=4.21,<5.0
 
 # LLM providers
 google-genai>=1.0.0,<2.0
+langgraph>=0.4,<1.0
+langchain-core>=0.3,<1.0
+langchain-google-genai>=2.0,<3.0
 
 # Config
 python-dotenv>=1.0,<2.0

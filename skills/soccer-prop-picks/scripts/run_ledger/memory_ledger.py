@@ -6,6 +6,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from diagnostics_support import current_operation_id
+from services.diagnostics import MESSAGES, valid_id
+
 from run_ledger.contract import RunContext, RunStep, SavedPick
 
 
@@ -16,6 +19,11 @@ class InMemoryRunLedger:
         self._picks: dict[str, list[SavedPick]] = {}
 
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext:
+        request = dict(request)
+        operation_id = request.get("operation_id") or current_operation_id()
+        operation_id = operation_id if valid_id(operation_id) else None
+        if operation_id:
+            request["operation_id"] = operation_id
         markets_raw = request.get("markets", ())
         markets = tuple(markets_raw) if markets_raw else ()
         ctx = RunContext(
@@ -25,6 +33,7 @@ class InMemoryRunLedger:
             competition=request.get("competition"),
             request_snapshot=dict(request),
             status="running",
+            operation_id=operation_id,
             started_at=datetime.now(timezone.utc),
             sport=request.get("sport", ""),
             league=request.get("league"),
@@ -34,10 +43,14 @@ class InMemoryRunLedger:
         self._runs[ctx.id] = ctx
         return ctx
 
-    def complete_run(self, run_id: str) -> RunContext:
+    def complete_run(self, run_id: str, *, outcome: str = "success") -> RunContext:
         ctx = self._runs[run_id]
         now = datetime.now(timezone.utc)
+        if outcome not in {"success", "no_picks"}:
+            raise ValueError("Completion outcome must be success or no_picks")
         ctx.status = "success"
+        ctx.outcome = outcome
+        ctx.diagnostic_summary = MESSAGES[outcome]
         ctx.completed_at = now
         ctx.duration_ms = max(0, round((now - ctx.started_at).total_seconds() * 1000))
         return ctx
@@ -46,6 +59,8 @@ class InMemoryRunLedger:
         ctx = self._runs[run_id]
         now = datetime.now(timezone.utc)
         ctx.status = "partial"
+        ctx.outcome = "partial"
+        ctx.diagnostic_summary = MESSAGES["partial"]
         ctx.partial_reasons = list(reasons)
         ctx.completed_at = now
         ctx.duration_ms = max(0, round((now - ctx.started_at).total_seconds() * 1000))
@@ -56,12 +71,15 @@ class InMemoryRunLedger:
         run_id: str,
         *,
         error_summary: str,
+        error_code: str | None = None,
         error_stage: str | None = None,
         provider_status: dict[str, Any] | None = None,
     ) -> RunContext:
         ctx = self._runs[run_id]
         now = datetime.now(timezone.utc)
         ctx.status = "failed"
+        ctx.outcome = "failed"
+        ctx.diagnostic_summary = MESSAGES.get(error_code, MESSAGES["unexpected_error"])
         ctx.error_summary = error_summary
         ctx.error_stage = error_stage
         if provider_status:
@@ -103,10 +121,11 @@ class InMemoryRunLedger:
                 team_id=pick.get("team_id", ""),
                 market=pick.get("market", ""),
                 direction=pick.get("direction", ""),
-                line=float(pick.get("line", 0)),
+                line=None if pick.get("line", 0) is None else float(pick.get("line", 0)),
                 score=float(pick.get("score", 0)),
                 confidence=pick.get("confidence", ""),
                 risk_notes=list(risk_flags),
+                source_pick=dict(pick),
             )
             saved.append(sp)
         self._picks.setdefault(run_id, []).extend(saved)
@@ -129,6 +148,9 @@ class InMemoryRunLedger:
                 competition=r.competition,
                 request_snapshot={},
                 status=r.status,
+                operation_id=r.operation_id,
+                outcome=r.outcome,
+                diagnostic_summary=r.diagnostic_summary,
                 error_summary=r.error_summary,
                 error_stage=r.error_stage,
                 started_at=r.started_at,

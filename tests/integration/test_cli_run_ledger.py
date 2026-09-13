@@ -32,6 +32,7 @@ def test_cli_execution_creates_run_record_without_changing_output() -> None:
             env={
                 "PATH": str(os.environ.get("PATH", "")),
                 "COLMILLO_RUNS_DB_PATH": db_path,
+                "COLMILLO_DIAGNOSTICS_DB_PATH": os.path.join(tmp_dir, "diagnostics.db"),
             },
         )
 

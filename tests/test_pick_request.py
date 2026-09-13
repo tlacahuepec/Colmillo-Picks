@@ -104,7 +104,7 @@ class TestPickRequestValidation:
             home_team="A",
             away_team="B",
             markets=("unknown_market",),
-            top_n=10,
+            top_n=11,
         )
         with pytest.raises(PickRequestValidationError) as exc_info:
             validate_pick_request(req)
@@ -117,7 +117,7 @@ class TestPickRequestValidation:
             home_team="Arsenal",
             away_team="Liverpool",
             markets=("passes",),
-            top_n=10,
+            top_n=11,
         )
         with pytest.raises(PickRequestValidationError) as exc_info:
             validate_pick_request(req)

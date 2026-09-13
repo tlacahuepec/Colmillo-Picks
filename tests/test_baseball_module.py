@@ -360,7 +360,7 @@ class TestBaseballModuleWithService:
         assert inputs["collection_summary"]["home_lineup_players"] == 0
         assert inputs["collection_summary"]["away_lineup_players"] == 0
 
-        with pytest.raises(BaseballDataQualityError, match="MLB StatsAPI found the game") as exc_info:
+        with pytest.raises(BaseballDataQualityError, match="Lineups not posted yet") as exc_info:
             module.score(inputs, markets=("hits", "total_bases", "runs", "rbi", "home_runs"))
         assert exc_info.value.reason == "hitter_inputs_unavailable"
         assert "baseball_scoring_rejected" in caplog.text
@@ -455,4 +455,58 @@ class TestFindGame:
         result = _find_game(self._GAMES, "rockies", "dodgers")
         assert result is not None
         assert result["gamePk"] == 717001
+
+
+class TestLineupPendingMessage:
+    """Verify error message includes actionable retry information."""
+
+    def _make_schedule_result(self):
+        result = MagicMock()
+        result.meta.available = True
+        result.games = [
+            {
+                "gamePk": 717001,
+                "teams": {
+                    "home": {"team": {"id": 147, "name": "New York Yankees"}},
+                    "away": {"team": {"id": 111, "name": "Boston Red Sox"}},
+                },
+                "gameDate": "2026-05-25T23:05:00Z",
+                "venue": {"id": 3313, "name": "Yankee Stadium"},
+                "status": {"detailedState": "Scheduled"},
+            }
+        ]
+        return result
+
+    def test_hitter_unavailable_message_includes_retry_hint(self):
+        service = MagicMock()
+        service._schedule.get_schedule.return_value = self._make_schedule_result()
+        game = MLBGame(
+            event_id="717001",
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            venue="Yankee Stadium",
+            game_time_utc="2026-05-25T23:05:00Z",
+            home_team_id=147,
+            away_team_id=111,
+            venue_id=3313,
+        )
+        service.collect.return_value = MLBGameContext(
+            game=game,
+            home_probable_pitcher=MLBProbablePitcher(player_name="Cole", player_id=543037, confirmed=True),
+            away_probable_pitcher=MLBProbablePitcher(player_name="Bello", player_id=678394, confirmed=True),
+            home_batting_order=MLBBattingOrder(team="New York Yankees", confirmed=False, slots=[]),
+            away_batting_order=MLBBattingOrder(team="Boston Red Sox", confirmed=False, slots=[]),
+        )
+
+        module = BaseballModule(collection_service=service)
+        inputs = module.collect_inputs(
+            home_team="New York Yankees",
+            away_team="Boston Red Sox",
+            match_date="2026-05-25",
+        )
+
+        with pytest.raises(BaseballDataQualityError) as exc_info:
+            module.score(inputs, markets=("hits",))
+        assert "retry" in str(exc_info.value).lower() or "later" in str(exc_info.value).lower()
+        assert exc_info.value.reason == "hitter_inputs_unavailable"
 

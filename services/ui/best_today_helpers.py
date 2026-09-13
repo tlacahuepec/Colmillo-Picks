@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-_DEFAULT_SPORTS = ["soccer", "basketball", "baseball"]
+_DEFAULT_SPORTS = ["soccer", "basketball", "baseball", "nfl"]
 
 _CONFIDENCE_COLORS: dict[str, str] = {
     "high": "green",
@@ -25,19 +25,26 @@ def build_slate_payload(
     sports: list[str],
     max_matches_per_sport: int,
     top_n: int,
+    timezone: str | None = None,
+    nfl_market_group: str = "all",
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "date": date,
         "sports": sports if sports else _DEFAULT_SPORTS,
         "max_matches_per_sport": max_matches_per_sport,
         "top_n": top_n,
     }
+    if timezone:
+        payload["timezone"] = timezone
+    if nfl_market_group != "all":
+        payload["nfl_market_group"] = nfl_market_group
+    return payload
 
 
 def format_slate_candidate_row(candidate: dict[str, Any]) -> str:
     rank = candidate.get("rank", "?")
     sport = candidate.get("sport", "?")
-    player = candidate.get("player", "Unknown")
+    player = candidate.get("subject_name") or candidate.get("player", "Unknown")
     market = candidate.get("market", "?")
     line = candidate.get("line")
     direction = candidate.get("direction", "?")
@@ -72,6 +79,8 @@ def format_match_run_summary(run: dict[str, Any]) -> str:
 
     if status == "success":
         return f"[{sport}] {home} v {away} — success, {pick_count} picks{latency_str}"
+    if status == "no_picks":
+        return f"[{sport}] {home} v {away} — no verified picks: {error_msg}{latency_str}"
     return f"[{sport}] {home} v {away} — failed: {error_msg}{latency_str}"
 
 
@@ -80,10 +89,17 @@ def render_no_candidates_message() -> str:
 
 
 def render_partial_failure_summary(match_runs: list[dict[str, Any]]) -> str:
+    pending = [r for r in match_runs if r.get("status") == "pending_data"]
     failed = [r for r in match_runs if r.get("status") == "failed"]
-    if not failed:
+    if not failed and not pending:
         return ""
     lines = []
+    for run in pending:
+        home = run.get("home_team", "?")
+        away = run.get("away_team", "?")
+        sport = run.get("sport", "?")
+        error = run.get("error_message", "waiting for data")
+        lines.append(f"- [{sport}] {home} v {away}: waiting for lineup — {error}")
     for run in failed:
         home = run.get("home_team", "?")
         away = run.get("away_team", "?")
@@ -118,11 +134,14 @@ def format_risk_flags_markdown(risk_flags: list[str]) -> str:
 def build_availability_batch_payload(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for c in candidates:
+        if c.get("subject_type", "player") != "player" or (c.get("sport") == "nfl" and c.get("line") is None):
+            continue
         player = c.get("player", "")
         market = c.get("market", "")
         if not player or not market:
             continue
         payload.append({
+            **({"sport": "nfl"} if c.get("sport") == "nfl" else {}),
             "player": player,
             "market": market,
             "line": c.get("line") or 0.0,
@@ -152,6 +171,15 @@ def format_source_pick_detail(source_pick: dict[str, Any]) -> str:
     if not source_pick:
         return ""
     lines: list[str] = []
+    offer = source_pick.get("offer")
+    if offer:
+        lines.append(f"**Sportsbook:** {offer['sportsbook']} · Decimal odds: {offer['odds_decimal']} · Observed: {offer['observed_at']}")
+        lines.append(f"[Sportsbook source]({offer['source_url']})")
+    explanation = source_pick.get("explainability", {})
+    if source_pick.get("sport") == "nfl":
+        lines.append(explanation.get("rationale", ""))
+        for factor in explanation.get("top_contributing_factors", []):
+            lines.append(f"{factor['factor']}: {factor['score']:.2f} (weight {factor['weight']:.2f})")
     score = source_pick.get("score")
     if score is not None:
         lines.append(f"**Score:** {score}")

@@ -60,6 +60,16 @@ def _build_default_registry() -> MarketRegistry:
         Market(id="rebounds", display_name="Rebounds", sport="basketball", value_type="float", sides=("over", "under")),
         Market(id="assists", display_name="Assists", sport="basketball", value_type="float", sides=("over", "under")),
         Market(id="threes", display_name="Three-Pointers", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="steals", display_name="Steals", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="blocks", display_name="Blocks", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="turnovers", display_name="Turnovers", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="fantasy_score", display_name="Fantasy Score", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="rebs_asts", display_name="Rebounds + Assists", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="pra", display_name="Points + Rebounds + Assists", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="blks_stls", display_name="Blocks + Steals", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="fg_attempted", display_name="FG Attempted", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="fg_made", display_name="FG Made", sport="basketball", value_type="float", sides=("over", "under")),
+        Market(id="two_pt_made", display_name="2PT FG Made", sport="basketball", value_type="float", sides=("over", "under")),
     ]
 
     baseball_markets = [
@@ -73,7 +83,13 @@ def _build_default_registry() -> MarketRegistry:
         Market(id="pitcher_outs", display_name="Pitcher Outs (Recorded)", sport="baseball", value_type="float", sides=("over", "under")),
     ]
 
-    for m in soccer_markets + basketball_markets + baseball_markets:
+    from nfl_domain import NFL_MARKETS, NO_LINE_MARKETS
+    nfl_markets = [Market(id=m, display_name=m.replace("_", " ").title(), sport="nfl",
+                          value_type="selection" if m in NO_LINE_MARKETS else "float",
+                          sides=("home", "away") if m in {"spread", "moneyline"} else
+                          ("yes",) if m == "anytime_touchdown" else ("over", "under"))
+                   for m in NFL_MARKETS]
+    for m in soccer_markets + basketball_markets + baseball_markets + nfl_markets:
         registry.register(m)
 
     return registry

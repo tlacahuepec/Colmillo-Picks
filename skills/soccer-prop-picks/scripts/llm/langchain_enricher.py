@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Callable
 
+from llm.client import GroundingMetadataResult
 from llm.prompt_builder import build_system_prompt, build_user_prompt
 from llm.schema_validation import validate_llm_payload
 
@@ -36,7 +37,12 @@ class LangChainEnricher:
         return merge_explanations(scored_payload=scored_payload, explanations=explanations)
 
 
-def merge_explanations(*, scored_payload: dict[str, Any], explanations: list[dict[str, Any]]) -> dict[str, Any]:
+def merge_explanations(
+    *,
+    scored_payload: dict[str, Any],
+    explanations: list[dict[str, Any]],
+    grounding: GroundingMetadataResult | None = None,
+) -> dict[str, Any]:
     explanation_map: dict[str, str] = {}
     for explanation in explanations:
         player_id = str(explanation.get("player_id", "")).strip()
@@ -57,6 +63,13 @@ def merge_explanations(*, scored_payload: dict[str, Any], explanations: list[dic
     notes = list(trace.get("notes", []))
     notes.append("LLM enrichment applied.")
     trace["notes"] = notes
+
+    if grounding is not None:
+        trace["grounding_sources"] = [
+            {"url": s.url, "title": s.title} for s in grounding.sources
+        ]
+        trace["web_search_queries"] = list(grounding.web_search_queries)
+        trace["grounding_supports_count"] = len(grounding.supports)
 
     result["scores"] = result_scores
     result["trace"] = trace

@@ -2,7 +2,7 @@
 
 This project follows the [Engineering Constitution](https://github.com/tlacahuepec/Constitution).
 
-Multi-sport AI prop pick assistant — generates ranked player prop picks with confidence levels, risk flags, grounding sources, and platform availability checks. Supports soccer, basketball, and baseball (MLB).
+Multi-sport AI pick assistant — generates ranked player props and NFL game bets with confidence levels, risk flags, grounding sources, and platform availability checks. Supports soccer, basketball, baseball (MLB), and NFL.
 
 ## Supported Sports
 
@@ -11,8 +11,15 @@ Multi-sport AI prop pick assistant — generates ranked player prop picks with c
 | Soccer | `score_player_props.py` | Passes, shots, tackles, cards | Production |
 | Basketball | `basketball_scoring.py` | Points, rebounds, assists, 3PM | Production |
 | Baseball (MLB) | `baseball_scoring.py` | Hits, HR, K, RBI, walks, total bases, pitcher outs | Production |
+| NFL | `nfl_scoring.py` | Seven player props plus moneyline, spread, total | Pregame; grounded data required |
 
 See `docs/mlb-architecture.md` for the full MLB pipeline documentation.
+
+For NFL, select **NFL** on Generate or Best Today and choose **All**, **Player props**,
+or **Game bets**. The existing Gemini search setup supplies data; no sports-data
+subscription is required. Offers without provider search citations are excluded.
+NFL scores are heuristic rankings, and outcomes are graded manually.
+See [NFL support](docs/nfl-support.md) for markets, evidence requirements and limitations.
 
 ## Quickstart (CLI)
 
@@ -42,6 +49,24 @@ python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "arsenal - li
 ## Local development (UI + API)
 
 Both services auto-load `.env` from the project root via `python-dotenv`. No manual env exporting needed.
+
+### Quality checks
+
+Run the same checks required by CI from the repository root:
+
+```powershell
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m pyright
+.venv\Scripts\python.exe -m pytest -q
+```
+
+Pyright currently enforces basic checking for the typed catalog subsystem. New
+production modules should be added to its configured scope as they become
+type-clean; legacy dynamic scripts are not blanket-suppressed.
+
+Ruff targets Python 3.11 and uses a 100-character formatting policy. CI
+explicitly enforces import and syntax/error rules; existing `E501` debt is
+tracked for a dedicated remediation rather than being hidden by a bulk rewrite.
 
 ### Setup
 
@@ -162,19 +187,21 @@ Verify LLM enrichment ran by checking the report includes:
 
 If you see `LLM status: not_requested`, the run included only deterministic scoring. Add `--use-llm --llm-provider gemini` to enable LLM enrichment.
 
-### Debug fixture LLM
+### Diagnose a failed query
 
-```powershell
-$env:COLMILLO_FIXTURE_LLM_DEBUG = "1"
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "..." 2> fixture-debug.log
-```
+Open **Diagnostics** in the sidebar, or select **View diagnostics** on a pick or
+slate. Filter by date, sport, outcome, service or ID, then select **Refresh
+diagnostics**. The page explains the outcome, recorded stages and suggested next
+action. Use **Prepare diagnostic ZIP** and **Download diagnostic ZIP** to share
+a sanitized report. A UI timeout can leave a job running; check its status before
+submitting again.
 
-### Debug grounding sources
-
-```powershell
-$env:COLMILLO_DEBUG_GROUNDING = "1"
-python skills/soccer-prop-picks/scripts/run_match_pick_pipeline.py "..." 2> grounding-debug.log
-```
+Diagnostics collect bounded metadata: timings, provider/model, counts, retries
+and classified errors. Raw prompts, provider responses and credentials are
+excluded, including when legacy debug flags are set. See the
+[user and architecture guide](docs/diagnostics.md),
+[implementation checklist](docs/diagnostics-implementation-plan.md), and
+[validation record](docs/diagnostics-validation.md).
 
 ## API surface
 

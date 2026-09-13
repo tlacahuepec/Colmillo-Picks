@@ -146,7 +146,7 @@ def _build_basketball_module():
                 api_key=config.api_key,
                 model=model,
                 search_grounding=True,
-                max_output_tokens=4000,
+                max_output_tokens=4096,
                 max_retries=1,
                 retry_delay_seconds=2.0,
             )
@@ -251,6 +251,8 @@ def _build_default_registry() -> SportModuleRegistry:
     registry.register(SoccerModule())
     registry.register(_build_basketball_module())
     registry.register(_build_baseball_module())
+    from nfl_module import NflModule
+    registry.register(NflModule())
     return registry
 
 

@@ -24,6 +24,9 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+_SCRIPTS_DIR = _REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from dotenv import load_dotenv  # noqa: E402
 
@@ -32,6 +35,12 @@ load_dotenv(_REPO_ROOT / ".env")
 import streamlit as st  # noqa: E402
 
 from services.ui.api_client import APIClientConfig, APIError, PicksAPIClient  # noqa: E402
+from services.ui.diagnostics import (  # noqa: E402
+    render_connection_failure,
+    render_diagnostics_link,
+    render_diagnostics_page,
+    safe_text,
+)
 from services.ui.best_today_helpers import (  # noqa: E402
     build_slate_payload,
     clear_slate_cache,
@@ -48,7 +57,7 @@ from services.ui.best_today_helpers import (  # noqa: E402
 )
 
 
-PAGES = ("Generate", "History", "Best Today")
+PAGES = ("Generate", "History", "Best Today", "Grounding Audit", "Diagnostics")
 
 
 def _format_utc_to_local(utc_str: str) -> str:
@@ -116,6 +125,8 @@ def _build_pick_payload(
         payload["markets"] = markets
     if league:
         payload["league"] = league
+    if sport == "nfl":
+        payload["timezone"] = os.getenv("COLMILLO_TIMEZONE") or "America/Chicago"
 
     return payload
 
@@ -133,11 +144,15 @@ def _build_match_discovery_payload(
     ]
     if not normalized_sports:
         raise ValueError("at least one sport is required")
-    return {
+    timezone = os.getenv("COLMILLO_TIMEZONE")
+    payload: dict[str, Any] = {
         "date": date.isoformat(),
         "sports": normalized_sports,
         "limit_per_sport": int(limit_per_sport),
     }
+    if timezone:
+        payload["timezone"] = timezone
+    return payload
 
 
 def _build_payload_from_suggested_match(
@@ -204,12 +219,12 @@ def _config_warning_banner(config: APIClientConfig) -> None:
 def _render_pipeline_error(error: APIError) -> None:
     if isinstance(error.detail, dict) and "stage" in error.detail:
         st.error(
-            f"Pipeline failed at stage **{error.detail.get('stage')}**: "
-            f"{error.detail.get('message', 'unknown error')}",
+            f"Pipeline failed at stage **{safe_text(error.detail.get('stage'))}**: "
+            f"{safe_text(error.detail.get('message'), 'Unknown error')}",
             icon="🛑",
         )
     else:
-        st.error(f"API returned {error.status_code}: {error.detail}", icon="🛑")
+        render_connection_failure(error, key="pipeline_api")
 
 
 def _render_pick_payload(payload: dict[str, Any]) -> None:
@@ -230,7 +245,7 @@ def _clear_availability_cache() -> None:
             del st.session_state[key]
 
 
-def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any]) -> None:
+def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any], *, wait: bool = True) -> None:
     _clear_availability_cache()
 
     with st.spinner("Submitting pick request..."):
@@ -240,30 +255,40 @@ def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any]) -> 
             _render_pipeline_error(exc)
             return
         except Exception as exc:
-            st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
+            render_connection_failure(exc, key="generate_submit")
             return
 
     pick_id = accepted.get("id", "")
+    render_diagnostics_link(accepted, key="generate_diagnostics")
+
+    if not wait:
+        st.success(
+            f"Pick `{pick_id}` submitted. Pipeline is running in the background — "
+            f"check **Pick History** when ready.",
+            icon="\U0001f680",
+        )
+        return
+
     st.info(f"Pick `{pick_id}` accepted. Waiting for pipeline to finish...", icon="\u23f3")
     progress_box = st.empty()
     try:
         with st.spinner("Running pick pipeline..."):
             final = client.wait_for_pick(
-                pick_id, timeout_seconds=180.0, poll_interval_seconds=1.5
+                pick_id, timeout_seconds=300.0, poll_interval_seconds=2.0
             )
     except APIError as exc:
         _render_pipeline_error(exc)
         return
     except Exception as exc:
-        st.error(f"Pipeline status polling failed: {exc}", icon="\U0001f6d1")
+        render_connection_failure(exc, key="generate_poll")
         return
     finally:
         progress_box.empty()
 
     if final.get("status") == "failed":
         st.error(
-            f"Pipeline failed at stage **{final.get('error_stage')}**: "
-            f"{final.get('error_message', 'unknown error')}",
+            f"Pipeline failed at stage **{safe_text(final.get('error_stage'))}**: "
+            f"{safe_text(final.get('error_message'), 'Unknown error')}",
             icon="\U0001f6d1",
         )
         return
@@ -273,10 +298,21 @@ def _submit_pick_and_render(client: PicksAPIClient, payload: dict[str, Any]) -> 
     except APIError as exc:
         _render_pipeline_error(exc)
         return
+    except Exception as exc:
+        render_connection_failure(exc, key="generate_detail")
+        return
 
-    st.success(f"Pick saved as id `{pick_id}`.", icon="\u2705")
+    if detail.get("operation_id"):
+        render_diagnostics_link(detail, key="generate_result_diagnostics")
+    if detail.get("outcome") == "no_picks":
+        st.info("Analysis completed, but no verified picks qualified. View diagnostics for the recorded reasons.")
+    elif detail.get("outcome") == "partial":
+        st.warning(f"Partial results saved as id `{pick_id}`. View diagnostics for the incomplete stages.")
+    else:
+        st.success(f"Pick saved as id `{pick_id}`.", icon="\u2705")
     _render_pick_payload(detail)
-    _render_availability_section(client, pick_id)
+    if detail.get("outcome") != "no_picks":
+        _render_availability_section(client, pick_id)
 
 
 def _render_availability_section(client: PicksAPIClient, pick_id: str) -> None:
@@ -354,8 +390,8 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
     with col_sports:
         discovery_sports = st.multiselect(
             "Suggestion sports",
-            options=["Soccer", "Basketball", "Baseball"],
-            default=["Soccer", "Basketball", "Baseball"],
+            options=["Soccer", "Basketball", "Baseball", "NFL"],
+            default=["Soccer", "Basketball", "Baseball", "NFL"],
             key="discover_sports",
         )
     with col_limit:
@@ -367,7 +403,7 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
             key="discover_limit",
         )
 
-    run_col_n, run_col_explain, run_col_fallback = st.columns(3)
+    run_col_n, run_col_explain, run_col_fallback, run_col_async = st.columns(4)
     with run_col_n:
         suggestion_top_n = st.slider(
             "Suggestion top N",
@@ -387,6 +423,12 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
             "Suggestion fallback",
             value=False,
             key="suggestion_fallback",
+        )
+    with run_col_async:
+        suggestion_fire_forget = st.checkbox(
+            "Fire & forget",
+            value=False,
+            key="suggestion_fire_forget",
         )
 
     if st.button("Find today's matches", key="find_todays_matches"):
@@ -440,7 +482,7 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
         except ValueError as exc:
             st.error(str(exc), icon="\u26a0\ufe0f")
             return True
-        _submit_pick_and_render(client, payload)
+        _submit_pick_and_render(client, payload, wait=not suggestion_fire_forget)
         return True
 
     return False
@@ -453,25 +495,22 @@ def render_generate_page(client: PicksAPIClient) -> None:
     if _render_match_suggestions(client):
         return
 
-    # Explicit widget keys prevent Streamlit from resetting values when
-    # the baseball conditional block adds/removes widgets between reruns.
+    # Sport and NFL group controls rerun immediately, outside the submit form.
+    sport = st.selectbox(
+        "Sport", options=["Soccer", "Basketball", "Baseball", "NFL"],
+        index=0, help="Select the sport for analysis.", key="gen_sport",
+    )
+    nfl_group = "All"
+    if sport == "NFL":
+        nfl_group = st.selectbox("NFL markets", ["All", "Player props", "Game bets"], key="gen_nfl_group")
     with st.form("generate_pick"):
-        col_sport, col_date = st.columns(2)
-        with col_sport:
-            sport = st.selectbox(
-                "Sport",
-                options=["Soccer", "Basketball", "Baseball"],
-                index=0,
-                help="Select the sport for prop analysis.",
-                key="gen_sport",
-            )
-        with col_date:
-            date = st.date_input("Match date", value=_date.today(), key="gen_date")
+        date = st.date_input("Match date", value=_date.today(), key="gen_date")
 
         _TEAM_HINTS: dict[str, tuple[str, str]] = {
             "soccer": ("e.g. Bayern Munich", "e.g. Stuttgart"),
             "basketball": ("e.g. Boston Celtics", "e.g. Los Angeles Lakers"),
             "baseball": ("e.g. New York Yankees", "e.g. Boston Red Sox"),
+            "nfl": ("e.g. Kansas City Chiefs", "e.g. Buffalo Bills"),
         }
         home_hint, away_hint = _TEAM_HINTS.get(sport.lower(), ("", ""))
 
@@ -502,9 +541,17 @@ def render_generate_page(client: PicksAPIClient) -> None:
                     key="gen_markets",
                 )
 
-        col_n, col_explain, col_fallback = st.columns(3)
+        if sport == "NFL":
+            from nfl_domain import NFL_MARKETS, NFL_PLAYER_MARKETS, NFL_GAME_MARKETS
+            selected_league = "nfl"
+            options = NFL_PLAYER_MARKETS if nfl_group == "Player props" else NFL_GAME_MARKETS if nfl_group == "Game bets" else NFL_MARKETS
+            selected_markets = st.multiselect("Markets", options=list(options), default=list(options), key=f"gen_nfl_markets_{nfl_group}")
+            st.caption("Full-game pregame only. NFL results are graded manually.")
+            st.caption(f"NFL date timezone: {os.getenv('COLMILLO_TIMEZONE') or 'America/Chicago'}")
+
+        col_n, col_explain, col_fallback, col_async = st.columns(4)
         with col_n:
-            top_n = st.slider("Top N picks", min_value=1, max_value=5, value=5, key="gen_top_n")
+            top_n = st.slider("Top N picks", min_value=1, max_value=10, value=10, key="gen_top_n")
         with col_explain:
             add_explanations = st.checkbox(
                 "Add pick explanations", value=False, help="LLM adds rationale to each pick",
@@ -515,10 +562,18 @@ def render_generate_page(client: PicksAPIClient) -> None:
                 "Allow fallback", value=False, help="Return deterministic picks if pipeline fails",
                 key="gen_fallback",
             )
+        with col_async:
+            fire_and_forget = st.checkbox(
+                "Fire & forget", value=False, help="Submit and check results later in Pick History",
+                key="gen_fire_forget",
+            )
 
         submitted = st.form_submit_button("Generate", type="primary")
 
     if not submitted:
+        return
+    if sport == "NFL" and not selected_markets:
+        st.error("Select at least one NFL market.")
         return
 
     try:
@@ -533,7 +588,7 @@ def render_generate_page(client: PicksAPIClient) -> None:
             markets=selected_markets or None,
             league=selected_league,
         )
-        _submit_pick_and_render(client, payload)
+        _submit_pick_and_render(client, payload, wait=not fire_and_forget)
         return
     except ValueError as exc:
         st.error(str(exc), icon="⚠️")
@@ -562,7 +617,7 @@ def render_history_page(client: PicksAPIClient) -> None:
 
     sport_filter = st.sidebar.selectbox(
         "Filter by sport",
-        options=["All", "Soccer", "Basketball", "Baseball"],
+        options=["All", "Soccer", "Basketball", "Baseball", "NFL"],
         index=0,
     )
     limit = st.sidebar.slider("Page size", min_value=5, max_value=50, value=20, step=5)
@@ -583,7 +638,7 @@ def render_history_page(client: PicksAPIClient) -> None:
         _render_pipeline_error(exc)
         return
     except Exception as exc:
-        st.error(f"Failed to reach API: {exc}", icon="🛑")
+        render_connection_failure(exc, key="history_list")
         return
 
     items: list[dict[str, Any]] = listing.get("items", [])
@@ -604,7 +659,11 @@ def render_history_page(client: PicksAPIClient) -> None:
     except APIError as exc:
         _render_pipeline_error(exc)
         return
+    except Exception as exc:
+        render_connection_failure(exc, key="history_detail")
+        return
 
+    render_diagnostics_link(detail, key="history_diagnostics")
     st.subheader(detail.get("match_query", ""))
     st.caption(
         f"id `{detail['id']}` \u00b7 status `{detail.get('status', '?')}` \u00b7 "
@@ -612,8 +671,8 @@ def render_history_page(client: PicksAPIClient) -> None:
     )
     if detail.get("status") == "failed":
         st.error(
-            f"Pipeline failed at stage **{detail.get('error_stage')}**: "
-            f"{detail.get('error_message', 'unknown error')}",
+            f"Pipeline failed at stage **{safe_text(detail.get('error_stage'))}**: "
+            f"{safe_text(detail.get('error_message'), 'Unknown error')}",
             icon="\U0001f6d1",
         )
     with st.expander("Original request"):
@@ -668,7 +727,7 @@ def _render_outcomes_section(client: PicksAPIClient, detail: dict[str, Any]) -> 
         rows: list[dict[str, Any]] = []
         for entry in scores:
             rank = int(entry.get("rank", len(rows) + 1))
-            player = str(entry.get("player", entry.get("name", "unknown")))
+            player = str(entry.get("subject_name") or entry.get("player", entry.get("name", "unknown")))
             market = str(entry.get("market", entry.get("prop", "unknown")))
             result = st.selectbox(
                 f"#{rank} \u00b7 {player} \u00b7 {market}",
@@ -715,7 +774,7 @@ def render_best_today_page(client: PicksAPIClient) -> None:
     from services.ui.best_today_helpers import format_slate_list_item
 
     st.title("Best Today")
-    st.caption("Generate a ranked cross-sport slate of today's best prop picks.")
+    st.caption("Generate a ranked cross-sport slate of player props and NFL game bets.")
 
     with st.form("best_today_form"):
         col_date, col_sports = st.columns([1, 2])
@@ -724,10 +783,12 @@ def render_best_today_page(client: PicksAPIClient) -> None:
         with col_sports:
             slate_sports = st.multiselect(
                 "Sports",
-                options=["Soccer", "Basketball", "Baseball"],
-                default=["Soccer", "Basketball", "Baseball"],
+                options=["Soccer", "Basketball", "Baseball", "NFL"],
+                default=["Soccer", "Basketball", "Baseball", "NFL"],
                 key="slate_sports",
             )
+
+        nfl_group = st.selectbox("NFL markets", ["All", "Player props", "Game bets"], key="slate_nfl_group")
 
         col_max, col_top = st.columns(2)
         with col_max:
@@ -750,6 +811,8 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                 sports=normalized_sports,
                 max_matches_per_sport=max_matches,
                 top_n=top_n,
+                nfl_market_group={"All": "all", "Player props": "player_props", "Game bets": "game_bets"}[nfl_group],
+                timezone=os.getenv("COLMILLO_TIMEZONE"),
             )
         except ValueError as exc:
             st.error(str(exc), icon="\u26a0\ufe0f")
@@ -758,15 +821,16 @@ def render_best_today_page(client: PicksAPIClient) -> None:
         try:
             accepted = client.create_slate(payload)
         except APIError as exc:
-            st.error(f"API error {exc.status_code}: {exc.detail}", icon="\U0001f6d1")
+            render_connection_failure(exc, key="slate_submit")
             return
         except Exception as exc:
-            st.error(f"Failed to reach API: {exc}", icon="\U0001f6d1")
+            render_connection_failure(exc, key="slate_submit")
             return
 
         slate_id = accepted.get("id", "")
         st.toast(f"Slate `{slate_id}` submitted! It will appear in Recent Slates below.", icon="\u2705")
         st.session_state["selected_slate_id"] = slate_id
+        render_diagnostics_link(accepted, key="slate_accepted_diagnostics")
 
     st.divider()
     st.subheader("Recent Slates")
@@ -780,7 +844,8 @@ def render_best_today_page(client: PicksAPIClient) -> None:
     try:
         slates_response = client.list_slates(limit=10)
         slates = slates_response.get("items", [])
-    except Exception:
+    except Exception as exc:
+        render_connection_failure(exc, key="slate_list")
         slates = []
 
     if not slates:
@@ -804,6 +869,10 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                 (s.get("status") for s in slates if s.get("id") == selected_id), None
             )
             if selected_status in ("pending", "queued", "running"):
+                render_diagnostics_link(
+                    next(s for s in slates if s.get("id") == selected_id),
+                    key="slate_pending_diagnostics",
+                )
                 st.info(f"Slate `{selected_id}` is still **{selected_status}**... Click Refresh to check progress.", icon="\u23f3")
             elif should_render_cached_slate(st.session_state) and st.session_state.get("last_slate_detail", {}).get("id") == selected_id:
                 _render_slate_results(st.session_state["last_slate_detail"], client)
@@ -813,9 +882,9 @@ def render_best_today_page(client: PicksAPIClient) -> None:
                     store_slate_result(st.session_state, detail)
                     _render_slate_results(detail, client)
                 except APIError as exc:
-                    st.error(f"Failed to load slate: {exc.detail}", icon="\U0001f6d1")
+                    render_connection_failure(exc, key="slate_detail")
                 except Exception as exc:
-                    st.error(f"Error loading slate: {exc}", icon="\U0001f6d1")
+                    render_connection_failure(exc, key="slate_detail")
 
 
 def _render_candidate_card(candidate: dict[str, Any], badge: dict[str, Any] | None = None) -> None:
@@ -823,7 +892,7 @@ def _render_candidate_card(candidate: dict[str, Any], badge: dict[str, Any] | No
 
     rank = candidate.get("rank", "?")
     sport = candidate.get("sport", "?")
-    player = candidate.get("player", "Unknown")
+    player = candidate.get("subject_name") or candidate.get("player", "Unknown")
     market = candidate.get("market", "?")
     line = candidate.get("line")
     direction = candidate.get("direction", "?")
@@ -883,11 +952,12 @@ def _render_candidate_card(candidate: dict[str, Any], badge: dict[str, Any] | No
 def _render_slate_results(detail: dict[str, Any], client: PicksAPIClient) -> None:
     from services.ui.best_today_helpers import build_availability_batch_payload, match_badges_to_candidates
 
+    render_diagnostics_link(detail, key="slate_diagnostics")
     status = detail.get("status", "?")
     if status == "failed":
         st.error(
-            f"Slate failed at stage **{detail.get('error_stage', '?')}**: "
-            f"{detail.get('error_message', 'unknown error')}",
+            f"Slate failed at stage **{safe_text(detail.get('error_stage'))}**: "
+            f"{safe_text(detail.get('error_message'), 'Unknown error')}",
             icon="\U0001f6d1",
         )
         return
@@ -925,7 +995,7 @@ def _render_slate_results(detail: dict[str, Any], client: PicksAPIClient) -> Non
         if st.button("Check Availability", key=f"avail_btn_{slate_id}"):
             batch_payload = build_availability_batch_payload(candidates)
             try:
-                avail_result = client.check_availability_batch(batch_payload)
+                avail_result = client.check_availability_batch(batch_payload) if batch_payload else {"badges": [], "fallback_mode": False}
                 st.session_state[avail_cache_key] = avail_result
             except Exception as exc:
                 st.warning(f"Availability check failed: {exc}", icon="\u26a0\ufe0f")
@@ -949,16 +1019,226 @@ def _render_slate_results(detail: dict[str, Any], client: PicksAPIClient) -> Non
                 st.text(format_match_run_summary(run))
 
 
+def render_grounding_audit_page() -> None:
+    """Grounding quality audit — run enrichment and measure quality metrics."""
+    st.title("Grounding Quality Audit")
+    st.caption(
+        "Measures enrichment quality: field-fill rate, source-URL presence, "
+        "critical nulls, and cross-attempt consistency."
+    )
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        st.error("GEMINI_API_KEY not set. Add it to your .env file to run the audit.")
+        return
+
+    from bible_style_enrichment import BibleStyleEnrichmentProvider  # noqa: E402
+    from grounding_quality_metrics import (  # noqa: E402
+        compute_consistency_score,
+        score_enrichment_result,
+    )
+    from llm.gemini_client import GeminiLLMClient  # noqa: E402
+    from missing_input_enrichment import GeminiMissingInputEnrichmentProvider  # noqa: E402
+
+    test_players = [
+        {"name": "Karl-Anthony Towns", "team": "NYK", "opp": "SAS"},
+        {"name": "Jalen Brunson", "team": "NYK", "opp": "SAS"},
+        {"name": "Victor Wembanyama", "team": "SAS", "opp": "NYK"},
+        {"name": "Devin Vassell", "team": "SAS", "opp": "NYK"},
+        {"name": "Stephon Castle", "team": "SAS", "opp": "NYK"},
+    ]
+
+    required_fields: dict[str, tuple[str, ...]] = {
+        "points": ("minutes_proj", "usage_rate", "points_avg", "points_last5"),
+        "rebounds": ("minutes_proj", "usage_rate", "rebound_avg", "rebound_last5"),
+        "assists": ("minutes_proj", "usage_rate", "assist_avg", "assist_last5"),
+        "threes": ("minutes_proj", "usage_rate", "threes_avg", "threes_last5", "three_point_attempts"),
+    }
+
+    col1, col2 = st.columns(2)
+    with col1:
+        num_players = st.selectbox("Players to test", options=[1, 2, 3, 4, 5], index=0)
+    with col2:
+        num_attempts = st.selectbox("Attempts per player", options=[1, 2, 3], index=0)
+
+    use_bible_style = st.checkbox(
+        "Use bible-style prompt (explicit URLs + anti-patterns)",
+        value=False,
+        help="A/B test: uses explicit source URLs and anti-pattern rules from the Sports Stats Bible.",
+    )
+
+    selected_players = test_players[:num_players]
+
+    st.markdown("**Selected players:** " + ", ".join(p["name"] for p in selected_players))
+
+    if not st.button("Run Audit", type="primary"):
+        return
+
+    from datetime import datetime, timezone
+
+    from llm.client import LLMError  # noqa: E402
+
+    client = GeminiLLMClient(api_key=api_key, model="gemini-2.5-flash", search_grounding=True)
+    if use_bible_style:
+        provider = BibleStyleEnrichmentProvider(client=client, model="gemini-2.5-flash")
+        st.info("Using **bible-style** prompt (explicit URLs + anti-patterns).", icon="📖")
+    else:
+        provider = GeminiMissingInputEnrichmentProvider(client=client, model="gemini-2.5-flash")
+
+    temperatures = [None, 0.7, 1.0][:num_attempts]
+    all_unique_fields: list[str] = []
+    for fields in required_fields.values():
+        for f in fields:
+            if f not in all_unique_fields:
+                all_unique_fields.append(f)
+
+    progress = st.progress(0.0, text="Starting audit...")
+    total_calls = num_players * num_attempts
+    call_count = 0
+
+    results_data: list[dict[str, Any]] = []
+
+    for player in selected_players:
+        player_results: list[dict[str, Any] | None] = []
+        player_reports = []
+
+        for temp in temperatures:
+            call_count += 1
+            progress.progress(
+                call_count / total_calls,
+                text=f"Enriching {player['name']} (temp={temp})...",
+            )
+
+            missing_fields = [f"player:{player['name']}:{f}" for f in all_unique_fields]
+            try:
+                result = provider.enrich_missing_inputs(
+                    sport="basketball",
+                    home_team=player["team"],
+                    away_team=player["opp"],
+                    match_date=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
+                    league="nba",
+                    requested_markets=("points", "rebounds", "assists", "threes"),
+                    missing_fields=missing_fields,
+                    players=[{"player_name": player["name"], "team": player["team"], "position": "Unknown"}],
+                    lines={},
+                    game={},
+                )
+                grounding_metadata = provider.last_grounding_metadata
+            except LLMError as exc:
+                st.warning(f"Attempt failed for {player['name']} (temp={temp}): {exc}")
+                result = None
+                grounding_metadata = None
+            player_results.append(result)
+
+            if result:
+                report = score_enrichment_result(
+                    result, required_fields, grounding_metadata=grounding_metadata
+                )
+                player_reports.append(report)
+
+        consistency = compute_consistency_score([r for r in player_results if r])
+        results_data.append({
+            "player": player["name"],
+            "reports": player_reports,
+            "consistency": consistency,
+            "raw_results": player_results,
+        })
+
+    progress.progress(1.0, text="Audit complete!")
+
+    st.subheader("Summary Metrics")
+    all_reports = [r for entry in results_data for r in entry["reports"]]
+    if all_reports:
+        import statistics
+
+        col_a, col_b, col_c = st.columns(3)
+        fill_rates = [r.field_fill_rate for r in all_reports]
+        source_rates = [r.source_url_presence_rate for r in all_reports]
+        null_rates = [r.critical_null_rate for r in all_reports]
+
+        col_a.metric("Avg Field-Fill Rate", f"{statistics.mean(fill_rates):.1%}")
+        col_b.metric("Avg Source-URL Presence", f"{statistics.mean(source_rates):.1%}")
+        col_c.metric("Avg Critical-Null Rate", f"{statistics.mean(null_rates):.1%}")
+
+    st.subheader("Per-Player Results")
+    rows = []
+    for entry in results_data:
+        reports = entry["reports"]
+        if reports:
+            import statistics as _stats
+
+            rows.append({
+                "Player": entry["player"],
+                "Fill Rate": f"{_stats.mean(r.field_fill_rate for r in reports):.1%}",
+                "Source URLs": f"{_stats.mean(r.source_url_presence_rate for r in reports):.1%}",
+                "Critical Nulls": f"{_stats.mean(r.critical_null_rate for r in reports):.1%}",
+                "Confidence": f"{_stats.mean(r.confidence_score for r in reports):.2f}",
+                "Consistency (CV)": f"{entry['consistency']:.3f}",
+            })
+        else:
+            rows.append({
+                "Player": entry["player"],
+                "Fill Rate": "FAILED",
+                "Source URLs": "FAILED",
+                "Critical Nulls": "FAILED",
+                "Confidence": "FAILED",
+                "Consistency (CV)": "N/A",
+            })
+
+    if rows:
+        st.table(rows)
+
+    st.subheader("Grounding Sources Observed")
+    all_urls: set[str] = set()
+    for entry in results_data:
+        for result in entry["raw_results"]:
+            if not result:
+                continue
+            for p in result.get("players", []):
+                for src in p.get("sources", []):
+                    if src.get("url"):
+                        all_urls.add(src["url"])
+            for src in result.get("sources", []):
+                if src.get("url"):
+                    all_urls.add(src["url"])
+
+    if all_urls:
+        domains: dict[str, int] = {}
+        for url in all_urls:
+            try:
+                domain = url.split("//")[1].split("/")[0]
+                domains[domain] = domains.get(domain, 0) + 1
+            except (IndexError, AttributeError):
+                continue
+        for domain, count in sorted(domains.items(), key=lambda x: -x[1]):
+            st.markdown(f"- `{domain}` ({count})")
+    else:
+        st.info("No source URLs observed in enrichment responses.")
+
+    st.subheader("Bible-Expected Sources")
+    expected_sources = ["espn.com", "statmuse.com", "nba.com", "basketball-reference.com"]
+    for source in expected_sources:
+        found = any(source in url for url in all_urls)
+        if found:
+            st.markdown(f"- `{source}` — :green[PRESENT]")
+        else:
+            st.markdown(f"- `{source}` — :red[MISSING]")
+
+
 def main() -> None:
     st.set_page_config(page_title="Colmillo-Picks", layout="wide")
     config = APIClientConfig.from_env()
     _config_warning_banner(config)
-    page = st.sidebar.radio("Page", PAGES, index=0)
+    page = st.sidebar.radio("Page", PAGES, index=0, key="ui_page")
     client = _get_client()
     if page == "Generate":
         render_generate_page(client)
     elif page == "History":
         render_history_page(client)
+    elif page == "Grounding Audit":
+        render_grounding_audit_page()
+    elif page == "Diagnostics":
+        render_diagnostics_page(client)
     else:
         render_best_today_page(client)
 

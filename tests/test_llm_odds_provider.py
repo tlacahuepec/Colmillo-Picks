@@ -138,8 +138,10 @@ def test_llm_odds_provider_prompt_includes_team_names_and_date() -> None:
     assert "2026-05-23" in captured_prompts["user"]
 
 
-def test_llm_odds_provider_emits_warning_on_failure(capsys) -> None:
+def test_llm_odds_provider_emits_warning_on_failure(capsys, monkeypatch) -> None:
     module = load_script_module("llm_odds_provider.py")
+    events = []
+    monkeypatch.setattr(module, "emit", lambda event, **fields: events.append((event, fields)))
 
     class _FailingClient:
         def generate_structured(self, *, system_prompt, user_prompt, schema):
@@ -149,8 +151,81 @@ def test_llm_odds_provider_emits_warning_on_failure(capsys) -> None:
     provider.get_odds_snapshots(_fixture())
 
     captured = capsys.readouterr()
-    assert "odds provider failed" in captured.err.lower()
-    assert "LLM unavailable" in captured.err
+    assert captured.err == ""
+    assert events[0][0] == "provider_failed"
+    assert events[0][1]["exception_type"] == "RuntimeError"
+    assert "LLM unavailable" not in str(events)
+
+
+def _international_fixture():
+    return {
+        "match_id": "BRAJPN-2026-06-29",
+        "competition": "International Friendly",
+        "competition_type": "cup",
+        "kickoff_utc": "2026-06-29T20:00:00Z",
+        "teams": {
+            "home": {"team_id": "BRA", "team_name": "Brazil"},
+            "away": {"team_id": "JPN", "team_name": "Japan"},
+        },
+        "venue": {"name": "Maracana", "city": "Rio de Janeiro", "country": "Brazil"},
+    }
+
+
+def test_odds_prompt_supports_international_fixtures() -> None:
+    module = load_script_module("llm_odds_provider.py")
+    captured_prompts = {}
+
+    class _CapturingClient:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            captured_prompts["user"] = user_prompt
+            return _llm_response()
+
+    provider = module.LLMOddsProvider(client=_CapturingClient())
+    provider.get_odds_snapshots(_international_fixture())
+
+    user_prompt = captured_prompts["user"]
+    assert "Brazil" in user_prompt
+    assert "Japan" in user_prompt
+    assert "2026-06-29" in user_prompt
+    # The escape clause caused the LLM to return empty for any fixture where
+    # indexed sportsbook pages are sparse (typical for internationals).
+    assert "If odds are not yet available" not in user_prompt
+    # The strict 5-sportsbook minimum forced the LLM into the escape clause.
+    assert "at least 5 sportsbooks" not in user_prompt
+
+
+def test_odds_prompt_unchanged_essentials_for_club_fixture() -> None:
+    module = load_script_module("llm_odds_provider.py")
+    captured_prompts = {}
+
+    class _CapturingClient:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            captured_prompts["user"] = user_prompt
+            return _llm_response()
+
+    provider = module.LLMOddsProvider(client=_CapturingClient())
+    provider.get_odds_snapshots(_fixture())
+
+    user_prompt = captured_prompts["user"]
+    assert "Bayern Munich" in user_prompt
+    assert "VfB Stuttgart" in user_prompt
+    assert "2026-05-23" in user_prompt
+
+
+def test_odds_provider_accepts_single_sportsbook_for_international() -> None:
+    module = load_script_module("llm_odds_provider.py")
+
+    class _Client:
+        def generate_structured(self, *, system_prompt, user_prompt, schema):
+            return {"sportsbook_snapshots": [{"source": "bet365", "odds_decimal": 1.62}]}
+
+    provider = module.LLMOddsProvider(client=_Client())
+    result = provider.get_odds_snapshots(_international_fixture())
+
+    assert result is not None
+    assert len(result["sportsbook_snapshots"]) == 1
+    assert result["sportsbook_snapshots"][0]["source"] == "bet365"
+    assert result["sportsbook_snapshots"][0]["odds_decimal"] == 1.62
 
 
 def test_odds_provider_captures_last_sources_from_client() -> None:

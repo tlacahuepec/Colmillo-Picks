@@ -47,7 +47,29 @@ class TestBuildSlatePayload:
             top_n=10,
         )
 
-        assert payload["sports"] == ["soccer", "basketball", "baseball"]
+        assert payload["sports"] == ["soccer", "basketball", "baseball", "nfl"]
+
+    def test_includes_timezone_when_provided(self) -> None:
+        payload = build_slate_payload(
+            date="2026-06-01",
+            sports=["soccer"],
+            max_matches_per_sport=3,
+            top_n=10,
+            timezone="America/Chicago",
+        )
+
+        assert payload["timezone"] == "America/Chicago"
+
+    def test_omits_timezone_when_none(self) -> None:
+        payload = build_slate_payload(
+            date="2026-06-01",
+            sports=["soccer"],
+            max_matches_per_sport=3,
+            top_n=10,
+            timezone=None,
+        )
+
+        assert "timezone" not in payload
 
 
 class TestFormatSlateCandidateRow:
@@ -158,6 +180,18 @@ class TestRenderPartialFailureSummary:
         text = render_partial_failure_summary(match_runs)
 
         assert text == ""
+
+    def test_pending_data_shown_separately_from_failures(self) -> None:
+        match_runs = [
+            {"sport": "baseball", "home_team": "Yankees", "away_team": "Red Sox", "status": "pending_data", "error_message": "Lineups not posted yet"},
+            {"sport": "basketball", "home_team": "Lakers", "away_team": "Celtics", "status": "failed", "error_message": "timeout"},
+        ]
+
+        text = render_partial_failure_summary(match_runs)
+
+        assert "Yankees" in text
+        assert "Lakers" in text
+        assert "waiting" in text.lower() or "pending" in text.lower() or "lineup" in text.lower()
 
 
 class TestSessionStateCaching:

@@ -13,6 +13,7 @@ services:
     environment:
       # Override .env values that should differ in compose.
       COLMILLO_DB_PATH: /var/data/colmillo.db
+      COLMILLO_DIAGNOSTICS_DB_PATH: /var/data/diagnostics.db
     ports:
       - "8000:8000"
     volumes:

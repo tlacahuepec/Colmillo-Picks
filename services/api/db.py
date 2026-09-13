@@ -62,6 +62,9 @@ class PickRun(Base):
     league = Column(String(64), nullable=True)
     markets_json = Column(Text, nullable=True)
     scheduled_kickoff_utc = Column(DateTime(timezone=True), nullable=True)
+    operation_id = Column(String(64), nullable=True)
+    outcome = Column(String(16), nullable=True)
+    diagnostics_json = Column(Text, nullable=True)
 
 
 class PickOutcome(Base):
@@ -120,6 +123,9 @@ class SlateRun(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     total_tokens = Column(Integer, nullable=True)
+    operation_id = Column(String(64), nullable=True)
+    outcome = Column(String(16), nullable=True)
+    diagnostics_json = Column(Text, nullable=True)
 
 
 class SlateJob(Base):
@@ -172,6 +178,9 @@ def _ensure_added_columns(engine: Engine) -> None:
             ("league", "VARCHAR(64)"),
             ("markets_json", "TEXT"),
             ("scheduled_kickoff_utc", "TIMESTAMP"),
+            ("operation_id", "VARCHAR(64)"),
+            ("outcome", "VARCHAR(16)"),
+            ("diagnostics_json", "TEXT"),
         ]
         with engine.begin() as conn:
             for col_name, col_def in additive:
@@ -195,6 +204,9 @@ def _ensure_added_columns(engine: Engine) -> None:
             ("prompt_tokens", "INTEGER"),
             ("completion_tokens", "INTEGER"),
             ("total_tokens", "INTEGER"),
+            ("operation_id", "VARCHAR(64)"),
+            ("outcome", "VARCHAR(16)"),
+            ("diagnostics_json", "TEXT"),
         ]
         with engine.begin() as conn:
             for col_name, col_def in slate_additive:
@@ -288,12 +300,18 @@ def create_pending_pick_run(*, request_payload: dict[str, Any]) -> PickRun:
     """Insert a ``pending`` row for an accepted async pick request."""
     competition_value = request_payload.get("league") or request_payload.get("competition")
     competition_text = str(competition_value)[:255] if competition_value else None
+    from services.diagnostics import current_request_id
+    ident = str(uuid.uuid4())
+    request_payload["operation_id"] = ident
+    if current_request_id():
+        request_payload["request_id"] = current_request_id()
     row = PickRun(
-        id=str(uuid.uuid4()),
+        id=ident,
+        operation_id=ident,
         created_at=datetime.now(timezone.utc),
         match_query=str(request_payload.get("match_query", ""))[:255],
         competition=competition_text,
-        top_n=int(request_payload.get("top_n", 5)),
+        top_n=int(request_payload.get("top_n", 10)),
         request_json=json.dumps(_safe_request_payload(request_payload), default=str),
         report_markdown="",
         scores_json="[]",
@@ -312,9 +330,13 @@ def create_pending_pick_run(*, request_payload: dict[str, Any]) -> PickRun:
 
 
 def enqueue_pick_job(*, pick_id: str, request_dict: dict[str, Any], bundle_kwargs: dict[str, Any]) -> PickJob:
+    from services.diagnostics import emit
     now = datetime.now(timezone.utc)
+    job_id = str(uuid.uuid4())
+    request_dict.setdefault("operation_id", pick_id)
+    request_dict["job_id"] = job_id
     job = PickJob(
-        id=str(uuid.uuid4()),
+        id=job_id,
         pick_id=pick_id,
         request_json=json.dumps(request_dict, default=str),
         bundle_kwargs_json=json.dumps(bundle_kwargs, default=str),
@@ -330,6 +352,8 @@ def enqueue_pick_job(*, pick_id: str, request_dict: dict[str, Any], bundle_kwarg
             row.status = PICK_STATUS_QUEUED
             session.add(row)
         session.add(job)
+    emit("operation.accepted", operation_id=request_dict["operation_id"], outcome="queued",
+         pick_id=pick_id, job_id=job_id, **{k: request_dict[k] for k in ("sport", "home_team", "away_team", "event_date") if k in request_dict})
     return job
 
 
@@ -408,9 +432,17 @@ def mark_pick_success(
         if row is None:
             return None
         row.status = PICK_STATUS_SUCCESS
+        from services.diagnostics import MESSAGES, public_trace
+        outcome = result.get("outcome") or (
+            "partial" if any(step.get("status") == "failed" for step in result.get("steps", []))
+            else "success" if result.get("scores") else "no_picks"
+        )
+        row.outcome = outcome
+        row.diagnostics_json = json.dumps({"outcome": outcome, "summary": MESSAGES.get(outcome),
+                                           "pick_count": len(result.get("scores", []))})
         row.report_markdown = str(result.get("report_markdown", ""))
         row.scores_json = json.dumps(result.get("scores", []), default=str)
-        row.trace_json = json.dumps(trace, default=str) if trace else None
+        row.trace_json = json.dumps(public_trace(trace), default=str) if trace else None
         row.fixture_status = fixture_status
         row.llm_status = (
             _normalize_status_value(trace.get("llm_status")) if isinstance(trace, dict) else None
@@ -442,6 +474,12 @@ def mark_pick_failed(
         if row is None:
             return None
         row.status = PICK_STATUS_FAILED
+        from services.diagnostics import MESSAGES, safe_metadata
+        row.outcome = "failed"
+        safe = safe_metadata(error_details or {}, include_frames=False)
+        row.diagnostics_json = json.dumps({"outcome": "failed", "stage": stage,
+                                           "summary": MESSAGES.get(safe.get("error_code"), MESSAGES["collection_error"] if stage == "collect" else MESSAGES["unexpected_error"]),
+                                           **safe})
         row.error_stage = stage[:64]
         row.error_message = message
         if error_details:
@@ -614,8 +652,14 @@ def list_unresolved_picks(*, settled_before: datetime) -> list[PickRun]:
 
 
 def create_pending_slate_run(*, request_payload: dict[str, Any]) -> SlateRun:
+    from services.diagnostics import current_request_id
+    ident = str(uuid.uuid4())
+    request_payload["operation_id"] = ident
+    if current_request_id():
+        request_payload["request_id"] = current_request_id()
     row = SlateRun(
-        id=str(uuid.uuid4()),
+        id=ident,
+        operation_id=ident,
         created_at=datetime.now(timezone.utc),
         status=PICK_STATUS_PENDING,
         request_json=json.dumps(_safe_request_payload(request_payload), default=str),
@@ -628,6 +672,8 @@ def create_pending_slate_run(*, request_payload: dict[str, Any]) -> SlateRun:
 
 
 def enqueue_slate_job(*, slate_id: str, request_dict: dict[str, Any]) -> SlateJob:
+    from services.diagnostics import emit
+    request_dict.setdefault("operation_id", slate_id)
     now = datetime.now(timezone.utc)
     job = SlateJob(
         id=str(uuid.uuid4()),
@@ -645,6 +691,7 @@ def enqueue_slate_job(*, slate_id: str, request_dict: dict[str, Any]) -> SlateJo
             row.status = PICK_STATUS_QUEUED
             session.add(row)
         session.add(job)
+    emit("operation.accepted", operation_id=request_dict["operation_id"], outcome="queued", slate_id=slate_id, job_id=job.id)
     return job
 
 
@@ -703,12 +750,17 @@ def mark_slate_success(
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
     total_tokens: int | None = None,
+    partial: bool = False,
 ) -> SlateRun | None:
     with session_scope() as session:
         row = session.get(SlateRun, slate_id)
         if row is None:
             return None
         row.status = PICK_STATUS_SUCCESS
+        from services.diagnostics import MESSAGES
+        failed = partial or any(m.get("status") in {"failed", "pending_data"} for m in match_runs)
+        row.outcome = "partial" if failed else "success" if candidates else "no_picks"
+        row.diagnostics_json = json.dumps({"outcome": row.outcome, "summary": MESSAGES[row.outcome], "pick_count": len(candidates)})
         row.candidates_json = json.dumps(candidates, default=str)
         row.match_runs_json = json.dumps(match_runs, default=str)
         row.latency_ms = latency_ms
@@ -738,6 +790,9 @@ def mark_slate_failed(
         if row is None:
             return None
         row.status = PICK_STATUS_FAILED
+        from services.diagnostics import MESSAGES
+        row.outcome = "failed"
+        row.diagnostics_json = json.dumps({"outcome": "failed", "stage": stage, "summary": MESSAGES["unexpected_error"]})
         row.error_stage = stage[:64]
         row.error_message = message
         row.latency_ms = latency_ms

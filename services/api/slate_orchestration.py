@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone as utc_timezone
 from typing import Any, Callable
 
+from baseball_module import BaseballDataQualityError
+from nfl_module import NflNoPicks
 from slate_ranking import SlateCandidate, candidates_from_picks, rank_slate_candidates
 
 
@@ -20,6 +23,7 @@ class SlateResult:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    discovery_failures: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +31,7 @@ class SlateOrchestrationDeps:
     discover_matches: Callable[..., dict[str, Any]]
     run_match_pipeline: Callable[..., list[dict[str, Any]]]
     get_token_usage: Callable[[], tuple[int, int, int]] | None = None
+    read_catalog: Callable[..., Any] | None = None
 
 
 def execute_slate_job(
@@ -37,15 +42,17 @@ def execute_slate_job(
     t0 = time.perf_counter()
 
     date = request_dict["date"]
-    sports = request_dict.get("sports", ["soccer", "basketball", "baseball"])
+    sports = request_dict.get("sports", ["soccer", "basketball", "baseball", "nfl"])
     max_matches_per_sport = request_dict.get("max_matches_per_sport", 3)
     top_n = request_dict.get("top_n", 10)
+    timezone = request_dict.get("timezone")
 
     t_discovery = time.perf_counter()
     discovery_result = deps.discover_matches(
         date_utc=date,
         sports=sports,
         limit_per_sport=max_matches_per_sport,
+        timezone=timezone,
     )
     discovery_latency_ms = max(0, round((time.perf_counter() - t_discovery) * 1000))
 
@@ -69,6 +76,12 @@ def execute_slate_job(
 
             t_match = time.perf_counter()
             try:
+                catalog_read = None
+                if deps.read_catalog:
+                    catalog_read = deps.read_catalog(
+                        sport=sport, home_team=home_team, away_team=away_team,
+                        event_date=event_date, now=datetime.now(utc_timezone.utc),
+                    )
                 scores = deps.run_match_pipeline(
                     sport=sport,
                     home_team=home_team,
@@ -82,7 +95,9 @@ def execute_slate_job(
                 candidates = candidates_from_picks(
                     scores,
                     sport=sport,
-                    source_match=match,
+                    source_match={**match, **({"catalog_source": catalog_read.source,
+                                               "catalog_refresh_resources": list(catalog_read.refresh_resources)}
+                                              if catalog_read else {})},
                 )
                 all_candidates.extend(candidates)
 
@@ -95,6 +110,29 @@ def execute_slate_job(
                     "error_stage": None,
                     "error_message": None,
                     "pick_count": len(candidates),
+                    "latency_ms": match_latency_ms,
+                    "catalog_source": catalog_read.source if catalog_read else None,
+                    "catalog_refresh_resources": list(catalog_read.refresh_resources) if catalog_read else [],
+                })
+            except NflNoPicks as exc:
+                match_runs.append({
+                    "sport": sport, "home_team": home_team, "away_team": away_team,
+                    "event_date": event_date, "status": "no_picks", "error_stage": None,
+                    "error_message": str(exc)[:500], "pick_count": 0,
+                    "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+                })
+            except BaseballDataQualityError as exc:
+                match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))
+                status = "pending_data" if exc.reason == "hitter_inputs_unavailable" else "failed"
+                match_runs.append({
+                    "sport": sport,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "event_date": event_date,
+                    "status": status,
+                    "error_stage": "scoring",
+                    "error_message": str(exc)[:500],
+                    "pick_count": 0,
                     "latency_ms": match_latency_ms,
                 })
             except Exception as exc:
@@ -125,6 +163,7 @@ def execute_slate_job(
             total_tokens = t
 
     return SlateResult(
+        discovery_failures=sum(bool(v.get("error")) for v in results.values() if isinstance(v, dict)),
         candidates=ranked,
         match_runs=match_runs,
         latency_ms=total_latency_ms,

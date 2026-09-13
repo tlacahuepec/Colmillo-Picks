@@ -108,12 +108,33 @@ def _player_input(
     rebound_last5: float | None = 7.0,
     threes_avg: float | None = 2.5,
     threes_last5: float | None = 2.5,
+    steals_avg: float | None = 1.2,
+    steals_last5: float | None = 1.3,
+    blocks_avg: float | None = 0.8,
+    blocks_last5: float | None = 0.9,
+    turnovers_avg: float | None = 2.5,
+    turnovers_last5: float | None = 2.3,
+    fg_made_avg: float | None = 8.0,
+    fg_made_last5: float | None = 8.5,
+    fg_attempted_avg: float | None = 16.0,
+    fg_attempted_last5: float | None = 17.0,
+    two_pt_made_avg: float | None = 5.5,
+    two_pt_made_last5: float | None = 6.0,
     pace_factor: float | None = 1.0,
     opp_rebound_rank: int | None = 15,
     line_points: float = 22.5,
     line_assists: float = 5.5,
     line_rebounds: float = 7.5,
     line_threes: float = 2.5,
+    line_steals: float = 1.5,
+    line_blocks: float = 1.5,
+    line_turnovers: float = 2.5,
+    line_fg_made: float = 8.5,
+    line_fg_attempted: float = 16.5,
+    line_two_pt_made: float = 5.5,
+    line_rebs_asts: float = 12.5,
+    line_pra: float = 35.5,
+    line_blks_stls: float = 2.5,
 ) -> dict:
     d: dict = {"player_name": player_name, "position": position}
     if minutes_proj is not None:
@@ -136,6 +157,30 @@ def _player_input(
         d["threes_avg"] = threes_avg
     if threes_last5 is not None:
         d["threes_last5"] = threes_last5
+    if steals_avg is not None:
+        d["steals_avg"] = steals_avg
+    if steals_last5 is not None:
+        d["steals_last5"] = steals_last5
+    if blocks_avg is not None:
+        d["blocks_avg"] = blocks_avg
+    if blocks_last5 is not None:
+        d["blocks_last5"] = blocks_last5
+    if turnovers_avg is not None:
+        d["turnovers_avg"] = turnovers_avg
+    if turnovers_last5 is not None:
+        d["turnovers_last5"] = turnovers_last5
+    if fg_made_avg is not None:
+        d["fg_made_avg"] = fg_made_avg
+    if fg_made_last5 is not None:
+        d["fg_made_last5"] = fg_made_last5
+    if fg_attempted_avg is not None:
+        d["fg_attempted_avg"] = fg_attempted_avg
+    if fg_attempted_last5 is not None:
+        d["fg_attempted_last5"] = fg_attempted_last5
+    if two_pt_made_avg is not None:
+        d["two_pt_made_avg"] = two_pt_made_avg
+    if two_pt_made_last5 is not None:
+        d["two_pt_made_last5"] = two_pt_made_last5
     if pace_factor is not None:
         d["pace_factor"] = pace_factor
     if opp_rebound_rank is not None:
@@ -144,6 +189,15 @@ def _player_input(
     d["line_assists"] = line_assists
     d["line_rebounds"] = line_rebounds
     d["line_threes"] = line_threes
+    d["line_steals"] = line_steals
+    d["line_blocks"] = line_blocks
+    d["line_turnovers"] = line_turnovers
+    d["line_fg_made"] = line_fg_made
+    d["line_fg_attempted"] = line_fg_attempted
+    d["line_two_pt_made"] = line_two_pt_made
+    d["line_rebs_asts"] = line_rebs_asts
+    d["line_pra"] = line_pra
+    d["line_blks_stls"] = line_blks_stls
     return d
 
 
@@ -166,3 +220,106 @@ class TestZeroLineRejection:
         results = score_basketball_props([player], markets=("points",))
         assert len(results) == 1
         assert results[0]["line"] == 25.5
+
+
+class TestStealsScoring:
+    def test_steals_produces_valid_output(self) -> None:
+        player = _player_input(steals_avg=1.5, steals_last5=1.8)
+        scores = score_basketball_props([player], markets=("steals",))
+        assert len(scores) == 1
+        assert scores[0]["market"] == "steals"
+        assert 0 <= scores[0]["score"] <= 1
+
+
+class TestBlocksScoring:
+    def test_blocks_favors_centers(self) -> None:
+        center = _player_input(position="C", blocks_avg=2.0, blocks_last5=2.5)
+        guard = _player_input(position="PG", blocks_avg=2.0, blocks_last5=2.5)
+        center_scores = score_basketball_props([center], markets=("blocks",))
+        guard_scores = score_basketball_props([guard], markets=("blocks",))
+        assert center_scores[0]["score"] > guard_scores[0]["score"]
+
+
+class TestTurnoversScoring:
+    def test_turnovers_produces_valid_output(self) -> None:
+        player = _player_input(turnovers_avg=3.0, turnovers_last5=2.8)
+        scores = score_basketball_props([player], markets=("turnovers",))
+        assert len(scores) == 1
+        assert scores[0]["market"] == "turnovers"
+        assert 0 <= scores[0]["score"] <= 1
+
+
+class TestFGMadeScoring:
+    def test_fg_made_produces_valid_output(self) -> None:
+        player = _player_input(fg_made_avg=8.0, fg_made_last5=9.0)
+        scores = score_basketball_props([player], markets=("fg_made",))
+        assert len(scores) == 1
+        assert scores[0]["market"] == "fg_made"
+        assert 0 <= scores[0]["score"] <= 1
+
+
+class TestFGAttemptedScoring:
+    def test_fg_attempted_produces_valid_output(self) -> None:
+        player = _player_input(fg_attempted_avg=16.0, fg_attempted_last5=17.0)
+        scores = score_basketball_props([player], markets=("fg_attempted",))
+        assert len(scores) == 1
+        assert scores[0]["market"] == "fg_attempted"
+        assert 0 <= scores[0]["score"] <= 1
+
+
+class TestTwoPtMadeScoring:
+    def test_two_pt_made_produces_valid_output(self) -> None:
+        player = _player_input(position="C", two_pt_made_avg=6.0, two_pt_made_last5=6.5)
+        scores = score_basketball_props([player], markets=("two_pt_made",))
+        assert len(scores) == 1
+        assert scores[0]["market"] == "two_pt_made"
+        assert 0 <= scores[0]["score"] <= 1
+
+    def test_two_pt_made_direction_resolves(self) -> None:
+        player = _player_input(two_pt_made_avg=5.0, two_pt_made_last5=6.0, line_two_pt_made=5.5)
+        scores = score_basketball_props([player], markets=("two_pt_made",))
+        assert scores[0]["direction"] == "over"
+
+
+class TestComboMarkets:
+    def test_rebs_asts_produces_valid_output(self) -> None:
+        player = _player_input(rebound_avg=7.0, rebound_last5=7.5, assist_avg=5.0, assist_last5=5.5)
+        scores = score_basketball_props([player], markets=("rebs_asts",))
+        assert len(scores) == 1
+        assert scores[0]["market"] == "rebs_asts"
+        assert 0 <= scores[0]["score"] <= 1
+
+    def test_rebs_asts_direction_uses_combined_projection(self) -> None:
+        player = _player_input(
+            rebound_last5=8.0, assist_last5=6.0, line_rebs_asts=15.0,
+        )
+        scores = score_basketball_props([player], markets=("rebs_asts",))
+        assert scores[0]["direction"] == "under"
+
+    def test_pra_produces_valid_output(self) -> None:
+        player = _player_input()
+        scores = score_basketball_props([player], markets=("pra",))
+        assert len(scores) == 1
+        assert scores[0]["market"] == "pra"
+        assert 0 <= scores[0]["score"] <= 1
+
+    def test_pra_direction_sums_all_three(self) -> None:
+        player = _player_input(
+            points_last5=25.0, rebound_last5=8.0, assist_last5=6.0, line_pra=38.0,
+        )
+        scores = score_basketball_props([player], markets=("pra",))
+        assert scores[0]["direction"] == "over"
+
+    def test_blks_stls_produces_valid_output(self) -> None:
+        player = _player_input(blocks_avg=1.5, blocks_last5=1.8, steals_avg=1.2, steals_last5=1.5)
+        scores = score_basketball_props([player], markets=("blks_stls",))
+        assert len(scores) == 1
+        assert scores[0]["market"] == "blks_stls"
+        assert 0 <= scores[0]["score"] <= 1
+
+    def test_blks_stls_direction_uses_sum(self) -> None:
+        player = _player_input(
+            blocks_last5=2.0, steals_last5=1.5, line_blks_stls=4.0,
+        )
+        scores = score_basketball_props([player], markets=("blks_stls",))
+        assert scores[0]["direction"] == "under"

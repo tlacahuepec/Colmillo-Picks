@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from diagnostics_support import error_info, stage
+
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -119,53 +121,58 @@ class MLBCollectionService:
 
     def _safe_call_pitchers(self, game_pk: int) -> ProbablePitcherResult | None:
         try:
-            result = self._pitchers.get_probable_pitchers(game_pk=game_pk)
+            with stage("mlb_pitchers"):
+                result = self._pitchers.get_probable_pitchers(game_pk=game_pk)
             if not result.meta.available:
                 logger.warning(
                     "mlb_pitchers_unavailable",
-                    extra={"game_pk": game_pk, "error_message": result.meta.error_message},
+                    extra={"game_pk": game_pk, "provider_status": result.meta.provider_status},
                 )
             return result
         except Exception as exc:
-            logger.warning("mlb_pitchers_call_failed", extra={"game_pk": game_pk, "error": str(exc)})
+            logger.warning("mlb_pitchers_call_failed", extra={"game_pk": game_pk, **error_info(exc)})
             return None
 
     def _safe_call_lineups(self, game_pk: int) -> MLBLineupsResult | None:
         try:
-            result = self._lineups.get_lineups(game_pk=game_pk)
+            with stage("mlb_lineups"):
+                result = self._lineups.get_lineups(game_pk=game_pk)
             if not result.meta.available:
                 logger.warning(
                     "mlb_lineups_unavailable",
-                    extra={"game_pk": game_pk, "error_message": result.meta.error_message},
+                    extra={"game_pk": game_pk, "provider_status": result.meta.provider_status},
                 )
             return result
         except Exception as exc:
-            logger.warning("mlb_lineups_call_failed", extra={"game_pk": game_pk, "error": str(exc)})
+            logger.warning("mlb_lineups_call_failed", extra={"game_pk": game_pk, **error_info(exc)})
             return None
 
     def _safe_call_bullpen(self, team_id: int | None, date: str) -> BullpenResult | None:
         if team_id is None:
             return None
         try:
-            return self._bullpen.get_bullpen_state(team_id=team_id, date=date)
+            with stage("mlb_bullpen"):
+                return self._bullpen.get_bullpen_state(team_id=team_id, date=date)
         except Exception as exc:
-            logger.warning("mlb_bullpen_call_failed", extra={"team_id": team_id, "error": str(exc)})
+            logger.warning("mlb_bullpen_call_failed", extra={"team_id": team_id, **error_info(exc)})
             return None
 
     def _safe_call_weather(self, game_pk: int, game_time_utc: str) -> MLBWeatherResult | None:
         try:
-            return self._weather.get_weather(game_pk=game_pk, game_time_utc=game_time_utc)
+            with stage("mlb_weather"):
+                return self._weather.get_weather(game_pk=game_pk, game_time_utc=game_time_utc)
         except Exception as exc:
-            logger.warning("mlb_weather_call_failed", extra={"game_pk": game_pk, "error": str(exc)})
+            logger.warning("mlb_weather_call_failed", extra={"game_pk": game_pk, **error_info(exc)})
             return None
 
     def _safe_call_ballpark(self, venue_id: int | None) -> BallparkResult | None:
         if venue_id is None:
             return None
         try:
-            return self._ballpark.get_ballpark(venue_id=venue_id)
+            with stage("mlb_ballpark"):
+                return self._ballpark.get_ballpark(venue_id=venue_id)
         except Exception as exc:
-            logger.warning("mlb_ballpark_call_failed", extra={"venue_id": venue_id, "error": str(exc)})
+            logger.warning("mlb_ballpark_call_failed", extra={"venue_id": venue_id, **error_info(exc)})
             return None
 
     def _aggregate_status(

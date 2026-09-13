@@ -24,7 +24,12 @@ class TestBasketballModuleProtocol:
 
     def test_supported_markets(self) -> None:
         module = BasketballModule()
-        expected = {"points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers", "fantasy_score"}
+        expected = {
+            "points", "rebounds", "assists", "threes",
+            "steals", "blocks", "turnovers", "fantasy_score",
+            "rebs_asts", "pra", "blks_stls",
+            "fg_attempted", "fg_made", "two_pt_made",
+        }
         assert module.supported_markets == expected
 
     def test_supported_leagues(self) -> None:

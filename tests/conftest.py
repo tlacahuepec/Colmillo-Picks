@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import os
 import sys
 
 import pytest
@@ -13,6 +14,28 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILL_SCRIPTS = REPO_ROOT / "skills" / "soccer-prop-picks" / "scripts"
 if str(SKILL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SKILL_SCRIPTS))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_diagnostics(tmp_path_factory):
+    """Isolate diagnostics and default ledgers, including inherited CLI envs."""
+    import services.diagnostics as diagnostics
+    previous = diagnostics._store
+    folder = tmp_path_factory.mktemp("diagnostics")
+    paths = {"COLMILLO_DIAGNOSTICS_DB_PATH": str(folder / "events.db"),
+             "COLMILLO_RUNS_DB_PATH": str(folder / "runs.db")}
+    old_paths = {key: os.environ.get(key) for key in paths}
+    os.environ.update(paths)
+    store = diagnostics.DiagnosticsStore(folder / "events.db")
+    diagnostics._store = store
+    yield store
+    store.close()
+    diagnostics._store = previous
+    for key, value in old_paths.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def load_script_module(script_name: str):

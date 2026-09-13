@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
-import os
-import sys
+from diagnostics_support import diagnostic_stage, emit, error_info
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,8 +27,8 @@ class LLMLineupProvider:
         self.last_sources: list = []
         self.last_grounding_metadata = None
 
+    @diagnostic_stage("llm_lineup_provider")
     def get_lineups_and_availability(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
-        debug = os.getenv("COLMILLO_LINEUP_LLM_DEBUG", "").strip() not in ("", "0", "false")
         try:
             result = self._client.generate_structured(
                 system_prompt=self._build_system_prompt(),
@@ -38,13 +37,9 @@ class LLMLineupProvider:
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
             self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
-            if debug:
-                print(f"[lineup-llm-debug] response: {json.dumps(result, default=str)[:2000]}", file=sys.stderr)
             return self._map_response(result, fixture)
         except Exception as exc:
-            print(f"[lineup-provider] WARNING: Lineup provider failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-            if debug:
-                print(f"[lineup-llm-debug] error: {type(exc).__name__}: {exc}", file=sys.stderr)
+            emit("provider_failed", stage="llm_lineup_provider", level="WARNING", outcome="failed", **error_info(exc))
             return None
 
     @staticmethod
@@ -81,12 +76,14 @@ class LLMLineupProvider:
             "  ]\n"
             "}\n\n"
             "Rules:\n"
-            "- Include projected starting XI for both teams based on latest available information\n"
+            "- Include the latest projected starting XI for both teams based on the most recent available information "
+            "(official lineup announcements, manager press conferences, federation news, or pre-match reports). "
+            "This applies equally to club matches and national-team fixtures.\n"
             "- List all currently injured and suspended players\n"
             f"- In the players array, include exactly 6 key players: 3 from {home_name} "
             f"(1 midfielder, 1 forward, 1 defender) and 3 from {away_name} (1 midfielder, 1 forward, 1 defender)\n"
-            "- For each player, provide their season average passes per game and shots per game\n"
-            "- Use real current-season statistics, not estimates\n"
+            "- For each player, provide their current real-world average passes per game and shots per game. "
+            "For national-team fixtures, prefer the player's club-season averages since national-team match samples are small.\n"
             "- Return JSON only, no explanation"
         )
 

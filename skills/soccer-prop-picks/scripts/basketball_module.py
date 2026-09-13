@@ -22,13 +22,29 @@ logger = logging.getLogger("colmillo.basketball")
 _BASKETBALL_MARKETS = {
     "points", "rebounds", "assists", "threes",
     "steals", "blocks", "turnovers", "fantasy_score",
+    "rebs_asts", "pra", "blks_stls",
+    "fg_attempted", "fg_made", "two_pt_made",
 }
-_SCORING_MARKETS = ("points", "rebounds", "assists", "threes")
+_SCORING_MARKETS = (
+    "points", "rebounds", "assists", "threes",
+    "steals", "blocks", "turnovers",
+    "fg_made", "fg_attempted", "two_pt_made",
+    "rebs_asts", "pra", "blks_stls",
+)
 _MARKET_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "points": ("minutes_proj", "usage_rate", "points_avg", "points_last5"),
     "rebounds": ("minutes_proj", "usage_rate", "rebound_avg", "rebound_last5"),
     "assists": ("minutes_proj", "usage_rate", "assist_avg", "assist_last5"),
     "threes": ("minutes_proj", "usage_rate", "threes_avg", "threes_last5", "three_point_attempts"),
+    "steals": ("minutes_proj", "usage_rate", "steals_avg", "steals_last5"),
+    "blocks": ("minutes_proj", "usage_rate", "blocks_avg", "blocks_last5"),
+    "turnovers": ("minutes_proj", "usage_rate", "turnovers_avg", "turnovers_last5"),
+    "fg_made": ("minutes_proj", "usage_rate", "fg_made_avg", "fg_made_last5"),
+    "fg_attempted": ("minutes_proj", "usage_rate", "fg_attempted_avg", "fg_attempted_last5"),
+    "two_pt_made": ("minutes_proj", "usage_rate", "two_pt_made_avg", "two_pt_made_last5"),
+    "rebs_asts": ("minutes_proj", "usage_rate", "rebound_avg", "assist_avg"),
+    "pra": ("minutes_proj", "usage_rate", "points_avg", "rebound_avg", "assist_avg"),
+    "blks_stls": ("minutes_proj", "usage_rate", "blocks_avg", "steals_avg"),
 }
 
 _PLACEHOLDER_PLAYERS = [

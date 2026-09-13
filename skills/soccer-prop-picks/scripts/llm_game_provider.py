@@ -6,9 +6,10 @@ from a search-grounded LLM and maps into the basketball pipeline schema.
 
 from __future__ import annotations
 
+from diagnostics_support import diagnostic_stage, emit
+
 import json
 import os
-import sys
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.request import urlopen
@@ -96,12 +97,9 @@ class LLMGameProvider:
         )
 
     def _debug(self, event: str, payload: dict[str, Any]) -> None:
-        if not self.debug_enabled:
-            return
-        rendered = json.dumps(payload, ensure_ascii=True, default=str)
-        clipped = _truncate_debug(rendered, max_chars=max(256, self.debug_max_chars))
-        print(f"[game-llm-debug] {event}: {clipped}", file=sys.stderr)
+        emit("provider_debug", stage="collection", level="DEBUG", phase=event)
 
+    @diagnostic_stage("llm_game_provider")
     def lookup_game(
         self,
         *,

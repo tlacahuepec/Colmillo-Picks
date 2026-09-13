@@ -16,6 +16,11 @@ _DEFAULT_GROK_MODEL = "grok-3"
 _DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1"
 
 
+def _read_langgraph_toggle(getenv: Callable[[str], str | None]) -> bool:
+    value = getenv("COLMILLO_USE_LANGGRAPH") or ""
+    return value.strip().lower() in ("true", "1")
+
+
 def _as_chat_model(client: object) -> Callable[[dict[str, str]], dict]:
     def chat_model(prompt: dict[str, str]) -> dict:
         return client.generate_structured(system_prompt=prompt["system"], user_prompt=prompt["user"], schema={})
@@ -90,6 +95,19 @@ def build_enrich_with_llm(
             raise ValueError(f"Unsupported --llm-provider '{resolved_provider}'. Supported values: openai, gemini.")
 
     chat_model = _as_chat_model(client)
+
+    if _read_langgraph_toggle(getenv):
+        from llm.langgraph_enrichment import run_enrichment_graph
+
+        def enrich_with_llm(*, scored_payload: dict, match_inputs: dict) -> dict:
+            return run_enrichment_graph(
+                scored_payload=scored_payload,
+                match_inputs=match_inputs,
+                top_n=5,
+                client=client,
+            )
+
+        return enrich_with_llm
 
     if use_langgraph:
         flow = SimpleLangGraphFlow(

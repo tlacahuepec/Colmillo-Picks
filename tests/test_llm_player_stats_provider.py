@@ -300,7 +300,7 @@ class TestLLMPlayerStatsProviderDebug:
         )
 
         stderr = capsys.readouterr().err
-        assert "[player-stats-llm-debug] response:" in stderr
+        assert stderr == ""  # Even opt-in diagnostics remain metadata-only.
 
     def test_captures_last_sources(self) -> None:
         module = load_script_module("llm_player_stats_provider.py")
@@ -326,3 +326,33 @@ class TestLLMPlayerStatsProviderDebug:
 
         assert len(provider.last_sources) == 1
         assert provider.last_sources[0].url == "https://nba.com/stats"
+
+
+class TestPromptRosterRules:
+    def test_prompt_includes_current_roster_rule(self) -> None:
+        module = load_script_module("llm_player_stats_provider.py")
+        prompt = module.LLMPlayerStatsProvider._build_user_prompt(
+            home_team="Knicks", away_team="Spurs", match_date="2026-06-08",
+        )
+        prompt_data = json.loads(prompt)
+        rules_text = " ".join(prompt_data["rules"]).lower()
+        assert "current" in rules_text and "roster" in rules_text
+
+    def test_prompt_includes_trade_exclusion_rule(self) -> None:
+        module = load_script_module("llm_player_stats_provider.py")
+        prompt = module.LLMPlayerStatsProvider._build_user_prompt(
+            home_team="Knicks", away_team="Spurs", match_date="2026-06-08",
+        )
+        prompt_data = json.loads(prompt)
+        rules_text = " ".join(prompt_data["rules"]).lower()
+        assert "traded" in rules_text or "waived" in rules_text or "released" in rules_text
+
+    def test_prompt_requests_4_players_per_team(self) -> None:
+        module = load_script_module("llm_player_stats_provider.py")
+        prompt = module.LLMPlayerStatsProvider._build_user_prompt(
+            home_team="Knicks", away_team="Spurs", match_date="2026-06-08",
+        )
+        prompt_data = json.loads(prompt)
+        rules_text = " ".join(prompt_data["rules"])
+        assert "4 from the home team" in rules_text
+        assert "4 from the away team" in rules_text

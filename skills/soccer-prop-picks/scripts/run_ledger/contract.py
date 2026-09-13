@@ -29,6 +29,9 @@ class RunContext:
     markets: tuple[str, ...] = ()
     platform: str | None = None
     provider_status: dict[str, str] = field(default_factory=dict)
+    operation_id: str | None = None
+    outcome: str = "running"
+    diagnostic_summary: str | None = None
 
 
 @dataclass
@@ -48,21 +51,23 @@ class SavedPick:
     team_id: str
     market: str
     direction: str
-    line: float
+    line: float | None
     score: float
     confidence: str
     risk_notes: list[str] = field(default_factory=list)
+    source_pick: dict[str, Any] = field(default_factory=dict)
 
 
 class RunLedger(Protocol):
     def start_run(self, *, source: str, request: dict[str, Any]) -> RunContext: ...
-    def complete_run(self, run_id: str) -> RunContext: ...
+    def complete_run(self, run_id: str, *, outcome: str = "success") -> RunContext: ...
     def partial_run(self, run_id: str, *, reasons: list[str]) -> RunContext: ...
     def fail_run(
         self,
         run_id: str,
         *,
         error_summary: str,
+        error_code: str | None = None,
         error_stage: str | None = None,
         provider_status: dict[str, Any] | None = None,  # From rich observability context (Epic #219)
     ) -> RunContext: ...

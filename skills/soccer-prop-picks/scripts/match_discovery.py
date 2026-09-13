@@ -11,7 +11,7 @@ from llm.intelligence_prompt_builder import (
 )
 
 
-SUPPORTED_DISCOVERY_SPORTS: tuple[str, ...] = ("soccer", "basketball", "baseball")
+SUPPORTED_DISCOVERY_SPORTS: tuple[str, ...] = ("soccer", "basketball", "baseball", "nfl")
 
 
 class MatchDiscoveryError(RuntimeError):
@@ -70,12 +70,17 @@ class MatchDiscoveryClient:
     def __init__(self, *, client: LLMClient) -> None:
         self._client = client
 
+    @property
+    def client(self) -> LLMClient:
+        return self._client
+
     @classmethod
     def from_env(
         cls,
         getenv: Callable[[str], str | None] = os.getenv,
         provider: str | None = None,
         model: str | None = None,
+        max_output_tokens: int = 4000,
     ) -> "MatchDiscoveryClient":
         resolved_provider = (
             provider
@@ -95,6 +100,7 @@ class MatchDiscoveryClient:
                 api_key=api_key,
                 model=model or getenv("GEMINI_MODEL") or "gemini-2.5-flash",
                 search_grounding=True,
+                max_output_tokens=max_output_tokens,
             )
         elif resolved_provider == "grok":
             api_key = getenv("XAI_API_KEY")
@@ -137,6 +143,7 @@ class MatchDiscoveryClient:
         date_utc: str,
         sports: list[str],
         limit_per_sport: int = 5,
+        timezone: str | None = None,
     ) -> dict[str, Any]:
         normalized_sports = validate_match_discovery_inputs(
             date_utc=date_utc,
@@ -153,6 +160,7 @@ class MatchDiscoveryClient:
                     date_utc=date_utc,
                     sport=sport,
                     limit_per_sport=limit_per_sport,
+                    **({"timezone_name": timezone or os.getenv("COLMILLO_TIMEZONE") or "America/Chicago"} if sport == "nfl" else {}),
                 )
                 generated_at_utc = generated_at_utc or _string_or_none(
                     raw.get("generated_at_utc")
@@ -162,6 +170,7 @@ class MatchDiscoveryClient:
                     sport=sport,
                     date_utc=date_utc,
                     limit_per_sport=limit_per_sport,
+                    timezone=timezone,
                 )
             except LLMError as exc:
                 results[sport] = _error_result(str(exc))
@@ -181,6 +190,7 @@ class MatchDiscoveryClient:
         date_utc: str,
         sport: str,
         limit_per_sport: int,
+        timezone_name: str | None = None,
     ) -> dict[str, Any]:
         system_prompt = build_match_discovery_system_prompt()
         user_prompt = build_match_discovery_user_prompt(
@@ -188,6 +198,8 @@ class MatchDiscoveryClient:
             sports=[sport],
             limit_per_sport=limit_per_sport,
         )
+        if timezone_name:
+            user_prompt += f"\nInterpret {date_utc} in {timezone_name}; kickoff_utc may fall on the next UTC day. event_date must be the requested local date."
         result = self._client.generate_structured(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -204,6 +216,7 @@ def _normalize_sport_result(
     sport: str,
     date_utc: str,
     limit_per_sport: int,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
     sport_payload = _extract_sport_payload(raw, sport)
     provider = _string_or_none(raw.get("provider"))
@@ -227,7 +240,25 @@ def _normalize_sport_result(
         if isinstance(item, dict)
     ]
 
-    matches = [m for m in matches if _matches_requested_date(m, date_utc)]
+    if sport == "nfl":
+        from nfl_domain import timestamp
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        from datetime import timezone as utc_timezone
+
+        reference = datetime.now(utc_timezone.utc)
+        try:
+            zone = ZoneInfo(timezone or os.getenv("COLMILLO_TIMEZONE") or "America/Chicago")
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise MatchDiscoveryError("Invalid NFL date timezone.") from exc
+        matches = [m for m in matches
+                   if (kickoff := timestamp(m.get("kickoff_utc"))) is not None
+                   and kickoff > reference and kickoff.astimezone(zone).date().isoformat() == date_utc
+                   and (m.get("league") or "").lower() == "nfl"]
+        for match in matches:
+            match["event_date"] = date_utc
+    else:
+        matches = [m for m in matches if _matches_requested_date(m, date_utc, timezone=timezone)]
+        matches = [m for m in matches if _is_match_upcoming(m)]
 
     data_quality = sport_payload.get("data_quality")
     if not isinstance(data_quality, dict):
@@ -251,15 +282,46 @@ def _extract_sport_payload(raw: dict[str, Any], sport: str) -> dict[str, Any]:
     return raw
 
 
-def _matches_requested_date(match: dict[str, Any], date_utc: str) -> bool:
+def _matches_requested_date(match: dict[str, Any], date_utc: str, *, timezone: str | None = None) -> bool:
     """Return True if the match's event_date or kickoff_utc falls on the requested date."""
     event_date = match.get("event_date", "")
-    if event_date and event_date != date_utc:
-        return False
+    if event_date:
+        return event_date == date_utc
     kickoff = match.get("kickoff_utc", "")
-    if kickoff and not kickoff.startswith(date_utc):
+    if not kickoff:
         return False
-    return True
+    if timezone:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        try:
+            dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+            local_date = dt.astimezone(ZoneInfo(timezone)).date().isoformat()
+            return local_date == date_utc
+        except (ValueError, TypeError, KeyError):
+            pass
+    return kickoff.startswith(date_utc)
+
+
+def _is_match_upcoming(
+    match: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    buffer_minutes: int = 15,
+) -> bool:
+    """Return True if the match has not yet started (with buffer for pre-kickoff bets)."""
+    kickoff = match.get("kickoff_utc", "")
+    if not kickoff:
+        return True
+    try:
+        kickoff_dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+        from datetime import timedelta
+
+        reference = now if now is not None else datetime.now(timezone.utc)
+        cutoff = reference - timedelta(minutes=buffer_minutes)
+        return kickoff_dt > cutoff
+    except (ValueError, TypeError):
+        return True
 
 
 def _normalize_match(

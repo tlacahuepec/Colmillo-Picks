@@ -6,16 +6,25 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from nfl_domain import NFL_MARKETS
 
-SUPPORTED_SPORTS: set[str] = {"soccer", "basketball", "baseball"}
+
+SUPPORTED_SPORTS: set[str] = {"soccer", "basketball", "baseball", "nfl"}
 
 SPORT_MARKETS: dict[str, set[str]] = {
+    "nfl": set(NFL_MARKETS),
     "soccer": {"passes", "shots"},
-    "basketball": {"points", "rebounds", "assists", "threes"},
+    "basketball": {
+        "points", "rebounds", "assists", "threes",
+        "steals", "blocks", "turnovers", "fantasy_score",
+        "rebs_asts", "pra", "blks_stls",
+        "fg_attempted", "fg_made", "two_pt_made",
+    },
     "baseball": {"hits", "total_bases", "runs", "rbi", "home_runs", "strikeouts", "walks", "pitcher_outs"},
 }
 
 SPORT_LEAGUES: dict[str, set[str]] = {
+    "nfl": {"nfl"},
     "soccer": {"premier_league", "la_liga", "serie_a", "bundesliga", "ligue_1", "mls", "champions_league"},
     "basketball": {"nba", "euroleague", "ncaab"},
     "baseball": {"mlb"},
@@ -81,8 +90,8 @@ def validate_pick_request(request: PickRequest) -> None:
             f"Invalid event_date '{request.event_date}'. Expected YYYY-MM-DD format."
         )
 
-    if not (1 <= request.top_n <= 5):
-        errors.append(f"top_n must be between 1 and 5, got {request.top_n}.")
+    if not (1 <= request.top_n <= 10):
+        errors.append(f"top_n must be between 1 and 10, got {request.top_n}.")
 
     if errors:
         raise PickRequestValidationError(errors)

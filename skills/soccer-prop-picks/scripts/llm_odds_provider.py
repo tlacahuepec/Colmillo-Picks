@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
-import os
-import sys
+from diagnostics_support import emit, error_info
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,7 +23,6 @@ class LLMOddsProvider:
         self.last_grounding_metadata = None
 
     def get_odds_snapshots(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
-        debug = os.getenv("COLMILLO_ODDS_LLM_DEBUG", "").strip() not in ("", "0", "false")
         try:
             result = self._client.generate_structured(
                 system_prompt=self._build_system_prompt(),
@@ -33,13 +31,9 @@ class LLMOddsProvider:
             )
             self.last_sources = list(getattr(self._client, "last_sources", []))
             self.last_grounding_metadata = getattr(self._client, "last_grounding_metadata", None)
-            if debug:
-                print(f"[odds-llm-debug] response: {json.dumps(result, default=str)[:2000]}", file=sys.stderr)
             return self._map_response(result)
         except Exception as exc:
-            print(f"[odds-provider] WARNING: Odds provider failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-            if debug:
-                print(f"[odds-llm-debug] error: {type(exc).__name__}: {exc}", file=sys.stderr)
+            emit("provider_failed", stage="llm_odds_provider", level="WARNING", outcome="failed", **error_info(exc))
             return None
 
     @staticmethod
@@ -66,11 +60,13 @@ class LLMOddsProvider:
             "Return a JSON object with this exact shape:\n"
             '{"sportsbook_snapshots": [{"source": "sportsbook name", "odds_decimal": 1.85}]}\n\n'
             "Rules:\n"
-            "- Include odds from at least 5 sportsbooks (bet365, DraftKings, FanDuel, BetMGM, Pinnacle, etc.)\n"
+            "- Include odds from as many major sportsbooks as are offering this fixture (at least 1). "
+            "Check sportsbook sites (bet365, DraftKings, FanDuel, BetMGM, Pinnacle, Unibet, William Hill) "
+            "and aggregators (oddsportal.com, oddschecker.com) that publish soccer odds for both club "
+            "and international matches.\n"
             "- Use decimal format (European odds), not American or fractional\n"
             "- Return the home team win (1X2 market, home win) odds from each sportsbook\n"
             "- Use real current pre-match odds\n"
-            "- If odds are not yet available, return: {\"sportsbook_snapshots\": []}\n"
             "- Return JSON only, no explanation"
         )
 

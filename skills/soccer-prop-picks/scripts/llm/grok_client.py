@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from diagnostics_support import diagnostic_stage, provider_attempt, retry_sleep
+
 from time import sleep
 from typing import Any, Callable
 from urllib.request import urlopen
@@ -23,9 +25,10 @@ class GrokLLMClient(LLMClient):
         sleep_fn: Callable[[float], None] = sleep,
         urlopen_fn: Callable[..., Any] = urlopen,
     ) -> None:
+        self._model = model
         self._max_retries = max_retries
         self._retry_delay_seconds = retry_delay_seconds
-        self._sleep = sleep_fn
+        self._sleep = retry_sleep(sleep_fn, provider="grok", model=model)
         self._inner = OpenAICompatibleChatClient(
             api_key=api_key,
             base_url=base_url,
@@ -34,6 +37,7 @@ class GrokLLMClient(LLMClient):
             urlopen_fn=urlopen_fn,
         )
 
+    @diagnostic_stage("llm_generate", provider="grok")
     def generate_structured(
         self, *, system_prompt: str, user_prompt: str, schema: dict, temperature: float | None = None
     ) -> dict:
@@ -41,10 +45,11 @@ class GrokLLMClient(LLMClient):
         last_exc: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
-                result = self._inner.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
-                if not isinstance(result, dict):
-                    raise LLMError("Grok returned non-dict JSON output")
-                return result
+                with provider_attempt("grok", attempt=attempt, model=self._model):
+                    result = self._inner.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+                    if not isinstance(result, dict):
+                        raise LLMError("Grok returned non-dict JSON output")
+                    return result
             except LLMFixtureProviderError as exc:
                 last_exc = exc
                 if attempt >= attempts:

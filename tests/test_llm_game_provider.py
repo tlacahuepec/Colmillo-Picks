@@ -278,8 +278,7 @@ class TestLLMGameProviderDebug:
         )
 
         stderr = capsys.readouterr().err
-        assert "[game-llm-debug] request:" in stderr
-        assert "[game-llm-debug] response:" in stderr
+        assert stderr == ""  # Raw requests and responses are no longer diagnostic events.
 
     def test_debug_logs_when_game_not_found(self, monkeypatch, capsys) -> None:
         module = load_script_module("llm_game_provider.py")
@@ -297,8 +296,8 @@ class TestLLMGameProviderDebug:
         )
 
         stderr = capsys.readouterr().err
-        assert "[game-llm-debug] game_not_found:" in stderr
-        assert "Teams not scheduled" in stderr
+        assert stderr == ""
+        assert "Teams not scheduled" not in stderr
 
 
 class TestLLMGameProviderSources:
