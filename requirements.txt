@@ -8,7 +8,7 @@ pydantic>=2.6,<3.0
 SQLAlchemy>=2.0,<3.0
 
 # UI
-streamlit>=1.32,<2.0
+streamlit>=1.63.0,<2.0
 httpx>=0.27,<1.0
 
 # Pipeline (already used by skills/soccer-prop-picks)
