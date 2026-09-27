@@ -123,8 +123,19 @@ _OFFER_KEY_ALIASES = {
 _MARKET_ALIASES = {
     "anytime_td": "anytime_touchdown",
     "anytime_tds": "anytime_touchdown",
+    "anytime_touchdowns": "anytime_touchdown",
     "interceptions": "interceptions_thrown",
+    "interceptions_throw": "interceptions_thrown",
     "passing_td": "passing_touchdowns",
+    "passing_tds": "passing_touchdowns",
+    "pass_yards": "passing_yards",
+    "pass_td": "passing_touchdowns",
+    "rush_yards": "rushing_yards",
+    "rec_yards": "receiving_yards",
+    "receiving_catches": "receptions",
+    "money_line": "moneyline",
+    "game_total": "total",
+    "total_points": "total",
 }
 
 
@@ -289,7 +300,7 @@ class NflCollector:
         )
         return cls(configured.client, timezone_name=timezone_name)
 
-    def __call__(self, *, home_team, away_team, match_date, league=None):
+    def __call__(self, *, home_team, away_team, match_date, league=None, markets=()):
         from sport_enrichment_config import get_enrichment_config
 
         self.last_provider_error = None
@@ -383,8 +394,13 @@ class NflCollector:
             entity["source_urls"] = _grounded_sources(entity["source_urls"], verified)
             entity["team"] = resolve_team(entity["team"])
         data["provider_statuses"]["context"] = "ok"
-        for markets in (NFL_GAME_MARKETS, NFL_PLAYER_MARKETS):
-            self._collect_offer_group(data, request, system, markets)
+        requested_markets = set(markets)
+        groups = (
+            group_markets for group_markets in (NFL_GAME_MARKETS, NFL_PLAYER_MARKETS)
+            if not requested_markets or requested_markets.intersection(group_markets)
+        )
+        for group_markets in groups:
+            self._collect_offer_group(data, request, system, group_markets)
         data["provider_statuses"]["offers"] = "ok" if data["offers"] else "unavailable"
         return data
 
@@ -409,11 +425,27 @@ class NflCollector:
                 schema=NflOffers.model_json_schema(),
                 temperature=0,
             )
+            if not isinstance(raw, dict):
+                data["offer_rejections"].append({
+                    "code": "malformed_offer_response", "fields": ["offers"], "group": group,
+                })
+                data["provider_statuses"][group] = "unavailable"
+                data["exclusions"].append({
+                    "subject": group,
+                    "reason": "Sportsbook response had no usable offer list; no odds were substituted.",
+                })
+                return data
+            raw_offers = raw.get("offers", [])
+            if not isinstance(raw_offers, list):
+                data["offer_rejections"].append({
+                    "code": "malformed_offer_response", "fields": ["offers"], "group": group,
+                })
+                raw_offers = []
             verified = _source_urls(
                 self.client,
                 referenced_urls=[
                     o.get("source_url")
-                    for o in raw.get("offers", [])
+                    for o in raw_offers
                     if isinstance(o, dict)
                 ],
             )
@@ -423,7 +455,12 @@ class NflCollector:
             data["grounding_sources"] = sorted(
                 set(data["grounding_sources"]) | verified
             )
-            for raw_offer in raw.get("offers", []):
+            for raw_offer in raw_offers:
+                if not isinstance(raw_offer, dict):
+                    data["offer_rejections"].append({
+                        "code": "malformed_offer", "fields": ["offer"], "group": group,
+                    })
+                    continue
                 try:
                     offer = NflOffer.model_validate(normalize_offer_payload(raw_offer)).model_dump()
                 except ValidationError as exc:
@@ -437,8 +474,14 @@ class NflCollector:
                     )
                     continue
                 if offer["market"] not in markets:
+                    data["offer_rejections"].append({
+                        "code": "unexpected_market", "fields": ["market"], "group": group,
+                    })
                     continue
                 if not _grounded_sources([offer["source_url"]], verified):
+                    data["offer_rejections"].append({
+                        "code": "uncited_offer", "fields": ["source_url"], "group": group,
+                    })
                     data["exclusions"].append(
                         {
                             "subject": offer["subject_name"],

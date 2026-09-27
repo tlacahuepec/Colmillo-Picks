@@ -513,9 +513,9 @@ VALID_OUTCOME_RESULTS = frozenset({"win", "loss", "push", "void"})
 
 
 def record_outcomes(*, pick_id: str, outcomes: list[dict[str, Any]]) -> list[PickOutcome]:
-    """Persist a batch of per-pick outcomes; returns the inserted rows."""
+    """Persist explicit grades, updating an already-recorded rank in place."""
     now = datetime.now(timezone.utc)
-    rows: list[PickOutcome] = []
+    normalized: list[tuple[int, str, str, str]] = []
     for entry in outcomes:
         result_value = str(entry.get("result", "")).lower()
         if result_value not in VALID_OUTCOME_RESULTS:
@@ -523,19 +523,33 @@ def record_outcomes(*, pick_id: str, outcomes: list[dict[str, Any]]) -> list[Pic
                 f"Invalid outcome result '{result_value}'. "
                 f"Allowed: {sorted(VALID_OUTCOME_RESULTS)}."
             )
-        rows.append(
-            PickOutcome(
-                id=str(uuid.uuid4()),
-                pick_id=pick_id,
-                rank=int(entry.get("rank", 0)),
-                player=str(entry.get("player", ""))[:255],
-                market=str(entry.get("market", ""))[:64],
-                result=result_value,
-                recorded_at=now,
-            )
-        )
+        normalized.append((
+            int(entry.get("rank", 0)),
+            str(entry.get("player", ""))[:255],
+            str(entry.get("market", ""))[:64],
+            result_value,
+        ))
+
+    rows: list[PickOutcome] = []
     with session_scope() as session:
-        session.add_all(rows)
+        for rank, player, market, result_value in normalized:
+            row = (
+                session.query(PickOutcome)
+                .filter(PickOutcome.pick_id == pick_id, PickOutcome.rank == rank)
+                .order_by(PickOutcome.recorded_at.desc(), PickOutcome.id.desc())
+                .first()
+            )
+            if row is None:
+                row = PickOutcome(id=str(uuid.uuid4()), pick_id=pick_id, rank=rank)
+                session.add(row)
+            row.player = player
+            row.market = market
+            row.result = result_value
+            row.recorded_at = now
+            rows.append(row)
+        session.flush()
+        for row in rows:
+            session.refresh(row)
     return rows
 
 
@@ -784,6 +798,14 @@ def mark_slate_failed(
     stage: str,
     message: str,
     latency_ms: int,
+    candidates: list[dict[str, Any]] | None = None,
+    match_runs: list[dict[str, Any]] | None = None,
+    discovery_latency_ms: int | None = None,
+    matches_attempted: int | None = None,
+    matches_succeeded: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
 ) -> SlateRun | None:
     with session_scope() as session:
         row = session.get(SlateRun, slate_id)
@@ -796,6 +818,19 @@ def mark_slate_failed(
         row.error_stage = stage[:64]
         row.error_message = message
         row.latency_ms = latency_ms
+        if candidates is not None:
+            row.candidates_json = json.dumps(candidates, default=str)
+        if match_runs is not None:
+            row.match_runs_json = json.dumps(match_runs, default=str)
+        if discovery_latency_ms is not None:
+            row.discovery_latency_ms = discovery_latency_ms
+        if matches_attempted is not None:
+            row.matches_attempted = matches_attempted
+        if matches_succeeded is not None:
+            row.matches_succeeded = matches_succeeded
+        row.prompt_tokens = prompt_tokens
+        row.completion_tokens = completion_tokens
+        row.total_tokens = total_tokens
         session.add(row)
         session.flush()
         session.refresh(row)

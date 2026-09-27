@@ -40,6 +40,11 @@ from pipeline_service import (  # noqa: E402
 )
 from pipeline_runner import PipelineRunError  # noqa: E402
 from services.api import db as db_module  # noqa: E402
+from services.api.enrichment_audit import (  # noqa: E402
+    EnrichmentAuditRequest,
+    EnrichmentAuditResponse,
+    execute_enrichment_audit,
+)
 from services.api import jobs as jobs_module  # noqa: E402
 from services.api.logging_config import configure_json_logging  # noqa: E402
 from services.api.middleware import (  # noqa: E402
@@ -47,6 +52,7 @@ from services.api.middleware import (  # noqa: E402
     RequestLoggingMiddleware,
 )
 from services.api.sentry import init_sentry_if_configured  # noqa: E402
+from services.catalog.refresh import run_fanatics_refresh, start_fanatics_refresh  # noqa: E402
 from services.catalog.storage import CatalogStore  # noqa: E402
 from services.diagnostics import emit, error_info, finish_operation, instrument, operation, public_trace  # noqa: E402
 
@@ -76,6 +82,18 @@ class PicksRequest(BaseModel):
     availability_provider: str | None = Field(
         None, description="prizepicks | mock | none. Defaults to env COLMILLO_AVAILABILITY_PROVIDER."
     )
+
+
+class CatalogRefreshRequest(BaseModel):
+    """Request one bounded catalog refresh for a calendar day."""
+
+    date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class CatalogSportSettingsRequest(BaseModel):
+    """Persistent visibility policy for a discovered catalog sport."""
+
+    enabled: bool
 
 
 class StructuredPicksRequest(BaseModel):
@@ -129,6 +147,7 @@ class PickSummary(DiagnosticReference):
     id: str
     created_at: datetime
     match_query: str
+    display_title: str
     competition: str | None = None
     top_n: int
     status: str
@@ -149,6 +168,7 @@ class PickDetailResponse(DiagnosticReference):
     id: str
     created_at: datetime
     match_query: str
+    display_title: str
     competition: str | None = None
     top_n: int
     status: str
@@ -247,10 +267,11 @@ class BatchAvailabilityResponse(BaseModel):
 class MatchDiscoveryRequest(BaseModel):
     date: str = Field(..., description="YYYY-MM-DD date to discover matches for.")
     sports: list[str] = Field(default_factory=lambda: ["soccer"], min_length=1)
-    limit_per_sport: int = Field(5, ge=1, le=5)
+    limit_per_sport: int = Field(5, ge=1, le=10)
     llm_provider: str | None = Field(None, description="gemini | grok | openai")
     llm_model: str | None = None
     timezone: str | None = Field(None, description="IANA timezone for date filtering (e.g., America/Chicago)")
+    force_refresh: bool = Field(False, description="Bypass a still-valid cached discovery result.")
 
 
 class DiscoverySource(BaseModel):
@@ -285,6 +306,9 @@ class MatchDiscoveryResponse(BaseModel):
     generated_at_utc: str
     limit_per_sport: int
     results: dict[str, SportDiscoveryResult]
+    cache_status: str | None = None
+    cache_confidence: str | None = None
+    cache_expires_at: str | None = None
 
 
 class SlateRequest(BaseModel):
@@ -512,6 +536,40 @@ def _build_request_dict(payload: PicksRequest) -> dict[str, Any]:
     }
 
 
+def _display_pick_title(row: db_module.PickRun) -> str:
+    """Return a stable, customer-facing label without rewriting the raw query.
+
+    Older structured runs did not persist ``match_query``. Their submitted
+    teams and date are still available in ``request_json``, so derive a display
+    label at read time while leaving the original request intact.
+    """
+    raw_query = (row.match_query or "").strip()
+    if raw_query:
+        return raw_query
+
+    try:
+        request = json.loads(row.request_json) if row.request_json else {}
+    except (TypeError, json.JSONDecodeError):
+        request = {}
+
+    def text_value(key: str) -> str:
+        value = request.get(key)
+        return value.strip() if isinstance(value, str) else ""
+
+    home_team = text_value("home_team")
+    away_team = text_value("away_team")
+    event_date = text_value("event_date")
+    if home_team and away_team:
+        matchup = f"{home_team} vs {away_team}"
+        return f"{matchup} · {event_date}" if event_date else matchup
+
+    sport = (getattr(row, "sport", None) or text_value("sport") or "Pick").strip()
+    title = f"{sport.title()} run"
+    if event_date:
+        title = f"{title} · {event_date}"
+    return f"{title} · {row.id[:8]}"
+
+
 def _row_to_summary(row: db_module.PickRun) -> PickSummary:
     return PickSummary(
         operation_id=getattr(row, "operation_id", None),
@@ -519,6 +577,7 @@ def _row_to_summary(row: db_module.PickRun) -> PickSummary:
         id=row.id,
         created_at=row.created_at,
         match_query=row.match_query,
+        display_title=_display_pick_title(row),
         competition=row.competition,
         top_n=row.top_n,
         status=row.status,
@@ -545,6 +604,7 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
         id=row.id,
         created_at=row.created_at,
         match_query=row.match_query,
+        display_title=_display_pick_title(row),
         competition=row.competition,
         top_n=row.top_n,
         status=row.status,
@@ -571,6 +631,12 @@ def _build_run_ledger():
     except Exception as exc:
         emit("ledger.unavailable", stage="save", level="WARNING", **error_info(exc))
         return InMemoryRunLedger()
+
+
+def _discovery_cache_key(*, date: str, sports: list[str], limit: int, timezone_name: str | None = None) -> str:
+    sports_part = ":".join(sorted(sports))
+    tz_part = timezone_name or "utc"
+    return f"discovery:{date}:{sports_part}:{limit}:{tz_part}"
 
 
 def _build_match_discovery_client(payload: MatchDiscoveryRequest):
@@ -718,7 +784,7 @@ def _handle_structured_picks(body: dict[str, Any], background_tasks: Any) -> Pic
         llm_provider=payload.llm_provider,
         llm_model=payload.llm_model,
         allow_deterministic_fallback=payload.allow_deterministic_fallback,
-        league=payload.league,
+        league=pick_req.league,
         fixture_provider_name=payload.fixture_provider,
         fixture_llm_provider=payload.fixture_llm_provider,
         fixture_llm_model=payload.fixture_llm_model,
@@ -838,6 +904,7 @@ def _build_trace_for_sport(
                 "provider_statuses": match_inputs.get("provider_statuses", {}),
                 "grounding_sources": match_inputs.get("grounding_sources", []),
                 "provider_errors": match_inputs.get("provider_errors", {}),
+                "recommendation_summary": match_inputs.get("recommendation_summary", {}),
                 "research_evidence": match_inputs.get("research_evidence", {})}
     if sport == "baseball":
         from baseball_trace import MLBTraceRecord, PickTrace, compute_input_hash
@@ -1078,6 +1145,14 @@ def _execute_slate_record(slate_id, request_dict, job_id):
                 stage="aggregation",
                 message=f"No viable candidates produced from {result.matches_attempted} attempted matches",
                 latency_ms=result.latency_ms,
+                candidates=candidates_dicts,
+                match_runs=result.match_runs,
+                discovery_latency_ms=result.discovery_latency_ms,
+                matches_attempted=result.matches_attempted,
+                matches_succeeded=result.matches_succeeded,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+                total_tokens=result.total_tokens,
             )
         else:
             db_module.mark_slate_success(
@@ -1149,12 +1224,13 @@ def _build_slate_deps(request_dict: dict[str, Any]):
             group = request_dict.get("nfl_market_group", "all")
             markets = NFL_PLAYER_MARKETS if group == "player_props" else NFL_GAME_MARKETS if group == "game_bets" else markets
         match_inputs = module.collect_inputs(
-            home_team=home_team, away_team=away_team, match_date=event_date
+            home_team=home_team, away_team=away_team, match_date=event_date,
+            **({"markets": markets} if sport == "nfl" else {}),
         )
         scores = module.score(match_inputs, markets=markets)
         if sport == "nfl" and not scores:
             from nfl_module import NflNoPicks
-            raise NflNoPicks("; ".join(e["reason"] for e in match_inputs.get("exclusions", [])))
+            raise NflNoPicks((match_inputs.get("recommendation_summary") or {}).get("message") or "No verified NFL picks qualified.")
         return scores
 
     def get_token_usage() -> tuple[int, int, int]:
@@ -1243,6 +1319,50 @@ def create_app() -> FastAPI:
     def catalog_health() -> dict[str, Any]:
         return catalog_store.health(operational=True)
 
+    @app.get("/catalog/settings")
+    def catalog_settings() -> dict[str, Any]:
+        return {"items": catalog_store.list_sport_settings()}
+
+    @app.put("/catalog/settings/{sport}")
+    def update_catalog_settings(
+        sport: str, payload: CatalogSportSettingsRequest
+    ) -> dict[str, Any]:
+        try:
+            return catalog_store.set_sport_enabled(sport, enabled=payload.enabled)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/catalog/refresh", status_code=202)
+    def refresh_catalog(
+        payload: CatalogRefreshRequest, background_tasks: BackgroundTasks
+    ) -> dict[str, str]:
+        try:
+            datetime.strptime(payload.date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail="date must be a valid YYYY-MM-DD value."
+            ) from exc
+        job_id = start_fanatics_refresh(catalog_store, run_date=payload.date)
+        if job_id is None:
+            raise HTTPException(status_code=409, detail="A catalog refresh is already running.")
+        background_tasks.add_task(
+            run_fanatics_refresh, catalog_store, job_id=job_id, run_date=payload.date
+        )
+        return {"job_id": job_id}
+
+    @app.get("/catalog/jobs/{job_id}")
+    def catalog_job(job_id: str) -> dict[str, Any]:
+        job = catalog_store.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Catalog refresh job not found.")
+        summary = job.get("summary")
+        if isinstance(summary, str):
+            try:
+                job["summary"] = json.loads(summary)
+            except json.JSONDecodeError:
+                pass
+        return job
+
     @app.get("/catalog/events/{event_id}/snapshot")
     def catalog_snapshot(event_id: str) -> dict[str, Any]:
         snapshot = catalog_store.get_latest_snapshot(event_id)
@@ -1256,6 +1376,10 @@ def create_app() -> FastAPI:
         if archive is None:
             raise HTTPException(status_code=404, detail="Catalog archive not found.")
         return archive
+
+    @app.post("/enrichment/audit", response_model=EnrichmentAuditResponse)
+    def enrichment_audit(payload: EnrichmentAuditRequest) -> EnrichmentAuditResponse:
+        return execute_enrichment_audit(payload)
 
     from services.api.diagnostics_routes import admin_router, router as diagnostics_router
     app.include_router(diagnostics_router)
@@ -1292,6 +1416,7 @@ def create_app() -> FastAPI:
     @instrument("discovery")
     def discover_matches(payload: MatchDiscoveryRequest) -> MatchDiscoveryResponse:
         import time as _time
+        from datetime import datetime, timedelta, timezone as _dt_tz
 
         from match_discovery import (
             MatchDiscoveryError,
@@ -1311,13 +1436,6 @@ def create_app() -> FastAPI:
                 sports=payload.sports,
                 limit_per_sport=payload.limit_per_sport,
             )
-            client = _build_match_discovery_client(payload)
-            result = client.discover_matches(
-                date_utc=payload.date,
-                sports=sports,
-                limit_per_sport=payload.limit_per_sport,
-                timezone=payload.timezone,
-            )
         except MatchDiscoveryValidationError as exc:
             latency_ms = int((_time.perf_counter() - t0) * 1000)
             logger.warning(
@@ -1325,6 +1443,22 @@ def create_app() -> FastAPI:
                 extra={"error": "; ".join(exc.errors), "latency_ms": latency_ms},
             )
             raise HTTPException(status_code=400, detail="; ".join(exc.errors)) from exc
+
+        cache_key = _discovery_cache_key(date=payload.date, sports=sports, limit=payload.limit_per_sport, timezone_name=payload.timezone)
+        now_iso = datetime.now(_dt_tz.utc).isoformat()
+        if not payload.force_refresh:
+            cached = catalog_store.get_discovery_cache(cache_key, now=now_iso)
+            if cached is not None:
+                return MatchDiscoveryResponse(**cached)
+
+        try:
+            client = _build_match_discovery_client(payload)
+            result = client.discover_matches(
+                date_utc=payload.date,
+                sports=sports,
+                limit_per_sport=payload.limit_per_sport,
+                timezone=payload.timezone,
+            )
         except MatchDiscoveryError as exc:
             latency_ms = int((_time.perf_counter() - t0) * 1000)
             logger.warning(
@@ -1351,7 +1485,38 @@ def create_app() -> FastAPI:
             },
         )
 
-        return MatchDiscoveryResponse(**result)
+        result_copy = dict(result)
+        # A provider error is a transient observation, never a four-hour success.
+        # Return healthy sports immediately, but allow the next request to recover the
+        # failed sport rather than replaying an error from cache.
+        if failures:
+            result_copy["cache_status"] = "uncached"
+            result_copy["cache_confidence"] = "partial"
+            result_copy["cache_expires_at"] = None
+            return MatchDiscoveryResponse(**result_copy)
+
+        cache_ttl = timedelta(hours=4) if total_matches else timedelta(minutes=15)
+        confidence = "high" if total_matches else "medium"
+        expires_iso = (datetime.now(_dt_tz.utc) + cache_ttl).isoformat()
+        catalog_store.save_discovery_cache(
+            cache_key=cache_key,
+            response=result,
+            confidence=confidence,
+            created_at=now_iso,
+            expires_at=expires_iso,
+        )
+        result_copy["cache_status"] = "refreshed"
+        result_copy["cache_confidence"] = confidence
+        result_copy["cache_expires_at"] = expires_iso
+        return MatchDiscoveryResponse(**result_copy)
+
+    @app.delete("/matches/discover/cache")
+    def clear_match_discovery_cache(payload: MatchDiscoveryRequest) -> dict[str, bool]:
+        from match_discovery import validate_match_discovery_inputs
+        sports = validate_match_discovery_inputs(date_utc=payload.date, sports=payload.sports, limit_per_sport=payload.limit_per_sport)
+        key = _discovery_cache_key(date=payload.date, sports=sports, limit=payload.limit_per_sport, timezone_name=payload.timezone)
+        discarded = catalog_store.clear_discovery_cache(key)
+        return {"discarded": discarded}
 
     # ---- Picks (async) ---------------------------------------------------- #
     @app.post("/picks", response_model=PickAcceptedResponse, status_code=202)

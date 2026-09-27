@@ -10,11 +10,32 @@ class NflDataQualityError(RuntimeError):
 
     def __init__(self, reason):
         self.reason = reason
-        super().__init__("NFL collection failed.")
+        summary = reason.get("recommendation_summary", {}) if isinstance(reason, dict) else {}
+        super().__init__(summary.get("message") or "NFL collection failed.")
 
 
 class NflNoPicks(RuntimeError):
     """A verified NFL analysis did not produce any eligible recommendations."""
+
+
+def nfl_recommendation_summary(data, scores=()):
+    """Return a bounded, customer-safe explanation of the NFL terminal result."""
+    offers = data.get("offers") or []
+    exclusions = data.get("exclusions") or []
+    rejections = data.get("offer_rejections") or []
+    counts = {"verified_offers": len(offers), "excluded_inputs": len(exclusions),
+              "rejected_offers": len(rejections), "provider_failures": len(data.get("provider_errors") or {})}
+    if scores:
+        return {"code": "recommendations_available", "message": "Verified NFL recommendations are available.", "counts": counts}
+    if not data.get("game"):
+        return {"code": "fixture_unverified", "message": "This fixture could not be verified. Check the teams and local game date, then try again.", "counts": counts}
+    if data.get("provider_errors"):
+        return {"code": "provider_failure", "message": "Sportsbook data could not be collected. No odds were substituted; try again shortly.", "counts": counts}
+    if not offers:
+        return {"code": "offers_unavailable", "message": "The fixture was verified, but no supported sportsbook offers were available.", "counts": counts}
+    if exclusions:
+        return {"code": "insufficient_supported_data", "message": "Offers were found, but the supporting NFL data was insufficient for a verified recommendation.", "counts": counts}
+    return {"code": "no_qualifying_selection", "message": "Analysis completed: verified offers were evaluated, but none met the ranking threshold.", "counts": counts}
 
 
 class NflModule:
@@ -30,7 +51,7 @@ class NflModule:
         self.model = model
         self.timezone_name = timezone_name
 
-    def collect_inputs(self, *, home_team, away_team, match_date, league=None):
+    def collect_inputs(self, *, home_team, away_team, match_date, league=None, markets=()):
         try:
             collector = self.collector
             if collector is None:
@@ -46,11 +67,14 @@ class NflModule:
                 away_team=away_team,
                 match_date=match_date,
                 league=league,
+                markets=markets,
             )
             if not data.get("offers") and data.get("provider_errors"):
+                summary = nfl_recommendation_summary(data)
                 raise NflDataQualityError({
                     "error_code": "nfl_provider_failure",
                     "provider_errors": data["provider_errors"],
+                    "recommendation_summary": summary,
                 }) from getattr(collector, "last_provider_error", None)
         except Exception as exc:
             reason = error_info(exc)
@@ -67,14 +91,17 @@ class NflModule:
             league="nfl",
             sport="nfl",
         )
+        data["recommendation_summary"] = nfl_recommendation_summary(data)
         return data
 
     def score(self, match_inputs, *, markets=()):
         scores = score_nfl(match_inputs, markets=markets)
+        match_inputs["recommendation_summary"] = nfl_recommendation_summary(match_inputs, scores)
         if not scores and match_inputs.get("provider_errors"):
             raise NflDataQualityError({
                 "error_code": "nfl_provider_failure",
                 "provider_errors": match_inputs["provider_errors"],
+                "recommendation_summary": match_inputs["recommendation_summary"],
             })
         return scores
 

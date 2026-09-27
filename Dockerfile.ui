@@ -1,24 +1,22 @@
-# Streamlit UI for the Colmillo-Picks API.
+# Production build for the modern Colmillo-Picks React 19 UI
 
-FROM python:3.11-slim AS base
+# Stage 1: Build static bundle
+FROM node:20-alpine AS builder
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app/frontend
 
-WORKDIR /app
+COPY frontend/package*.json ./
+RUN npm ci
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY frontend/ ./
+RUN npm run build
 
-COPY services ./services
+# Stage 2: Serve via Nginx
+FROM nginx:alpine AS runner
 
-# Streamlit caches a metrics dir; point it at a writable temp location so the
-# default user inside the slim image can write to it.
-ENV STREAMLIT_HOME=/tmp/streamlit \
-    PORT=8501
-RUN mkdir -p /tmp/streamlit
+COPY --from=builder /app/frontend/dist /usr/share/nginx/html
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 8501
-CMD ["sh", "-c", "streamlit run services/ui/app.py --server.port ${PORT:-8501} --server.address 0.0.0.0 --server.headless true"]
+
+CMD ["nginx", "-g", "daemon off;"]

@@ -171,15 +171,25 @@ def _build_payload_from_suggested_match(
     except ValueError:
         raise ValueError(f"suggested match date must be YYYY-MM-DD, got: {event_date!r}") from None
 
+    sport = str(suggested_match.get("sport", "")).strip().lower()
+    raw_league = suggested_match.get("league")
+    league = None
+    if raw_league:
+        from pick_request import normalize_league
+        league = normalize_league(raw_league, sport)
+    if not league and suggested_match.get("competition"):
+        from pick_request import normalize_league
+        league = normalize_league(suggested_match.get("competition"), sport)
+
     return _build_pick_payload(
-        sport=str(suggested_match.get("sport", "")).strip().lower(),
+        sport=sport,
         home_team=str(suggested_match.get("home_team", "")).strip(),
         away_team=str(suggested_match.get("away_team", "")).strip(),
         date=parsed_date,
         top_n=top_n,
         use_llm_enrichment=use_llm_enrichment,
         allow_fallback=allow_fallback,
-        league=suggested_match.get("league") or None,
+        league=league,
     )
 
 
@@ -398,7 +408,7 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
         limit_per_sport = st.slider(
             "Matches per sport",
             min_value=1,
-            max_value=5,
+            max_value=10,
             value=3,
             key="discover_limit",
         )
@@ -408,7 +418,7 @@ def _render_match_suggestions(client: PicksAPIClient) -> bool:
         suggestion_top_n = st.slider(
             "Suggestion top N",
             min_value=1,
-            max_value=5,
+            max_value=10,
             value=5,
             key="suggestion_top_n",
         )
@@ -1226,9 +1236,14 @@ def render_grounding_audit_page() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Colmillo-Picks", layout="wide")
+    st.set_page_config(page_title="Colmillo-Picks (Legacy UI)", layout="wide")
     config = APIClientConfig.from_env()
     _config_warning_banner(config)
+    st.sidebar.warning(
+        "⚠️ **Legacy UI Notice**\n\n"
+        "This Streamlit interface is deprecated and scheduled for retirement in v1.0. "
+        "Please use the modern React 19 UI (`http://localhost:5173`)."
+    )
     page = st.sidebar.radio("Page", PAGES, index=0, key="ui_page")
     client = _get_client()
     if page == "Generate":

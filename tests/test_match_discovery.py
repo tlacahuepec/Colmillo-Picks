@@ -131,7 +131,7 @@ def test_discover_matches_validates_sports_and_limit() -> None:
         client.discover_matches(date_utc="2026-06-01", sports=["cricket"], limit_per_sport=2)
 
     with pytest.raises(MatchDiscoveryValidationError, match="limit_per_sport"):
-        client.discover_matches(date_utc="2026-06-01", sports=["soccer"], limit_per_sport=6)
+        client.discover_matches(date_utc="2026-06-01", sports=["soccer"], limit_per_sport=11)
 
 
 def test_discover_matches_filters_out_wrong_date_matches() -> None:
@@ -374,3 +374,80 @@ class TestMatchDiscoveryClientConfig:
         MatchDiscoveryClient.from_env(provider="gemini")
 
         assert captured.get("max_output_tokens", 0) >= 4000
+
+
+class TestMatchDiscoveryLeagueNormalization:
+    @pytest.mark.parametrize(
+        "input_league,expected_league",
+        [
+            ("spanish_la_liga", "la_liga"),
+            ("Spanish La Liga", "la_liga"),
+            ("english_premier_league", "premier_league"),
+            ("french_ligue_1", "ligue_1"),
+            ("italian_serie_a", "serie_a"),
+            ("german_bundesliga", "bundesliga"),
+            ("anothergerman_bundesliga", "bundesliga"),
+            ("uefa_champions_league", "champions_league"),
+            ("major_league_soccer", "mls"),
+        ],
+    )
+    def test_normalize_match_normalizes_league_keys(self, input_league: str, expected_league: str) -> None:
+        from match_discovery import _normalize_match
+        item = {
+            "home_team": "Team A",
+            "away_team": "Team B",
+            "event_date": "2030-06-01",
+            "league": input_league,
+            "competition": "Some Competition",
+        }
+        normalized = _normalize_match(
+            item=item,
+            sport="soccer",
+            date_utc="2030-06-01",
+            source_provider="fake",
+            source_model="fake-model",
+            fallback_sources=[],
+        )
+        assert normalized["league"] == expected_league
+
+    def test_normalize_match_infers_league_from_competition(self) -> None:
+        from match_discovery import _normalize_match
+        item = {
+            "home_team": "Real Madrid",
+            "away_team": "Barcelona",
+            "event_date": "2030-06-01",
+            "league": None,
+            "competition": "Spanish La Liga",
+        }
+        normalized = _normalize_match(
+            item=item,
+            sport="soccer",
+            date_utc="2030-06-01",
+            source_provider="fake",
+            source_model="fake-model",
+            fallback_sources=[],
+        )
+        assert normalized["league"] == "la_liga"
+
+    def test_discover_matches_supports_limit_up_to_10(self) -> None:
+        ten_matches = [
+            {
+                "home_team": f"Home {i}",
+                "away_team": f"Away {i}",
+                "event_date": "2030-06-01",
+                "league": "spanish_la_liga",
+                "competition": "La Liga",
+                "kickoff_utc": "2030-06-01T15:00:00Z",
+            }
+            for i in range(10)
+        ]
+        fake_llm = _FakeLLMClient({"soccer": {"matches": ten_matches}})
+        client = MatchDiscoveryClient(client=fake_llm)
+        result = client.discover_matches(
+            date_utc="2030-06-01",
+            sports=["soccer"],
+            limit_per_sport=10,
+        )
+        soccer_matches = result["results"]["soccer"]["matches"]
+        assert len(soccer_matches) == 10
+        assert all(m["league"] == "la_liga" for m in soccer_matches)

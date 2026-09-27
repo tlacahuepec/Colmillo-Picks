@@ -9,9 +9,14 @@ from llm.intelligence_prompt_builder import (
     build_match_discovery_system_prompt,
     build_match_discovery_user_prompt,
 )
+from pick_request import normalize_league
 
 
 SUPPORTED_DISCOVERY_SPORTS: tuple[str, ...] = ("soccer", "basketball", "baseball", "nfl")
+EXCLUDED_DISCOVERY_COMPETITIONS: frozenset[str] = frozenset({
+    "fifa u 20 womens world cup",
+    "fiba 3x3 u23 mens world cup",
+})
 
 
 class MatchDiscoveryError(RuntimeError):
@@ -37,9 +42,9 @@ def validate_match_discovery_inputs(
     except ValueError:
         errors.append(f"Invalid date '{date_utc}'. Expected YYYY-MM-DD format.")
 
-    if not 1 <= limit_per_sport <= 5:
+    if not 1 <= limit_per_sport <= 10:
         errors.append(
-            f"limit_per_sport must be between 1 and 5, got {limit_per_sport}."
+            f"limit_per_sport must be between 1 and 10, got {limit_per_sport}."
         )
 
     normalized_sports: list[str] = []
@@ -80,7 +85,7 @@ class MatchDiscoveryClient:
         getenv: Callable[[str], str | None] = os.getenv,
         provider: str | None = None,
         model: str | None = None,
-        max_output_tokens: int = 4000,
+        max_output_tokens: int = 8192,
     ) -> "MatchDiscoveryClient":
         resolved_provider = (
             provider
@@ -96,11 +101,14 @@ class MatchDiscoveryClient:
                 )
             from llm.gemini_client import GeminiLLMClient
 
+            discovery_timeout = float(getenv("COLMILLO_DISCOVERY_TIMEOUT") or 90.0)
             client = GeminiLLMClient(
                 api_key=api_key,
                 model=model or getenv("GEMINI_MODEL") or "gemini-2.5-flash",
                 search_grounding=True,
-                max_output_tokens=max_output_tokens,
+                max_output_tokens=max(8192, max_output_tokens),
+                timeout_seconds=discovery_timeout,
+                max_retries=2,
             )
         elif resolved_provider == "grok":
             api_key = getenv("XAI_API_KEY")
@@ -236,7 +244,7 @@ def _normalize_sport_result(
             source_model=model,
             fallback_sources=raw.get("sources", []),
         )
-        for item in raw_matches[:limit_per_sport]
+        for item in raw_matches
         if isinstance(item, dict)
     ]
 
@@ -259,6 +267,9 @@ def _normalize_sport_result(
     else:
         matches = [m for m in matches if _matches_requested_date(m, date_utc, timezone=timezone)]
         matches = [m for m in matches if _is_match_upcoming(m)]
+
+    matches = [m for m in matches if not _is_excluded_competition(m)]
+    matches = matches[:limit_per_sport]
 
     data_quality = sport_payload.get("data_quality")
     if not isinstance(data_quality, dict):
@@ -338,6 +349,12 @@ def _normalize_match(
     away_team = _string_or_none(item.get("away_team")) or _team_name(teams.get("away"))
     sources = _normalize_sources(item.get("sources") or fallback_sources)
 
+    raw_league = _string_or_none(item.get("league"))
+    raw_comp = _string_or_none(item.get("competition"))
+    normalized_league = normalize_league(raw_league, sport)
+    if not normalized_league and raw_comp:
+        normalized_league = normalize_league(raw_comp, sport)
+
     data_quality = item.get("data_quality")
     if not isinstance(data_quality, dict):
         data_quality = {}
@@ -361,8 +378,8 @@ def _normalize_match(
         "home_team": home_team or "Unknown",
         "away_team": away_team or "Unknown",
         "event_date": _string_or_none(item.get("event_date")) or date_utc,
-        "league": _string_or_none(item.get("league")),
-        "competition": _string_or_none(item.get("competition")),
+        "league": normalized_league,
+        "competition": raw_comp or raw_league or normalized_league,
         "kickoff_utc": _string_or_none(item.get("kickoff_utc")),
         "importance": _string_or_none(item.get("importance"))
         or _string_or_none(item.get("match_importance"))
@@ -373,6 +390,22 @@ def _normalize_match(
         "sources": sources,
         "data_quality": data_quality,
     }
+
+
+def _is_excluded_competition(match: dict[str, Any]) -> bool:
+    """Return whether a match belongs to a competition excluded from suggestions."""
+    competition = _string_or_none(match.get("competition"))
+    league = _string_or_none(match.get("league"))
+    return any(
+        _normalize_competition_name(value) in EXCLUDED_DISCOVERY_COMPETITIONS
+        for value in (competition, league)
+        if value
+    )
+
+
+def _normalize_competition_name(value: str) -> str:
+    normalized = value.casefold().replace("'", "").replace("’", "")
+    return " ".join("".join(char if char.isalnum() else " " for char in normalized).split())
 
 
 def _normalize_sources(raw_sources: Any) -> list[dict[str, str | None]]:

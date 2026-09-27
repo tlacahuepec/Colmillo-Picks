@@ -6,6 +6,7 @@ from services.catalog.contracts import (
     CompletenessStatus,
     Confidence,
     FreshnessStatus,
+    PredictionMarketObservation,
     SourceObservation,
 )
 from services.catalog.storage import CatalogStore
@@ -24,6 +25,7 @@ __all__ = [
     "CompletenessStatus",
     "Confidence",
     "FreshnessStatus",
+    "PredictionMarketObservation",
     "SourceObservation",
     "CatalogStore",
     "CatalogProvider",

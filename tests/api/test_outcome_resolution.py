@@ -61,6 +61,24 @@ class TestListUnresolvedPicks:
 
         assert len(unresolved) == 0
 
+    def test_recording_a_rank_again_updates_its_existing_grade(self):
+        pick = _make_successful_pick()
+        first = record_outcomes(
+            pick_id=pick.id,
+            outcomes=[{"rank": 1, "player": "Judge", "market": "hits", "result": "win"}],
+        )[0]
+
+        updated = record_outcomes(
+            pick_id=pick.id,
+            outcomes=[{"rank": 1, "player": "Judge", "market": "hits", "result": "loss"}],
+        )[0]
+
+        assert updated.id == first.id
+        assert updated.result == "loss"
+        with session_scope() as session:
+            rows = session.query(db_module.PickOutcome).filter_by(pick_id=pick.id).all()
+        assert [(row.rank, row.result) for row in rows] == [(1, "loss")]
+
     def test_excludes_picks_without_kickoff(self):
         _make_successful_pick(kickoff_utc=None)
 

@@ -78,7 +78,25 @@ cp .env.example .env
 
 ### Run
 
-Open two terminals from the project root:
+#### Quickstart: One-Command Full Stack (Recommended)
+
+Start both the FastAPI backend (port 8000) and the modern React 19 UI (port 5173) with automated port management and process supervision:
+
+```powershell
+.\run-dev.ps1
+```
+
+Or on Windows CMD:
+```cmd
+run-dev.bat
+```
+
+*(Optional) Launch with the legacy Streamlit UI instead:*
+```powershell
+.\run-dev.ps1 -Streamlit
+```
+
+#### Manual Startup (Two Terminals)
 
 **Terminal 1 — API (port 8000):**
 
@@ -90,23 +108,33 @@ uvicorn services.api.main:app --reload --port 8000
 uvicorn services.api.main:app --reload --port 8000
 ```
 
-**Terminal 2 — UI (port 8501):**
+**Terminal 2 — Modern Web UI (Vite + React 19 + MUI):**
 
 ```bash
-streamlit run services/ui/app.py --server.port 8501
+cd frontend && npm install && npm run dev
 ```
 
+```powershell
+cd frontend; npm run dev
+```
+
+*(Optional) Legacy Streamlit UI:*
 ```powershell
 streamlit run services/ui/app.py --server.port 8501
 ```
 
 Then open:
-- **UI:** http://localhost:8501
+- **Modern UI (Default):** http://localhost:5173
+- **Legacy UI (Deprecated):** http://localhost:8501
 - **API docs (Swagger):** http://localhost:8000/docs
 
 ## Project structure
 
 ```
+frontend/                        Modern React 19 + MUI v6 web app (Vite)
+  src/pages/                     6 full-parity screens (Best Today, Generate, History, Audit, Diagnostics, Catalog)
+  src/theme/                     Obsidian sports-intelligence dark theme
+  src/api/                       Full TypeScript client & schemas
 skills/soccer-prop-picks/
   scripts/
     run_match_pick_pipeline.py   CLI entry point
@@ -120,7 +148,8 @@ skills/soccer-prop-picks/
     llm_odds_provider.py         LLM-based odds resolution
 services/
   api/                           FastAPI REST service (port 8000)
-  ui/                            Streamlit web UI (port 8501)
+  ui/                            Streamlit web UI (legacy, port 8501)
+  catalog/                       High-throughput cross-sport catalog subsystem
   worker/                        Optional background job processor
 templates/
   pick_report.md                 Report output template

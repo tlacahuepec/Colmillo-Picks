@@ -135,6 +135,20 @@ class InjurySnapshot:
 
 
 @dataclass(frozen=True)
+class PredictionMarketObservation:
+    """A displayed prediction-market contract, deliberately distinct from odds."""
+
+    market_id: str
+    market_type: str
+    selection: str
+    displayed_price: str | None
+    volume: str | None
+    status: str
+    observed_at: str
+    source_url: str
+
+
+@dataclass(frozen=True)
 class CatalogSnapshot:
     """Versioned normalized facts for one event."""
 
@@ -146,6 +160,7 @@ class CatalogSnapshot:
     fields: tuple[CatalogField, ...] = ()
     lineups: tuple[LineupSnapshot, ...] = ()
     injuries: tuple[InjurySnapshot, ...] = ()
+    prediction_markets: tuple[PredictionMarketObservation, ...] = ()
     source_observations: tuple[SourceObservation, ...] = ()
     missing_fields: tuple[str, ...] = ()
     conflicting_fields: tuple[str, ...] = ()

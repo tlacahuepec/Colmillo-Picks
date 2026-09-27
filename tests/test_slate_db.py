@@ -134,6 +134,25 @@ class TestMarkSlateFailed:
         assert refreshed.error_message == "LLM provider timeout"
         assert refreshed.latency_ms == 5000
 
+    def test_preserves_match_evidence_when_aggregation_fails(self) -> None:
+        row = db_module.create_pending_slate_run(request_payload=_sample_request())
+        match_runs = [
+            {"sport": "nfl", "home_team": "Kansas City Chiefs", "away_team": "Buffalo Bills", "status": "failed", "error_stage": "collect"},
+            {"sport": "nfl", "home_team": "Dallas Cowboys", "away_team": "New York Giants", "status": "no_picks"},
+        ]
+
+        db_module.mark_slate_failed(
+            slate_id=row.id, stage="aggregation", message="No viable candidates", latency_ms=4000,
+            match_runs=match_runs, discovery_latency_ms=250, matches_attempted=2, matches_succeeded=1,
+        )
+
+        refreshed = db_module.get_slate_run(row.id)
+        assert refreshed is not None
+        assert json.loads(refreshed.match_runs_json) == match_runs
+        assert refreshed.discovery_latency_ms == 250
+        assert refreshed.matches_attempted == 2
+        assert refreshed.matches_succeeded == 1
+
 
 class TestGetSlateRun:
     def test_returns_none_for_unknown_id(self) -> None:

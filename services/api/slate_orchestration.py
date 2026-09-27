@@ -8,7 +8,7 @@ from datetime import datetime, timezone as utc_timezone
 from typing import Any, Callable
 
 from baseball_module import BaseballDataQualityError
-from nfl_module import NflNoPicks
+from nfl_module import NflDataQualityError, NflNoPicks
 from slate_ranking import SlateCandidate, candidates_from_picks, rank_slate_candidates
 
 
@@ -120,6 +120,15 @@ def execute_slate_job(
                     "event_date": event_date, "status": "no_picks", "error_stage": None,
                     "error_message": str(exc)[:500], "pick_count": 0,
                     "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+                })
+            except NflDataQualityError as exc:
+                summary = exc.reason.get("recommendation_summary", {}) if isinstance(exc.reason, dict) else {}
+                match_runs.append({
+                    "sport": sport, "home_team": home_team, "away_team": away_team,
+                    "event_date": event_date, "status": "failed", "error_stage": "offers",
+                    "error_message": summary.get("message") or str(exc)[:500], "pick_count": 0,
+                    "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+                    "recommendation_summary": summary,
                 })
             except BaseballDataQualityError as exc:
                 match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))

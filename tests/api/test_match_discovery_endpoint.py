@@ -16,6 +16,7 @@ _TEST_API_KEY = "match-discovery-key"
 def isolated_db(tmp_path, monkeypatch) -> None:
     db_module.configure_engine(f"sqlite:///{tmp_path / 'colmillo-discovery.db'}")
     monkeypatch.setenv("COLMILLO_RUNS_DB_PATH", str(tmp_path / "runs-ledger.db"))
+    monkeypatch.setenv("COLMILLO_CATALOG_DB", str(tmp_path / "catalog.db"))
 
 
 @pytest.fixture
@@ -129,7 +130,7 @@ def test_post_matches_discover_returns_400_for_unsupported_sport(client: TestCli
 def test_post_matches_discover_validates_limit_per_sport(client: TestClient) -> None:
     response = client.post(
         "/matches/discover",
-        json={"date": "2026-06-01", "sports": ["soccer"], "limit_per_sport": 6},
+        json={"date": "2026-06-01", "sports": ["soccer"], "limit_per_sport": 11},
     )
 
     assert response.status_code == 422
@@ -163,3 +164,46 @@ def test_post_matches_discover_preserves_partial_sport_errors(
     assert body["results"]["soccer"]["matches"]
     assert body["results"]["basketball"]["matches"] == []
     assert body["results"]["basketball"]["error"] == "provider timeout"
+
+
+def test_partial_provider_error_is_not_cached_and_can_recover(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
+    failed = _api_response()
+    failed["results"]["basketball"] = {"matches": [], "error": "invalid JSON", "data_quality": {"status": "error"}}
+    recovered = _api_response()
+    fake_client = _FakeDiscoveryClient(failed)
+    monkeypatch.setattr(api_main, "_build_match_discovery_client", lambda _: fake_client)
+    payload = {"date": "2026-06-01", "sports": ["soccer", "basketball"], "limit_per_sport": 3}
+
+    first = client.post("/matches/discover", json=payload)
+    fake_client._response = recovered
+    second = client.post("/matches/discover", json=payload)
+
+    assert first.status_code == 200
+    assert first.json()["cache_status"] == "uncached"
+    assert first.json()["cache_confidence"] == "partial"
+    assert second.status_code == 200
+    assert second.json()["cache_status"] == "refreshed"
+    assert len(fake_client.calls) == 2
+
+
+def test_match_discovery_reuses_cache_and_can_discard_it(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
+    fake_client = _FakeDiscoveryClient(_api_response())
+    monkeypatch.setattr(api_main, "_build_match_discovery_client", lambda _: fake_client)
+    payload = {"date": "2026-06-01", "sports": ["soccer"], "limit_per_sport": 3}
+
+    first = client.post("/matches/discover", json=payload)
+    second = client.post("/matches/discover", json=payload)
+    discarded = client.request("DELETE", "/matches/discover/cache", json=payload)
+
+    assert first.status_code == 200
+    assert first.json()["cache_status"] == "refreshed"
+    assert second.status_code == 200
+    assert second.json()["cache_status"] == "cached"
+    assert len(fake_client.calls) == 1
+    assert discarded.json() == {"discarded": True}

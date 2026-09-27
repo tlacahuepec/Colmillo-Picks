@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from llm.client import LLMError, GroundingSource, GroundingSupport, TokenUsage
-from llm.gemini_client import GeminiLLMClient, _sdk_http_options
+from llm.gemini_client import GeminiLLMClient, _sdk_http_options, _repair_json, _parse_first_json_object
 from llm.provider_adapter import build_enrich_with_llm, validate_llm_runtime_config
 
 
@@ -268,6 +268,7 @@ def test_gemini_client_parses_first_json_object_when_extra_data_follows() -> Non
 
 def test_gemini_client_retries_on_invalid_json_then_succeeds() -> None:
     call_count = 0
+    prompts: list[str] = []
 
     class _BadThenGoodClient:
         def __init__(self, *, api_key):
@@ -276,6 +277,7 @@ def test_gemini_client_retries_on_invalid_json_then_succeeds() -> None:
         def generate_content(self, **kwargs):
             nonlocal call_count
             call_count += 1
+            prompts.append(kwargs["contents"])
             if call_count == 1:
                 return _FakeResponse("not json at all")
             return _FakeResponse('{"ok": true}')
@@ -290,6 +292,121 @@ def test_gemini_client_retries_on_invalid_json_then_succeeds() -> None:
     result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
     assert result == {"ok": True}
     assert call_count == 2
+    assert "previous response was not valid JSON" in prompts[1]
+
+
+def test_gemini_client_retries_on_504_deadline_exceeded() -> None:
+    call_count = 0
+
+    class _DeadlineExceededThenSuccessClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("504 DEADLINE_EXCEEDED. {'error': {'code': 504, 'message': 'The request timed out. Please try again.', 'status': 'DEADLINE_EXCEEDED'}}")
+            return _FakeResponse('{"matches": []}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_DeadlineExceededThenSuccessClient,
+        max_retries=1,
+        sleep_fn=lambda _: None,
+    )
+
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert result == {"matches": []}
+    assert call_count == 2
+
+
+def test_gemini_client_retries_on_503_unavailable() -> None:
+    call_count = 0
+
+    class _UnavailableThenSuccessClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("503 UNAVAILABLE. The service is temporarily unavailable.")
+            return _FakeResponse('{"status": "ok"}')
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_UnavailableThenSuccessClient,
+        max_retries=1,
+        sleep_fn=lambda _: None,
+    )
+
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert result == {"status": "ok"}
+    assert call_count == 2
+
+
+def test_gemini_client_repairs_bracket_mismatches() -> None:
+    # Notice the '}' closing the 'matches' list instead of ']'
+    mismatched = '{"grouped_by_sport": {"nfl": {"matches": [{"home_team": "Chiefs", "away_team": "Ravens"}]}}}, "model": "test"}'
+    repaired = _repair_json(mismatched)
+    assert repaired is not None
+    assert repaired["grouped_by_sport"]["nfl"]["matches"][0]["home_team"] == "Chiefs"
+
+
+def test_gemini_client_repairs_truncated_string_and_auto_closes() -> None:
+    # Truncated in the middle of a string url
+    truncated = '{"matches": [{"home_team": "Arsenal", "away_team": "Chelsea", "url": "https://example.com/very/long/path'
+    repaired = _repair_json(truncated)
+    assert repaired is not None
+    assert len(repaired["matches"]) == 1
+    assert repaired["matches"][0]["home_team"] == "Arsenal"
+
+
+def test_gemini_client_parses_glued_json_objects() -> None:
+    # Two identical JSON objects glued together from response.text part concatenation
+    glued = '{"status": "ok", "count": 5}{"status": "ok", "count": 5}'
+    parsed = _parse_first_json_object(glued)
+    assert parsed == {"status": "ok", "count": 5}
+
+
+def test_gemini_client_handles_multipart_candidate_parts() -> None:
+    class _Part:
+        def __init__(self, text):
+            self.text = text
+
+    class _Content:
+        def __init__(self, parts):
+            self.parts = parts
+
+    class _Candidate:
+        def __init__(self, parts):
+            self.content = _Content(parts)
+
+    class _MultiPartResponse:
+        def __init__(self):
+            part0_text = '{"matches": [{"home_team": "Real Madrid", "away_team": "Barcelona"}]}'
+            part1_text = '{"matches": [{"home_team": "Real Madrid", "away_team": "Barcelona"}]}'
+            self.candidates = [_Candidate([_Part(part0_text), _Part(part1_text)])]
+            # When google-genai SDK concats parts:
+            self.text = part0_text + part1_text
+            self.usage_metadata = None
+
+    class _MultiPartClient:
+        def __init__(self, *, api_key):
+            self.models = self
+
+        def generate_content(self, **kwargs):
+            return _MultiPartResponse()
+
+    client = GeminiLLMClient(
+        api_key="test-key",
+        client_factory=_MultiPartClient,
+    )
+    result = client.generate_structured(system_prompt="x", user_prompt="y", schema={})
+    assert result["matches"][0]["home_team"] == "Real Madrid"
+
 
 
 def test_gemini_client_retries_on_empty_response_then_succeeds() -> None:

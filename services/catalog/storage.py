@@ -8,6 +8,7 @@ only archive references and normalized contract data.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -105,14 +106,98 @@ class CatalogStore:
                 );
                 CREATE INDEX IF NOT EXISTS catalog_job_runs_date
                     ON catalog_job_runs(run_date, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS match_discovery_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    response_json TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS match_discovery_cache_expiry
+                    ON match_discovery_cache(expires_at);
+                CREATE TABLE IF NOT EXISTS catalog_sport_settings (
+                    sport TEXT PRIMARY KEY,
+                    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+                    discovered_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             existing = {row[1] for row in connection.execute("PRAGMA table_info(catalog_job_runs)")}
             for name, definition in (("lease_owner", "TEXT"), ("lease_until", "TEXT"), ("attempt", "INTEGER NOT NULL DEFAULT 1")):
                 if name not in existing:
                     connection.execute(f"ALTER TABLE catalog_job_runs ADD COLUMN {name} {definition}")
+            self._bootstrap_sport_settings(connection)
+
+    @staticmethod
+    def normalize_sport(value: str) -> str:
+        """Return the stable key used by catalog persistence policy."""
+        normalized = re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+        if not normalized:
+            raise ValueError("sport must contain letters or numbers")
+        return normalized
+
+    def _bootstrap_sport_settings(self, connection: sqlite3.Connection) -> None:
+        """Seed supported sports once and retain all historical sport discoveries."""
+        now = utc_now()
+        existing = connection.execute("SELECT COUNT(*) FROM catalog_sport_settings").fetchone()[0]
+        if existing:
+            return
+        enabled_defaults = {"soccer", "basketball", "baseball", "nfl"}
+        discovered = {
+            self.normalize_sport(row[0])
+            for row in connection.execute("SELECT DISTINCT sport FROM catalog_events")
+        }
+        for sport in sorted(enabled_defaults | discovered):
+            connection.execute(
+                "INSERT INTO catalog_sport_settings(sport,enabled,discovered_at,updated_at) VALUES (?,?,?,?)",
+                (sport, int(sport in enabled_defaults), now, now),
+            )
+
+    def register_discovered_sport(self, sport: str) -> str:
+        key = self.normalize_sport(sport)
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO catalog_sport_settings(sport,enabled,discovered_at,updated_at) VALUES (?,?,?,?)",
+                (key, 0, now, now),
+            )
+        return key
+
+    def set_sport_enabled(self, sport: str, *, enabled: bool) -> dict:
+        key = self.register_discovered_sport(sport)
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE catalog_sport_settings SET enabled=?,updated_at=? WHERE sport=?",
+                (int(enabled), utc_now(), key),
+            )
+        return {"sport": key, "enabled": enabled}
+
+    def is_sport_enabled(self, sport: str) -> bool:
+        key = self.normalize_sport(sport)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT enabled FROM catalog_sport_settings WHERE sport=?", (key,)
+            ).fetchone()
+        return bool(row["enabled"]) if row is not None else False
+
+    def list_sport_settings(self) -> list[dict]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT sport,enabled,discovered_at,updated_at FROM catalog_sport_settings ORDER BY sport"
+            ).fetchall()
+            event_rows = connection.execute("SELECT sport,COUNT(*) AS count FROM catalog_events GROUP BY sport").fetchall()
+        counts: dict[str, int] = {}
+        for row in event_rows:
+            key = self.normalize_sport(row["sport"])
+            counts[key] = counts.get(key, 0) + row["count"]
+        return [
+            {**dict(row), "enabled": bool(row["enabled"]), "retained_events": counts.get(row["sport"], 0)}
+            for row in rows
+        ]
 
     def upsert_event(self, event: CatalogEvent) -> None:
+        self.register_discovered_sport(event.sport)
         payload = json.dumps(to_catalog_dict(event), ensure_ascii=True, allow_nan=False)
         updated_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
@@ -164,6 +249,38 @@ class CatalogStore:
                  snapshot.normalization_version),
             )
 
+    def get_discovery_cache(self, cache_key: str, *, now: str) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT response_json,confidence,created_at,expires_at FROM match_discovery_cache WHERE cache_key=? AND expires_at>?",
+                (cache_key, now),
+            ).fetchone()
+        if row is None:
+            return None
+        response = self._decode_snapshot(row["response_json"])
+        response["cache_status"] = "cached"
+        response["cache_confidence"] = row["confidence"]
+        response["cache_expires_at"] = row["expires_at"]
+        return response
+
+    def save_discovery_cache(
+        self, *, cache_key: str, response: dict, confidence: str, created_at: str, expires_at: str,
+    ) -> None:
+        payload = json.dumps(response, ensure_ascii=True, allow_nan=False)
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO match_discovery_cache(cache_key,response_json,confidence,created_at,expires_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(cache_key) DO UPDATE SET response_json=excluded.response_json,
+                   confidence=excluded.confidence,created_at=excluded.created_at,expires_at=excluded.expires_at""",
+                (cache_key, payload, confidence, created_at, expires_at),
+            )
+
+    def clear_discovery_cache(self, cache_key: str) -> bool:
+        with self._connect() as connection:
+            result = connection.execute("DELETE FROM match_discovery_cache WHERE cache_key=?", (cache_key,))
+        return bool(result.rowcount)
+
     @staticmethod
     def _decode_snapshot(payload: str) -> dict:
         value = json.loads(payload)
@@ -188,7 +305,8 @@ class CatalogStore:
         return self._decode_snapshot(row["payload"]) if row else None
 
     def list_events(self, *, sport: str | None = None, start_from: str | None = None,
-                    start_to: str | None = None, limit: int = 100, offset: int = 0) -> list[dict]:
+                    start_to: str | None = None, limit: int = 100, offset: int = 0,
+                    include_disabled: bool = False) -> list[dict]:
         conditions, params = [], []
         if sport:
             conditions.append("sport=?")
@@ -203,10 +321,14 @@ class CatalogStore:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM catalog_events" + where
-                + " ORDER BY start_time,event_id LIMIT ? OFFSET ?",
-                (*params, min(max(limit, 1), 1000), max(offset, 0)),
+                + " ORDER BY start_time,event_id",
+                params,
             ).fetchall()
-        return [self._decode_snapshot(row["payload"]) for row in rows]
+        events = [self._decode_snapshot(row["payload"]) for row in rows]
+        if not include_disabled:
+            settings = {item["sport"]: item["enabled"] for item in self.list_sport_settings()}
+            events = [event for event in events if settings.get(self.normalize_sport(event["sport"]), False)]
+        return events[max(offset, 0):max(offset, 0) + min(max(limit, 1), 1000)]
 
     def health(self, *, operational: bool = False) -> dict:
         with self._connect() as connection:
@@ -254,7 +376,7 @@ class CatalogStore:
         return result.rowcount
 
     def acquire_job(self, *, job_id: str, run_date: str, now: str,
-                    lease_until: str) -> bool:
+                    lease_until: str, force: bool = False) -> bool:
         """Claim one daily run, or reclaim it after its lease expires."""
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -262,7 +384,7 @@ class CatalogStore:
                 "SELECT job_id,state,lease_until,attempt FROM catalog_job_runs WHERE run_date=? ORDER BY updated_at DESC LIMIT 1",
                 (run_date,),
             ).fetchone()
-            if row and row["state"] == "success":
+            if row and row["state"] == "success" and not force:
                 return False
             if row and row["state"] == "running" and (row["lease_until"] or "") > now:
                 return False
