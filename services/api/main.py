@@ -376,6 +376,7 @@ class SlateMatchRunSummary(BaseModel):
     error_message: str | None = None
     pick_count: int = 0
     latency_ms: int | None = None
+    operation_id: str | None = None
 
 
 class SlateRankedCandidate(BaseModel):
@@ -1270,17 +1271,16 @@ def _build_slate_deps(request_dict: dict[str, Any]):
     def run_pipeline(
         *, sport: str, home_team: str, away_team: str, event_date: str, markets: tuple[str, ...]
     ) -> list[dict[str, Any]]:
-        with operation("slate_match", sport=sport, home_team=home_team, away_team=away_team,
-                       event_date=event_date, parent_operation_id=request_dict.get("operation_id")) as diagnostic:
-            try:
-                scores = run_match(sport=sport, home_team=home_team, away_team=away_team, event_date=event_date, markets=markets)
-            except Exception as exc:
-                from nfl_module import NflNoPicks
-                if isinstance(exc, NflNoPicks):
-                    diagnostic.finish("no_picks")
-                raise
-            diagnostic.finish("success" if scores else "no_picks", pick_count=len(scores))
-            return scores
+        return run_match(
+            sport=sport, home_team=home_team, away_team=away_team,
+            event_date=event_date, markets=markets,
+        )
+
+    def match_operation(*, sport: str, home_team: str, away_team: str, event_date: str):
+        return operation(
+            "slate_match", sport=sport, home_team=home_team, away_team=away_team,
+            event_date=event_date, parent_operation_id=request_dict.get("operation_id"),
+        )
 
     def run_match(*, sport, home_team, away_team, event_date, markets):
         if sport == "nfl":
@@ -1334,6 +1334,7 @@ def _build_slate_deps(request_dict: dict[str, Any]):
         run_match_pipeline=run_pipeline,
         get_token_usage=get_token_usage,
         read_catalog=catalog_read_fn,
+        match_operation=match_operation,
     )
 
 

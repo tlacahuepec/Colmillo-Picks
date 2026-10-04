@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone as utc_timezone
 from typing import Any, Callable
@@ -35,6 +36,7 @@ class SlateOrchestrationDeps:
     run_match_pipeline: Callable[..., list[dict[str, Any]]]
     get_token_usage: Callable[[], tuple[int, int, int]] | None = None
     read_catalog: Callable[..., Any] | None = None
+    match_operation: Callable[..., Any] | None = None
 
 
 def execute_slate_job(
@@ -103,86 +105,12 @@ def execute_slate_job(
             away_team = match.get("away_team", "Unknown")
             event_date = match.get("event_date", date)
             t_match = time.perf_counter()
-            try:
-                catalog_read = None
-                if deps.read_catalog:
-                    catalog_read = deps.read_catalog(
-                        sport=sport, home_team=home_team, away_team=away_team,
-                        event_date=event_date, now=datetime.now(utc_timezone.utc),
-                    )
-                scores = deps.run_match_pipeline(
-                    sport=sport,
-                    home_team=home_team,
-                    away_team=away_team,
-                    event_date=event_date,
-                    markets=(),
-                )
-                match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))
-                candidates = candidates_from_picks(
-                    scores,
-                    sport=sport,
-                    source_match={**match, **({"catalog_source": catalog_read.source,
-                                               "catalog_refresh_resources": list(catalog_read.refresh_resources)}
-                                              if catalog_read else {})},
-                )
-                all_candidates.extend(candidates)
-
-                match_runs.append({
-                    "sport": sport,
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    "event_date": event_date,
-                    "status": "success",
-                    "error_stage": None,
-                    "error_message": None,
-                    "pick_count": len(candidates),
-                    "latency_ms": match_latency_ms,
-                    "catalog_source": catalog_read.source if catalog_read else None,
-                    "catalog_refresh_resources": list(catalog_read.refresh_resources) if catalog_read else [],
-                })
-            except NflNoPicks as exc:
-                match_runs.append({
-                    "sport": sport, "home_team": home_team, "away_team": away_team,
-                    "event_date": event_date, "status": "no_picks", "error_stage": None,
-                    "error_message": str(exc)[:500], "pick_count": 0,
-                    "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
-                })
-            except NflDataQualityError as exc:
-                summary = exc.reason.get("recommendation_summary", {}) if isinstance(exc.reason, dict) else {}
-                match_runs.append({
-                    "sport": sport, "home_team": home_team, "away_team": away_team,
-                    "event_date": event_date, "status": "failed", "error_stage": "offers",
-                    "error_message": summary.get("message") or str(exc)[:500], "pick_count": 0,
-                    "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
-                    "recommendation_summary": summary,
-                })
-            except BaseballDataQualityError as exc:
-                match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))
-                status = "pending_data" if exc.reason == "hitter_inputs_unavailable" else "failed"
-                match_runs.append({
-                    "sport": sport,
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    "event_date": event_date,
-                    "status": status,
-                    "error_stage": "scoring",
-                    "error_message": str(exc)[:500],
-                    "pick_count": 0,
-                    "latency_ms": match_latency_ms,
-                })
-            except Exception as exc:
-                match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))
-                match_runs.append({
-                    "sport": sport,
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    "event_date": event_date,
-                    "status": "failed",
-                    "error_stage": "pipeline",
-                    "error_message": str(exc)[:500],
-                    "pick_count": 0,
-                    "latency_ms": match_latency_ms,
-                })
+            match_run, candidates = _execute_slate_match(
+                deps=deps, sport=sport, home_team=home_team, away_team=away_team,
+                event_date=event_date, source_match=match,
+            )
+            all_candidates.extend(candidates)
+            match_runs.append(match_run)
             if on_checkpoint:
                 on_checkpoint("matches", discovered_matches, all_candidates, match_runs, discovery_latency_ms)
             if (
@@ -220,6 +148,87 @@ def execute_slate_job(
         total_tokens=total_tokens,
         discovered_matches=discovered_matches,
     )
+
+
+def _execute_slate_match(
+    *, deps: SlateOrchestrationDeps, sport: str, home_team: str, away_team: str,
+    event_date: str, source_match: dict[str, Any],
+) -> tuple[dict[str, Any], list[SlateCandidate]]:
+    """Run one sequential match attempt and retain its child diagnostic identity."""
+    t_match = time.perf_counter()
+    context = (
+        deps.match_operation(sport=sport, home_team=home_team, away_team=away_team, event_date=event_date)
+        if deps.match_operation else nullcontext(None)
+    )
+    with context as diagnostic:
+        operation_id = getattr(diagnostic, "id", None)
+        candidates: list[SlateCandidate] = []
+        try:
+            catalog_read = None
+            if deps.read_catalog:
+                catalog_read = deps.read_catalog(
+                    sport=sport, home_team=home_team, away_team=away_team,
+                    event_date=event_date, now=datetime.now(utc_timezone.utc),
+                )
+            scores = deps.run_match_pipeline(
+                sport=sport, home_team=home_team, away_team=away_team,
+                event_date=event_date, markets=(),
+            )
+            candidates = candidates_from_picks(
+                scores,
+                sport=sport,
+                source_match={**source_match, **({"catalog_source": catalog_read.source,
+                                                   "catalog_refresh_resources": list(catalog_read.refresh_resources)}
+                                                  if catalog_read else {})},
+            )
+            match_run = {
+                "sport": sport, "home_team": home_team, "away_team": away_team,
+                "event_date": event_date, "status": "success", "error_stage": None,
+                "error_message": None, "pick_count": len(candidates),
+                "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+                "catalog_source": catalog_read.source if catalog_read else None,
+                "catalog_refresh_resources": list(catalog_read.refresh_resources) if catalog_read else [],
+            }
+        except NflNoPicks as exc:
+            match_run = {
+                "sport": sport, "home_team": home_team, "away_team": away_team,
+                "event_date": event_date, "status": "no_picks", "error_stage": None,
+                "error_message": str(exc)[:500], "pick_count": 0,
+                "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+            }
+        except NflDataQualityError as exc:
+            summary = exc.reason.get("recommendation_summary", {}) if isinstance(exc.reason, dict) else {}
+            match_run = {
+                "sport": sport, "home_team": home_team, "away_team": away_team,
+                "event_date": event_date, "status": "failed", "error_stage": "offers",
+                "error_message": summary.get("message") or str(exc)[:500], "pick_count": 0,
+                "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+                "recommendation_summary": summary,
+            }
+        except BaseballDataQualityError as exc:
+            status = "pending_data" if exc.reason == "hitter_inputs_unavailable" else "failed"
+            match_run = {
+                "sport": sport, "home_team": home_team, "away_team": away_team,
+                "event_date": event_date, "status": status, "error_stage": "scoring",
+                "error_message": str(exc)[:500], "pick_count": 0,
+                "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+            }
+        except Exception as exc:
+            match_run = {
+                "sport": sport, "home_team": home_team, "away_team": away_team,
+                "event_date": event_date, "status": "failed", "error_stage": "pipeline",
+                "error_message": str(exc)[:500], "pick_count": 0,
+                "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+            }
+
+        if diagnostic:
+            outcome = {"success": "success", "no_picks": "no_picks", "pending_data": "partial"}.get(
+                match_run["status"], "failed"
+            )
+            diagnostic.finish(outcome, pick_count=match_run["pick_count"])
+        if operation_id:
+            match_run["operation_id"] = operation_id
+        return match_run, candidates
 
 
 def _interrupted_result(

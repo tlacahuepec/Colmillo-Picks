@@ -120,6 +120,7 @@ export const mockSlateDetailSuccess: SlateDetail = {
       status: "success",
       pick_count: 5,
       latency_ms: 900,
+      operation_id: "op-match-arsenal",
     },
     {
       sport: "basketball",

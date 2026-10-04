@@ -733,6 +733,22 @@ export const BestTodayPage: React.FC<BestTodayPageProps> = ({ onNavigateToDiagno
                               {r.error_message}
                             </Typography>
                           )}
+                          {r.operation_id && (
+                            <Button
+                              size="small"
+                              startIcon={<Activity size={14} />}
+                              sx={{ mt: 0.75 }}
+                              onClick={() => {
+                                if (onNavigateToDiagnostics) {
+                                  onNavigateToDiagnostics(r.operation_id!);
+                                } else {
+                                  window.location.hash = `diagnostics?operation=${encodeURIComponent(r.operation_id!)}`;
+                                }
+                              }}
+                            >
+                              View diagnostics
+                            </Button>
+                          )}
                         </Paper>
                       ))}
                     </Box>

@@ -162,6 +162,18 @@ describe("BestTodayPage Component", () => {
     expect(mockNavigate).toHaveBeenCalledWith("op-slate-456");
   });
 
+  it("opens the exact child diagnostic from a match run", async () => {
+    vi.spyOn(api, "listSlates").mockResolvedValue({ items: [mockSlateDetailSuccess], limit: 10, offset: 0 });
+    vi.spyOn(api, "getSlate").mockResolvedValue(mockSlateDetailSuccess);
+    const mockNavigate = vi.fn();
+    render(<BestTodayPage onNavigateToDiagnostics={mockNavigate} />);
+
+    fireEvent.click(await screen.findByText(/Match Run Details/i));
+    fireEvent.click(await screen.findByRole("button", { name: "View diagnostics" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith("op-match-arsenal");
+  });
+
   it("renders candidate source details including sportsbook link, NFL contributing factors, and score", async () => {
     const slateWithEnrichedDetails: SlateDetail = {
       ...mockSlateDetailSuccess,
