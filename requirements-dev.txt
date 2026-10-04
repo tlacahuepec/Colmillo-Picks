@@ -3,5 +3,5 @@
 
 pytest>=8.0,<10.0
 # Keep local and CI lint rules aligned with the validated dev baseline.
-ruff==0.15.20
+ruff==0.16.6
 pyright==1.1.414

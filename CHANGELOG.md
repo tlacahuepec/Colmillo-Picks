@@ -21,6 +21,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Schema regression test suite in `tests/api/test_db_schema.py` ensuring declarative model refactoring maintains exact table schema.
 
 ### Changed
+- Consolidated dependency updates across runtime packages (FastAPI >=0.142.2, SQLAlchemy >=2.0.52, Streamlit >=1.64.0, LangChain-Core >=1.6.2), dev tooling (Ruff 0.16.6), and CI GitHub Actions (checkout@v7, setup-python@v7, setup-buildx-action@v4, login-action@v4, build-push-action@v7).
 - Wired `CatalogFirstReader` into slate orchestration dependencies in `services/api/main.py` with configurable rollout modes (`COLMILLO_CATALOG_READ_MODE`: `shadow` default, `catalog_first`, `live`) recording telemetry in match runs.
 - Migrated SQLAlchemy declarative models (`PickRun`, `PickOutcome`, `PickJob`, `SlateRun`, `SlateJob`) in `services/api/db.py` to modern SQLAlchemy 2.0 `Mapped[T] = mapped_column(...)` annotations (#360).
 - Made `LLMPostMatchStatsProvider` compatible with both positional and keyword argument `generate_structured` signatures.
