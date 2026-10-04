@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any, cast
 
 
 def sanitize_sentry_event(event, hint=None):
@@ -47,7 +48,7 @@ def init_sentry_if_configured() -> bool:
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
         send_default_pii=False,
         include_local_variables=False,
-        before_send=sanitize_sentry_event,
+        before_send=cast(Any, sanitize_sentry_event),
         before_send_transaction=lambda event, hint: None,
         before_breadcrumb=lambda breadcrumb, hint: None,
         integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)],

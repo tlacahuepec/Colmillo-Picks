@@ -5,12 +5,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_pyright_config_enforces_catalog_baseline() -> None:
+def test_pyright_config_enforces_type_clean_baseline() -> None:
     config = json.loads((ROOT / "pyrightconfig.json").read_text(encoding="utf-8"))
 
     assert config["pythonVersion"] == "3.11"
     assert config["typeCheckingMode"] == "basic"
-    assert config["include"] == ["services/catalog"]
+    assert config["include"] == ["services/catalog", "services/diagnostics.py"]
+    assert config["extraPaths"] == ["skills/soccer-prop-picks/scripts"]
 
 
 def test_ci_runs_pyright_after_installing_dev_dependencies() -> None:

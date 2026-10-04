@@ -35,10 +35,10 @@ def _attempt_resolution(pick: db.PickRun) -> None:
         for idx, entry in enumerate(scores)
     ]
 
-    from llm.client import get_llm_client
+    from match_discovery import MatchDiscoveryClient
 
-    llm_client = get_llm_client()
-    stats_provider = LLMPostMatchStatsProvider(llm_client=llm_client)
+    discovery_client = MatchDiscoveryClient.from_env()
+    stats_provider = LLMPostMatchStatsProvider(llm_client=discovery_client.client)
 
     def record_fn(pick_id: str, outcomes: list[dict[str, Any]]) -> None:
         db.record_outcomes(pick_id=pick_id, outcomes=outcomes)

@@ -1,6 +1,10 @@
 {
   "include": [
-    "services/catalog"
+    "services/catalog",
+    "services/diagnostics.py"
+  ],
+  "extraPaths": [
+    "skills/soccer-prop-picks/scripts"
   ],
   "exclude": [
     "**/__pycache__"

@@ -13,7 +13,7 @@ from typing import Any, Protocol
 class LLMClient(Protocol):
     """Minimal protocol for structured LLM output."""
 
-    def generate_structured(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]: ...
+    def generate_structured(self, *args: Any, **kwargs: Any) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -85,7 +85,14 @@ class LLMPostMatchStatsProvider:
             return []
 
         prompt = build_stats_prompt(match_description=match_description, picks=picks)
-        raw = self._llm_client.generate_structured(prompt, _RESPONSE_SCHEMA)
+        try:
+            raw = self._llm_client.generate_structured(prompt, _RESPONSE_SCHEMA)
+        except TypeError:
+            raw = self._llm_client.generate_structured(
+                system_prompt="You are a sports statistics analyst. Extract post-match player statistics.",
+                user_prompt=prompt,
+                schema=_RESPONSE_SCHEMA,
+            )
 
         stats = [
             PostMatchPlayerStat(
