@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine, inspect, text
+from sqlalchemy import DateTime, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
 class Base(DeclarativeBase):
@@ -42,29 +42,29 @@ class PickRun(Base):
 
     __tablename__ = "picks_history"
 
-    id = Column(String(36), primary_key=True)
-    created_at = Column(DateTime(timezone=True), nullable=False)
-    match_query = Column(String(255), nullable=False)
-    competition = Column(String(255), nullable=True)
-    top_n = Column(Integer, nullable=False)
-    request_json = Column(Text, nullable=False)
-    report_markdown = Column(Text, nullable=False, default="")
-    scores_json = Column(Text, nullable=False, default="[]")
-    trace_json = Column(Text, nullable=True)
-    fixture_status = Column(String(64), nullable=True)
-    llm_status = Column(String(64), nullable=True)
-    latency_ms = Column(Integer, nullable=True)
-    status = Column(String(16), nullable=False, default=PICK_STATUS_PENDING)
-    error_stage = Column(String(64), nullable=True)
-    error_message = Column(Text, nullable=True)
-    error_details_json = Column(Text, nullable=True)  # Rich observability context for failures (Epic #219)
-    sport = Column(String(32), nullable=True)
-    league = Column(String(64), nullable=True)
-    markets_json = Column(Text, nullable=True)
-    scheduled_kickoff_utc = Column(DateTime(timezone=True), nullable=True)
-    operation_id = Column(String(64), nullable=True)
-    outcome = Column(String(16), nullable=True)
-    diagnostics_json = Column(Text, nullable=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    match_query: Mapped[str] = mapped_column(String(255), nullable=False)
+    competition: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_json: Mapped[str] = mapped_column(Text, nullable=False)
+    report_markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    scores_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    trace_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fixture_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    llm_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=PICK_STATUS_PENDING)
+    error_stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_details_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # Rich observability context for failures (Epic #219)
+    sport: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    league: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    markets_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scheduled_kickoff_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    diagnostics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class PickOutcome(Base):
@@ -76,15 +76,15 @@ class PickOutcome(Base):
 
     __tablename__ = "pick_outcomes"
 
-    id = Column(String(36), primary_key=True)
-    pick_id = Column(String(36), nullable=False, index=True)
-    rank = Column(Integer, nullable=False)
-    player = Column(String(255), nullable=False)
-    market = Column(String(64), nullable=False)
-    result = Column(String(8), nullable=False)  # win | loss | push | void
-    recorded_at = Column(DateTime(timezone=True), nullable=False)
-    resolution_attempted_at = Column(DateTime(timezone=True), nullable=True)
-    last_resolution_error = Column(Text, nullable=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    pick_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    player: Mapped[str] = mapped_column(String(255), nullable=False)
+    market: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[str] = mapped_column(String(8), nullable=False)  # win | loss | push | void
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolution_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_resolution_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class PickJob(Base):
@@ -92,15 +92,15 @@ class PickJob(Base):
 
     __tablename__ = "pick_jobs"
 
-    id = Column(String(36), primary_key=True)
-    pick_id = Column(String(36), nullable=False, index=True)
-    request_json = Column(Text, nullable=False)
-    bundle_kwargs_json = Column(Text, nullable=False)
-    state = Column(String(16), nullable=False, default=PICK_STATUS_QUEUED)
-    attempts = Column(Integer, nullable=False, default=0)
-    last_error = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=False)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    pick_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    request_json: Mapped[str] = mapped_column(Text, nullable=False)
+    bundle_kwargs_json: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default=PICK_STATUS_QUEUED)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class SlateRun(Base):
@@ -108,32 +108,32 @@ class SlateRun(Base):
 
     __tablename__ = "slate_runs"
 
-    id = Column(String(36), primary_key=True)
-    created_at = Column(DateTime(timezone=True), nullable=False)
-    status = Column(String(16), nullable=False, default=PICK_STATUS_PENDING)
-    request_json = Column(Text, nullable=False)
-    candidates_json = Column(Text, nullable=False, default="[]")
-    match_runs_json = Column(Text, nullable=False, default="[]")
-    latency_ms = Column(Integer, nullable=True)
-    discovery_latency_ms = Column(Integer, nullable=True)
-    error_stage = Column(String(64), nullable=True)
-    error_message = Column(Text, nullable=True)
-    matches_attempted = Column(Integer, nullable=True)
-    matches_succeeded = Column(Integer, nullable=True)
-    prompt_tokens = Column(Integer, nullable=True)
-    completion_tokens = Column(Integer, nullable=True)
-    total_tokens = Column(Integer, nullable=True)
-    operation_id = Column(String(64), nullable=True)
-    outcome = Column(String(16), nullable=True)
-    diagnostics_json = Column(Text, nullable=True)
-    progress_stage = Column(String(32), nullable=True)
-    matches_discovered = Column(Integer, nullable=True)
-    matches_completed = Column(Integer, nullable=True)
-    discovered_matches_json = Column(Text, nullable=False, default="[]")
-    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
-    stop_reason = Column(String(32), nullable=True)
-    interrupted_at = Column(DateTime(timezone=True), nullable=True)
-    resume_count = Column(Integer, nullable=False, default=0)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=PICK_STATUS_PENDING)
+    request_json: Mapped[str] = mapped_column(Text, nullable=False)
+    candidates_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    match_runs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    discovery_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    matches_attempted: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    matches_succeeded: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    diagnostics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    matches_discovered: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    matches_completed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    discovered_matches_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stop_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    interrupted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resume_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class SlateJob(Base):
@@ -141,16 +141,16 @@ class SlateJob(Base):
 
     __tablename__ = "slate_jobs"
 
-    id = Column(String(36), primary_key=True)
-    slate_id = Column(String(36), nullable=False, index=True)
-    request_json = Column(Text, nullable=False)
-    state = Column(String(16), nullable=False, default=PICK_STATUS_QUEUED)
-    attempts = Column(Integer, nullable=False, default=0)
-    last_error = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=False)
-    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
-    lease_until = Column(DateTime(timezone=True), nullable=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    slate_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    request_json: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default=PICK_STATUS_QUEUED)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 # Module-level engine/session factory; rebuilt by ``configure_engine`` so tests
@@ -502,8 +502,11 @@ def mark_pick_failed(
         from services.diagnostics import MESSAGES, safe_metadata
         row.outcome = "failed"
         safe = safe_metadata(error_details or {}, include_frames=False)
+        error_code = str(safe.get("error_code") or "")
+        fallback_summary = MESSAGES["collection_error"] if stage == "collect" else MESSAGES["unexpected_error"]
+        summary = MESSAGES.get(error_code, fallback_summary)
         row.diagnostics_json = json.dumps({"outcome": "failed", "stage": stage,
-                                           "summary": MESSAGES.get(safe.get("error_code"), MESSAGES["collection_error"] if stage == "collect" else MESSAGES["unexpected_error"]),
+                                           "summary": summary,
                                            **safe})
         row.error_stage = stage[:64]
         row.error_message = message
@@ -805,8 +808,10 @@ def mark_slate_success(
         row.status = PICK_STATUS_SUCCESS
         from services.diagnostics import MESSAGES
         failed = partial or any(m.get("status") in {"failed", "pending_data"} for m in match_runs)
-        row.outcome = "partial" if failed else "success" if candidates else "no_picks"
-        row.diagnostics_json = json.dumps({"outcome": row.outcome, "summary": MESSAGES[row.outcome], "pick_count": len(candidates)})
+        outcome = "partial" if failed else ("success" if candidates else "no_picks")
+        row.outcome = outcome
+        summary = MESSAGES.get(outcome, "")
+        row.diagnostics_json = json.dumps({"outcome": outcome, "summary": summary, "pick_count": len(candidates)})
         row.candidates_json = json.dumps(candidates, default=str)
         row.match_runs_json = json.dumps(match_runs, default=str)
         row.latency_ms = latency_ms
