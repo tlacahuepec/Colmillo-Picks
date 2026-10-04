@@ -1312,10 +1312,28 @@ def _build_slate_deps(request_dict: dict[str, Any]):
             return (cumulative.prompt_tokens, cumulative.completion_tokens, cumulative.total_tokens)
         return (0, 0, 0)
 
+    catalog_read_fn = None
+    try:
+        from services.catalog.read_service import CatalogFirstReader
+        from services.catalog.rollout import CatalogReadMode, resolve_read_mode
+        from services.catalog.storage import CatalogStore
+
+        read_mode = resolve_read_mode(os.getenv("COLMILLO_CATALOG_READ_MODE", "shadow"))
+        if read_mode != CatalogReadMode.LIVE:
+            db_path = os.getenv("COLMILLO_CATALOG_DB_PATH", "data/catalog.db")
+            catalog_store = CatalogStore(db_path)
+            reader = CatalogFirstReader(
+                lookup=lambda s, h, a, d: catalog_store.find_snapshot(sport=s, home_team=h, away_team=a, event_date=d),
+            )
+            catalog_read_fn = reader.read
+    except Exception:
+        catalog_read_fn = None
+
     return SlateOrchestrationDeps(
         discover_matches=discover,
         run_match_pipeline=run_pipeline,
         get_token_usage=get_token_usage,
+        read_catalog=catalog_read_fn,
     )
 
 

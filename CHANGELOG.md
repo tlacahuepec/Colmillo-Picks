@@ -7,10 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Catalog staged rollout subsystem integration bridging team-based lookups via `CatalogStore.find_snapshot` and typed contract deserializers (`snapshot_from_dict`, `catalog_event_from_dict`, `canonical_ref_from_dict`).
+- Multi-threaded scheduler and lease concurrency stress test suite in `tests/test_catalog_scheduler.py` verifying race-free claims, heartbeat renewal, and crash recovery.
+- Field-level freshness policy test matrix in `tests/test_catalog_freshness.py` covering all TTL categories, hierarchical dotted prefixes, explicit `valid_until` overrides, and selective resource refreshes.
+- Standalone benchmark tool `scripts/benchmark_catalog_reads.py` measuring cache hit lookup latency (~1.2ms p50, 1.4ms p95, >5,000x speedup over live LLM generation).
 - Type-checking gate expansion in Pyright to cover `services/diagnostics.py`, `services/api/`, and `services/worker/` with zero errors (#359, #360).
 - Schema regression test suite in `tests/api/test_db_schema.py` ensuring declarative model refactoring maintains exact table schema.
 
 ### Changed
+- Wired `CatalogFirstReader` into slate orchestration dependencies in `services/api/main.py` with configurable rollout modes (`COLMILLO_CATALOG_READ_MODE`: `shadow` default, `catalog_first`, `live`) recording telemetry in match runs.
 - Migrated SQLAlchemy declarative models (`PickRun`, `PickOutcome`, `PickJob`, `SlateRun`, `SlateJob`) in `services/api/db.py` to modern SQLAlchemy 2.0 `Mapped[T] = mapped_column(...)` annotations (#360).
 - Made `LLMPostMatchStatsProvider` compatible with both positional and keyword argument `generate_structured` signatures.
 

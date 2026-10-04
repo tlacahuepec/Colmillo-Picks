@@ -16,9 +16,12 @@ from pathlib import Path
 from typing import Iterator
 
 from services.catalog.contracts import (
+    CanonicalRef,
     CatalogEvent,
     CatalogSnapshot,
     SourceObservation,
+    catalog_event_from_dict,
+    snapshot_from_dict,
     to_catalog_dict,
 )
 from services.catalog.archive import ArchivePolicy, archive_expiry, prepare_archive, utc_now
@@ -303,6 +306,91 @@ class CatalogStore:
                 (event_id,),
             ).fetchone()
         return self._decode_snapshot(row["payload"]) if row else None
+
+    def get_latest_snapshot_object(self, event_id: str) -> CatalogSnapshot | None:
+        """Return the latest snapshot for event_id as a typed CatalogSnapshot."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT payload FROM catalog_snapshots
+                   WHERE event_id=? ORDER BY created_at DESC, snapshot_id DESC LIMIT 1""",
+                (event_id,),
+            ).fetchone()
+        return snapshot_from_dict(self._decode_snapshot(row["payload"])) if row else None
+
+    @classmethod
+    def _match_team(cls, team: CanonicalRef | None, target_name: str) -> bool:
+        if not team or not target_name:
+            return False
+        target = cls.normalize_sport(target_name) if target_name.strip() else ""
+        if not target:
+            return False
+
+        candidates: list[str] = []
+        if team.canonical_id:
+            candidates.append(cls.normalize_sport(team.canonical_id))
+            slug = team.canonical_id.split(":")[-1]
+            candidates.append(cls.normalize_sport(slug))
+        if team.display_name:
+            candidates.append(cls.normalize_sport(team.display_name))
+        for alias in team.provider_ids.values():
+            if alias:
+                candidates.append(cls.normalize_sport(alias))
+
+        candidates = [c for c in candidates if c]
+        for candidate in candidates:
+            if target == candidate:
+                return True
+            if len(target) >= 3 and (target in candidate or candidate in target):
+                return True
+        return False
+
+    def find_snapshot(
+        self,
+        *,
+        sport: str,
+        home_team: str,
+        away_team: str,
+        event_date: str,
+    ) -> CatalogSnapshot | None:
+        """Find the latest CatalogSnapshot matching sport, teams, and event date."""
+        try:
+            norm_sport = self.normalize_sport(sport)
+        except ValueError:
+            return None
+
+        date_prefix = event_date[:10] if len(event_date) >= 10 else event_date
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT event_id, payload FROM catalog_events
+                   WHERE sport=? AND (start_time LIKE ? OR start_time LIKE ?)
+                   ORDER BY start_time, event_id""",
+                (norm_sport, f"{date_prefix}%", f"%{date_prefix}%"),
+            ).fetchall()
+
+            matching_event_id: str | None = None
+            for row in rows:
+                try:
+                    event = catalog_event_from_dict(self._decode_snapshot(row["payload"]))
+                except Exception:
+                    continue
+                if self._match_team(event.home_team, home_team) and self._match_team(event.away_team, away_team):
+                    matching_event_id = event.event_id
+                    break
+
+            if not matching_event_id:
+                return None
+
+            snap_row = connection.execute(
+                """SELECT payload FROM catalog_snapshots
+                   WHERE event_id=?
+                   ORDER BY created_at DESC, snapshot_id DESC
+                   LIMIT 1""",
+                (matching_event_id,),
+            ).fetchone()
+            if not snap_row:
+                return None
+
+            return snapshot_from_dict(self._decode_snapshot(snap_row["payload"]))
 
     def list_events(self, *, sport: str | None = None, start_from: str | None = None,
                     start_to: str | None = None, limit: int = 100, offset: int = 0,

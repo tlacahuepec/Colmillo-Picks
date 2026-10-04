@@ -301,5 +301,81 @@ class TestTimezonePassthrough:
             "top_n": 5,
         }
         execute_slate_job(request_dict=request, deps=deps)
-
         assert captured["timezone"] is None
+
+
+class TestSlateOrchestrationCatalogRollout:
+    def test_catalog_telemetry_recorded_when_read_catalog_provided(self) -> None:
+        from services.catalog.read_service import CatalogReadResult
+
+        def dummy_read_catalog(*, sport, home_team, away_team, event_date, now, requested_resources=()):
+            return CatalogReadResult(
+                snapshot=None,
+                decisions=(),
+                refresh_resources=("odds",),
+                source="catalog_stale",
+            )
+
+        deps = SlateOrchestrationDeps(
+            discover_matches=lambda **kwargs: _discovery_response(["soccer"], matches_per_sport=1),
+            run_match_pipeline=lambda **kwargs: _pipeline_result("soccer", "Star", 0.8),
+            read_catalog=dummy_read_catalog,
+        )
+        request = {
+            "date": "2026-06-01",
+            "sports": ["soccer"],
+            "max_matches_per_sport": 1,
+            "top_n": 5,
+        }
+        result = execute_slate_job(request_dict=request, deps=deps)
+
+        assert len(result.match_runs) == 1
+        run = result.match_runs[0]
+        assert run["catalog_source"] == "catalog_stale"
+        assert run["catalog_refresh_resources"] == ["odds"]
+        assert len(result.candidates) == 1
+        assert result.candidates[0].source_match.get("catalog_source") == "catalog_stale"
+
+    def test_catalog_bypassed_when_read_catalog_is_none(self) -> None:
+        deps = SlateOrchestrationDeps(
+            discover_matches=lambda **kwargs: _discovery_response(["soccer"], matches_per_sport=1),
+            run_match_pipeline=lambda **kwargs: _pipeline_result("soccer", "Star", 0.8),
+            read_catalog=None,
+        )
+        request = {
+            "date": "2026-06-01",
+            "sports": ["soccer"],
+            "max_matches_per_sport": 1,
+            "top_n": 5,
+        }
+        result = execute_slate_job(request_dict=request, deps=deps)
+
+        assert len(result.match_runs) == 1
+        run = result.match_runs[0]
+        assert run["catalog_source"] is None
+        assert run["catalog_refresh_resources"] == []
+
+    def test_build_slate_deps_rollout_modes(self, monkeypatch, tmp_path) -> None:
+        from services.api.main import _build_slate_deps
+
+        # Provide dummy Gemini API key so MatchDiscoveryClient can initialize in CI environments
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key-for-ci")
+
+        # Point catalog DB to temp file
+        monkeypatch.setenv("COLMILLO_CATALOG_DB_PATH", str(tmp_path / "catalog.db"))
+
+        # 1. Default (shadow mode) -> read_catalog should be callable
+        monkeypatch.delenv("COLMILLO_CATALOG_READ_MODE", raising=False)
+        deps_shadow = _build_slate_deps({"sports": ["soccer"]})
+        assert callable(deps_shadow.read_catalog)
+
+        # 2. catalog_first mode -> read_catalog should be callable
+        monkeypatch.setenv("COLMILLO_CATALOG_READ_MODE", "catalog_first")
+        deps_cat_first = _build_slate_deps({"sports": ["soccer"]})
+        assert callable(deps_cat_first.read_catalog)
+
+        # 3. live mode -> read_catalog should be None
+        monkeypatch.setenv("COLMILLO_CATALOG_READ_MODE", "live")
+        deps_live = _build_slate_deps({"sports": ["soccer"]})
+        assert deps_live.read_catalog is None
+

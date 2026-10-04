@@ -8,6 +8,7 @@ from services.catalog.contracts import (
     FreshnessStatus,
     PredictionMarketObservation,
     SourceObservation,
+    snapshot_from_dict,
 )
 from services.catalog.storage import CatalogStore
 from services.catalog.providers import CatalogProvider, ProviderRequest, ProviderResult
@@ -56,4 +57,5 @@ __all__ = [
     "BasketballCatalogAdapter",
     "MlbCatalogAdapter",
     "NflCatalogAdapter",
+    "snapshot_from_dict",
 ]
