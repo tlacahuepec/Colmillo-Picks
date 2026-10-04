@@ -610,11 +610,13 @@ def _row_to_summary(row: db_module.PickRun) -> PickSummary:
 def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
     import json
     error_details = None
-    if getattr(row, "error_details_json", None):
+    if row.error_details_json:
         try:
             error_details = json.loads(row.error_details_json)
         except Exception:
             error_details = None
+    safe_error_details = public_trace(error_details)
+    safe_trace = public_trace(json.loads(row.trace_json)) if row.trace_json else None
     return PickDetailResponse(
         operation_id=getattr(row, "operation_id", None),
         outcome=getattr(row, "outcome", None),
@@ -630,14 +632,14 @@ def _row_to_detail(row: db_module.PickRun) -> PickDetailResponse:
         latency_ms=row.latency_ms,
         error_stage=row.error_stage,
         error_message=row.error_message,
-        error_details=public_trace(error_details),
+        error_details=safe_error_details if isinstance(safe_error_details, dict) else None,
         request=json.loads(row.request_json) if row.request_json else {},
         report_markdown=row.report_markdown or "",
         scores=json.loads(row.scores_json) if row.scores_json else [],
-        trace=public_trace(json.loads(row.trace_json)) if row.trace_json else None,
+        trace=safe_trace if isinstance(safe_trace, dict) else None,
         sport=getattr(row, "sport", None),
         league=getattr(row, "league", None),
-        markets=json.loads(row.markets_json) if getattr(row, "markets_json", None) else None,
+        markets=json.loads(row.markets_json) if row.markets_json else None,
     )
 
 
@@ -684,7 +686,7 @@ def _handle_legacy_picks(body: dict[str, Any], background_tasks: Any) -> PickAcc
             detail="llm_provider is required when use_llm is true.",
         )
 
-    bundle_kwargs = dict(
+    bundle_kwargs: dict[str, Any] = dict(
         use_llm=payload.use_llm,
         llm_provider=payload.llm_provider,
         llm_model=payload.llm_model,
@@ -1253,10 +1255,11 @@ def _build_slate_deps(request_dict: dict[str, Any]):
     from services.api.slate_orchestration import SlateOrchestrationDeps
     from sport_module import get_sport_module
 
+    max_output_tokens = 16000 if "nfl" in request_dict.get("sports", ["nfl"]) else 8192
     discovery_client = MatchDiscoveryClient.from_env(
         provider=request_dict.get("llm_provider"),
         model=request_dict.get("llm_model"),
-        **({"max_output_tokens": 16000} if "nfl" in request_dict.get("sports", ["nfl"]) else {}),
+        max_output_tokens=max_output_tokens,
     )
 
     def discover(*, date_utc: str, sports: list[str], limit_per_sport: int, timezone: str | None = None) -> dict[str, Any]:
@@ -1280,18 +1283,22 @@ def _build_slate_deps(request_dict: dict[str, Any]):
             return scores
 
     def run_match(*, sport, home_team, away_team, event_date, markets):
-        module = get_sport_module(sport)
         if sport == "nfl":
             from nfl_collection import NflCollector
             from nfl_domain import NFL_PLAYER_MARKETS, NFL_GAME_MARKETS
             from nfl_module import NflModule
-            module = NflModule(collector=NflCollector(discovery_client.client, timezone_name=request_dict.get("timezone")))
+            nfl_module = NflModule(collector=NflCollector(discovery_client.client, timezone_name=request_dict.get("timezone")))
             group = request_dict.get("nfl_market_group", "all")
             markets = NFL_PLAYER_MARKETS if group == "player_props" else NFL_GAME_MARKETS if group == "game_bets" else markets
-        match_inputs = module.collect_inputs(
-            home_team=home_team, away_team=away_team, match_date=event_date,
-            **({"markets": markets} if sport == "nfl" else {}),
-        )
+            match_inputs = nfl_module.collect_inputs(
+                home_team=home_team, away_team=away_team, match_date=event_date, markets=markets
+            )
+            module = nfl_module
+        else:
+            module = get_sport_module(sport)
+            match_inputs = module.collect_inputs(
+                home_team=home_team, away_team=away_team, match_date=event_date
+            )
         scores = module.score(match_inputs, markets=markets)
         if sport == "nfl" and not scores:
             from nfl_module import NflNoPicks
@@ -1633,11 +1640,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Pick not found.")
         import json
         error_details = None
-        if getattr(row, "error_details_json", None):
+        if row.error_details_json:
             try:
                 error_details = json.loads(row.error_details_json)
             except Exception:
                 error_details = None
+        safe_error_details = public_trace(error_details)
         return PickStatusResponse(
             operation_id=getattr(row, "operation_id", None),
             outcome=getattr(row, "outcome", None),
@@ -1646,7 +1654,7 @@ def create_app() -> FastAPI:
             error_stage=row.error_stage,
             error_message=row.error_message,
             latency_ms=row.latency_ms,
-            error_details=public_trace(error_details),
+            error_details=safe_error_details if isinstance(safe_error_details, dict) else None,
         )
 
     # ---- Outcomes (Story 9) ---------------------------------------------- #

@@ -41,7 +41,7 @@ def nfl_recommendation_summary(data, scores=()):
 class NflModule:
     sport_id = "nfl"
     supported_leagues = {"nfl"}
-    supported_markets = set(NFL_MARKETS)
+    supported_markets: set[str] = set(NFL_MARKETS)
 
     def __init__(
         self, *, collector=None, provider=None, model=None, timezone_name=None

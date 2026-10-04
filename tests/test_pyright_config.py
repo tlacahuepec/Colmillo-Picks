@@ -10,7 +10,12 @@ def test_pyright_config_enforces_type_clean_baseline() -> None:
 
     assert config["pythonVersion"] == "3.11"
     assert config["typeCheckingMode"] == "basic"
-    assert config["include"] == ["services/catalog", "services/diagnostics.py"]
+    assert config["include"] == [
+        "services/catalog",
+        "services/diagnostics.py",
+        "services/api",
+        "services/worker",
+    ]
     assert config["extraPaths"] == ["skills/soccer-prop-picks/scripts"]
 
 

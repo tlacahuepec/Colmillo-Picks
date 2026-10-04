@@ -42,10 +42,10 @@ The following files have been prepared and verified:
 
 ---
 
-### Track 4: Progressive Type Safety Expansion
-1. **Test Policy Update**: Update `tests/test_pyright_config.py` to allow additional type-clean modules.
-2. **Diagnostics Inclusion**: Add `services/diagnostics.py` to `pyrightconfig.json` (currently 0 errors).
-3. **Services Annotations**: Progressively type-annotate `services/api/` and `services/worker/main.py`.
+### Track 4: Progressive Type Safety Expansion (Completed — October 3, 2026)
+1. **Config & Diagnostics Gate**: Added `services/diagnostics.py` to `pyrightconfig.json`, configured `extraPaths` for skills scripts, and updated policy test in `tests/test_pyright_config.py`. Fixed `valid_request_id` (`TypeGuard[str]`), `sentry.py` typing, and resolved a silent `ImportError` bug in worker outcome resolution ([PR #359](https://github.com/tlacahuepec/Colmillo-Picks/pull/359)).
+2. **SQLAlchemy 2.0 Typed Models**: Migrated all 5 ORM models in `services/api/db.py` to `Mapped[T] = mapped_column(...)`, added strict schema regression test in `tests/api/test_db_schema.py`, and eliminated over 200 Pyright errors ([PR #360](https://github.com/tlacahuepec/Colmillo-Picks/pull/360)).
+3. **Full Services Gate**: Resolved all residual type errors in `services/api/main.py` and `services/api/diagnostics_routes.py`, gated `services/api` and `services/worker` in `pyrightconfig.json` (0 errors), and updated CI enforcement.
 
 ---
 
