@@ -13,7 +13,10 @@ def render_nfl_report(scores, match_inputs):
         "Sportsbook prices are snapshots; platform availability is checked separately. Grade NFL results manually.",
         "",
     ]
-    if match_inputs.get("provider_errors"):
+    summary = match_inputs.get("recommendation_summary") or {}
+    if summary.get("message") and not scores:
+        lines.append(_text(summary["message"]))
+    elif match_inputs.get("provider_errors"):
         lines.append("NFL data collection failed for one or more provider groups.")
     elif match_inputs.get("data_quality", {}).get("status") != "current_season":
         lines.append("Analysis completed with limited current-season data; review confidence and risks.")
@@ -22,6 +25,9 @@ def render_nfl_report(scores, match_inputs):
     elif not scores:
         lines.append("Analysis completed, but no verified NFL picks qualified.")
     quality = match_inputs.get("data_quality") or {}
+    counts = summary.get("counts") if isinstance(summary, dict) else None
+    if isinstance(counts, dict):
+        lines.extend(["", "Coverage: " + ", ".join(f"{_text(key.replace('_', ' '))}={_text(value)}" for key, value in counts.items())])
     if quality:
         lines.extend(["", "Data quality: " + _text(quality.get("status", "unknown"))])
     for rank, pick in enumerate(scores, 1):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -9,9 +10,14 @@ from llm.intelligence_prompt_builder import (
     build_match_discovery_system_prompt,
     build_match_discovery_user_prompt,
 )
+from pick_request import normalize_league
 
 
 SUPPORTED_DISCOVERY_SPORTS: tuple[str, ...] = ("soccer", "basketball", "baseball", "nfl")
+EXCLUDED_DISCOVERY_COMPETITIONS: frozenset[str] = frozenset({
+    "fifa u 20 womens world cup",
+    "fiba 3x3 u23 mens world cup",
+})
 
 
 class MatchDiscoveryError(RuntimeError):
@@ -37,9 +43,9 @@ def validate_match_discovery_inputs(
     except ValueError:
         errors.append(f"Invalid date '{date_utc}'. Expected YYYY-MM-DD format.")
 
-    if not 1 <= limit_per_sport <= 5:
+    if not 1 <= limit_per_sport <= 10:
         errors.append(
-            f"limit_per_sport must be between 1 and 5, got {limit_per_sport}."
+            f"limit_per_sport must be between 1 and 10, got {limit_per_sport}."
         )
 
     normalized_sports: list[str] = []
@@ -80,7 +86,7 @@ class MatchDiscoveryClient:
         getenv: Callable[[str], str | None] = os.getenv,
         provider: str | None = None,
         model: str | None = None,
-        max_output_tokens: int = 4000,
+        max_output_tokens: int = 8192,
     ) -> "MatchDiscoveryClient":
         resolved_provider = (
             provider
@@ -96,11 +102,14 @@ class MatchDiscoveryClient:
                 )
             from llm.gemini_client import GeminiLLMClient
 
+            discovery_timeout = float(getenv("COLMILLO_DISCOVERY_TIMEOUT") or 90.0)
             client = GeminiLLMClient(
                 api_key=api_key,
                 model=model or getenv("GEMINI_MODEL") or "gemini-2.5-flash",
                 search_grounding=True,
-                max_output_tokens=max_output_tokens,
+                max_output_tokens=max(8192, max_output_tokens),
+                timeout_seconds=discovery_timeout,
+                max_retries=2,
             )
         elif resolved_provider == "grok":
             api_key = getenv("XAI_API_KEY")
@@ -165,6 +174,15 @@ class MatchDiscoveryClient:
                 generated_at_utc = generated_at_utc or _string_or_none(
                     raw.get("generated_at_utc")
                 )
+                # A URL emitted in structured text is not evidence by itself.  Gemini
+                # exposes the provider's grounding metadata separately; preserve that
+                # boundary so normalization can only accept URLs the provider actually
+                # returned as grounding sources.  Other providers may not expose this
+                # metadata yet, in which case their suggestions are honestly withheld.
+                raw = {
+                    **raw,
+                    "grounding_sources": _grounding_sources_from_client(self._client),
+                }
                 results[sport] = _normalize_sport_result(
                     raw=raw,
                     sport=sport,
@@ -227,7 +245,7 @@ def _normalize_sport_result(
     if not isinstance(raw_matches, list):
         return _error_result(f"Discovery response for '{sport}' has non-list matches.")
 
-    matches = [
+    normalized_matches = [
         _normalize_match(
             item=item,
             sport=sport,
@@ -235,10 +253,20 @@ def _normalize_sport_result(
             source_provider=provider,
             source_model=model,
             fallback_sources=raw.get("sources", []),
+            grounding_sources=raw.get("grounding_sources", []),
         )
-        for item in raw_matches[:limit_per_sport]
+        for item in raw_matches
         if isinstance(item, dict)
     ]
+
+    rejected: Counter[str] = Counter()
+    matches: list[dict[str, Any]] = []
+    for match in normalized_matches:
+        reason = _fixture_rejection_reason(match)
+        if reason:
+            rejected[reason] += 1
+        else:
+            matches.append(match)
 
     if sport == "nfl":
         from nfl_domain import timestamp
@@ -250,20 +278,65 @@ def _normalize_sport_result(
             zone = ZoneInfo(timezone or os.getenv("COLMILLO_TIMEZONE") or "America/Chicago")
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise MatchDiscoveryError("Invalid NFL date timezone.") from exc
-        matches = [m for m in matches
-                   if (kickoff := timestamp(m.get("kickoff_utc"))) is not None
-                   and kickoff > reference and kickoff.astimezone(zone).date().isoformat() == date_utc
-                   and (m.get("league") or "").lower() == "nfl"]
+        eligible_matches: list[dict[str, Any]] = []
+        for match in matches:
+            kickoff = timestamp(match.get("kickoff_utc"))
+            if kickoff is None:
+                rejected["invalid_kickoff"] += 1
+            elif kickoff <= reference:
+                rejected["already_started"] += 1
+            elif kickoff.astimezone(zone).date().isoformat() != date_utc:
+                rejected["wrong_date"] += 1
+            elif (match.get("league") or "").lower() != "nfl":
+                rejected["unsupported_league"] += 1
+            else:
+                eligible_matches.append(match)
+        matches = eligible_matches
         for match in matches:
             match["event_date"] = date_utc
     else:
-        matches = [m for m in matches if _matches_requested_date(m, date_utc, timezone=timezone)]
-        matches = [m for m in matches if _is_match_upcoming(m)]
+        dated_matches: list[dict[str, Any]] = []
+        for match in matches:
+            if not _matches_requested_date(match, date_utc, timezone=timezone):
+                rejected["wrong_date"] += 1
+            elif not _is_match_upcoming(match):
+                rejected["already_started"] += 1
+            else:
+                dated_matches.append(match)
+        matches = dated_matches
+
+    included_matches: list[dict[str, Any]] = []
+    for match in matches:
+        if _is_excluded_competition(match):
+            rejected["unsupported_league"] += 1
+        else:
+            included_matches.append(match)
+    matches = included_matches
+    matches = matches[:limit_per_sport]
 
     data_quality = sport_payload.get("data_quality")
     if not isinstance(data_quality, dict):
-        data_quality = {"status": "ok" if matches else "empty"}
+        data_quality = {}
     error = _string_or_none(sport_payload.get("error"))
+
+    # Candidate-shaped LLM text without fixture evidence is neither an empty
+    # schedule nor a provider failure. Withhold it and explain the outcome.
+    if error:
+        status = "error"
+    elif matches:
+        status = "verified"
+    elif normalized_matches:
+        status = "unavailable"
+    else:
+        status = "empty"
+    data_quality = {
+        **data_quality,
+        "status": status,
+        "verified_count": len(matches),
+        "rejected_counts": dict(sorted(rejected.items())),
+    }
+    if status == "unavailable":
+        data_quality["reason"] = "No verifiable upcoming fixtures were returned."
 
     return {
         "matches": matches,
@@ -332,11 +405,21 @@ def _normalize_match(
     source_provider: str | None,
     source_model: str | None,
     fallback_sources: Any,
+    grounding_sources: Any = (),
 ) -> dict[str, Any]:
     teams = item.get("teams") if isinstance(item.get("teams"), dict) else {}
     home_team = _string_or_none(item.get("home_team")) or _team_name(teams.get("home"))
     away_team = _string_or_none(item.get("away_team")) or _team_name(teams.get("away"))
-    sources = _normalize_sources(item.get("sources") or fallback_sources)
+    sources = _normalize_sources(
+        item.get("sources") or fallback_sources,
+        grounding_sources=grounding_sources,
+    )
+
+    raw_league = _string_or_none(item.get("league"))
+    raw_comp = _string_or_none(item.get("competition"))
+    normalized_league = normalize_league(raw_league, sport)
+    if not normalized_league and raw_comp:
+        normalized_league = normalize_league(raw_comp, sport)
 
     data_quality = item.get("data_quality")
     if not isinstance(data_quality, dict):
@@ -361,8 +444,8 @@ def _normalize_match(
         "home_team": home_team or "Unknown",
         "away_team": away_team or "Unknown",
         "event_date": _string_or_none(item.get("event_date")) or date_utc,
-        "league": _string_or_none(item.get("league")),
-        "competition": _string_or_none(item.get("competition")),
+        "league": normalized_league,
+        "competition": raw_comp or raw_league or normalized_league,
         "kickoff_utc": _string_or_none(item.get("kickoff_utc")),
         "importance": _string_or_none(item.get("importance"))
         or _string_or_none(item.get("match_importance"))
@@ -375,17 +458,82 @@ def _normalize_match(
     }
 
 
-def _normalize_sources(raw_sources: Any) -> list[dict[str, str | None]]:
+def _fixture_rejection_reason(match: dict[str, Any]) -> str | None:
+    """Return why a candidate cannot be offered as a verified fixture."""
+    if match.get("home_team") == "Unknown" or match.get("away_team") == "Unknown":
+        return "missing_teams"
+    if not _parse_kickoff(match.get("kickoff_utc")):
+        return "missing_kickoff"
+    if not match.get("league"):
+        return "unsupported_league"
+    if not any(source.get("grounded") for source in match.get("sources", [])):
+        return "missing_citation"
+    return None
+
+
+def _parse_kickoff(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _is_usable_source_url(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().lower()
+    return normalized.startswith("https://") or normalized.startswith("http://")
+
+
+def _is_excluded_competition(match: dict[str, Any]) -> bool:
+    """Return whether a match belongs to a competition excluded from suggestions."""
+    competition = _string_or_none(match.get("competition"))
+    league = _string_or_none(match.get("league"))
+    return any(
+        _normalize_competition_name(value) in EXCLUDED_DISCOVERY_COMPETITIONS
+        for value in (competition, league)
+        if value
+    )
+
+
+def _normalize_competition_name(value: str) -> str:
+    normalized = value.casefold().replace("'", "").replace("’", "")
+    return " ".join("".join(char if char.isalnum() else " " for char in normalized).split())
+
+
+def _normalize_sources(
+    raw_sources: Any, *, grounding_sources: Any
+) -> list[dict[str, str | bool | None]]:
     if not isinstance(raw_sources, list):
         return []
-    normalized: list[dict[str, str | None]] = []
+    trusted_urls = {
+        url
+        for source in grounding_sources if isinstance(grounding_sources, list)
+        for url in [_string_or_none(source.get("url")) if isinstance(source, dict) else _string_or_none(getattr(source, "url", None))]
+        if url and _is_usable_source_url(url)
+    }
+    normalized: list[dict[str, str | bool | None]] = []
     for source in raw_sources:
         if not isinstance(source, dict):
             continue
         label = _string_or_none(source.get("label")) or _string_or_none(source.get("title"))
         url = _string_or_none(source.get("url"))
-        normalized.append({"label": label or "source", "url": url})
+        normalized.append({"label": label or "source", "url": url, "grounded": url in trusted_urls})
     return normalized
+
+
+def _grounding_sources_from_client(client: LLMClient) -> list[dict[str, str]]:
+    """Return provider-issued citations without trusting model-authored JSON."""
+    raw_sources = getattr(client, "last_sources", ())
+    sources: list[dict[str, str]] = []
+    for source in raw_sources or ():
+        url = _string_or_none(source.get("url")) if isinstance(source, dict) else _string_or_none(getattr(source, "url", None))
+        if url and _is_usable_source_url(url):
+            title = _string_or_none(source.get("title")) if isinstance(source, dict) else _string_or_none(getattr(source, "title", None))
+            sources.append({"url": url, "title": title or "source"})
+    return sources
 
 
 def _team_name(raw_team: Any) -> str | None:

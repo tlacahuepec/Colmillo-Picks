@@ -134,6 +134,53 @@ class TestMarkSlateFailed:
         assert refreshed.error_message == "LLM provider timeout"
         assert refreshed.latency_ms == 5000
 
+    def test_preserves_match_evidence_when_aggregation_fails(self) -> None:
+        row = db_module.create_pending_slate_run(request_payload=_sample_request())
+        match_runs = [
+            {"sport": "nfl", "home_team": "Kansas City Chiefs", "away_team": "Buffalo Bills", "status": "failed", "error_stage": "collect"},
+            {"sport": "nfl", "home_team": "Dallas Cowboys", "away_team": "New York Giants", "status": "no_picks"},
+        ]
+
+        db_module.mark_slate_failed(
+            slate_id=row.id, stage="aggregation", message="No viable candidates", latency_ms=4000,
+            match_runs=match_runs, discovery_latency_ms=250, matches_attempted=2, matches_succeeded=1,
+        )
+
+        refreshed = db_module.get_slate_run(row.id)
+        assert refreshed is not None
+        assert json.loads(refreshed.match_runs_json) == match_runs
+        assert refreshed.discovery_latency_ms == 250
+        assert refreshed.matches_attempted == 2
+        assert refreshed.matches_succeeded == 1
+
+
+class TestSlateProgressAndResume:
+    def test_checkpoint_and_interruption_preserve_completed_work(self) -> None:
+        row = db_module.create_pending_slate_run(request_payload=_sample_request())
+        matches = [{"sport": "soccer", "match": {"home_team": "A", "away_team": "B", "event_date": "2026-06-01"}}]
+        runs = [{"sport": "soccer", "home_team": "A", "away_team": "B", "event_date": "2026-06-01", "status": "success"}]
+        db_module.checkpoint_slate_run(slate_id=row.id, stage="matches", discovered_matches=matches, candidates=[], match_runs=runs)
+        db_module.mark_slate_interrupted(
+            slate_id=row.id, reason="budget_exhausted", message="budget", latency_ms=10,
+            candidates=[], match_runs=runs, discovered_matches=matches, discovery_latency_ms=1,
+        )
+        refreshed = db_module.get_slate_run(row.id)
+        assert refreshed is not None
+        assert refreshed.status == "interrupted"
+        assert refreshed.outcome == "partial"
+        assert refreshed.matches_completed == 1
+        assert json.loads(refreshed.discovered_matches_json) == matches
+
+    def test_prepare_resume_is_explicit_and_only_once_per_interruption(self) -> None:
+        row = db_module.create_pending_slate_run(request_payload=_sample_request())
+        db_module.mark_slate_interrupted(
+            slate_id=row.id, reason="budget_exhausted", message="budget", latency_ms=10,
+            candidates=[], match_runs=[], discovered_matches=[], discovery_latency_ms=1,
+        )
+        request = db_module.prepare_slate_resume(slate_id=row.id)
+        assert request is not None and request["_resume"] is True
+        assert db_module.prepare_slate_resume(slate_id=row.id) is None
+
 
 class TestGetSlateRun:
     def test_returns_none_for_unknown_id(self) -> None:
@@ -182,3 +229,15 @@ class TestMarkSlateJobFinished:
         db_module.mark_slate_job_finished(
             job_id=job.id, success=False, error_message="pipeline crash"
         )
+
+    def test_heartbeat_updates_active_slate_job(self) -> None:
+        row = db_module.create_pending_slate_run(request_payload=_sample_request())
+        db_module.enqueue_slate_job(slate_id=row.id, request_dict=_sample_request())
+        job = db_module.dequeue_slate_job()
+        assert job is not None
+
+        db_module.heartbeat_slate_job(job_id=job.id)
+        with db_module.session_scope() as session:
+            refreshed = session.get(db_module.SlateJob, job.id)
+            assert refreshed is not None
+            assert refreshed.heartbeat_at is not None

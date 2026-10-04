@@ -152,11 +152,13 @@ def list_operations(
     service: Annotated[str | None, Query(max_length=64, pattern=ID_PATTERN)] = None,
     outcome: Annotated[str | None, Query(max_length=64, pattern=ID_PATTERN)] = None,
     operation_id: Annotated[str | None, Query(max_length=64, pattern=ID_PATTERN)] = None,
+    parent_operation_id: Annotated[str | None, Query(max_length=64, pattern=ID_PATTERN)] = None,
     since: Annotated[datetime | None, Query()] = None,
     store: Any = Depends(get_store),
 ) -> dict:
     filters = {key: value for key, value in {
         "sport": sport, "service": service, "outcome": outcome, "operation_id": operation_id,
+        "parent_operation_id": parent_operation_id,
         "since": (since.replace(tzinfo=since.tzinfo or timezone.utc).astimezone(timezone.utc).isoformat() if since else None),
     }.items() if value is not None}
     items = store.list_operations(limit=limit, offset=offset, **filters)
@@ -165,7 +167,14 @@ def list_operations(
         if legacy and all(legacy.get(key) == value for key, value in filters.items() if key in {"sport", "service", "outcome"}):
             if not since or (legacy.get("started_at") and legacy["started_at"] >= filters["since"]):
                 items = [legacy]
-    return {"items": [sanitize_diagnostics(row) for row in items[:limit]], "limit": limit, "offset": offset}
+    has_more = bool(items) and bool(store.list_operations(limit=1, offset=offset + len(items), **filters))
+    return {
+        "items": [sanitize_diagnostics(row) for row in items[:limit]],
+        "limit": limit,
+        "offset": offset,
+        "has_more": has_more,
+        "next_offset": offset + len(items) if has_more else None,
+    }
 
 
 @router.get("/operations/{operation_id}")

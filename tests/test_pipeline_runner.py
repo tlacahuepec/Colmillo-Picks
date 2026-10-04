@@ -69,6 +69,19 @@ class TestPipelineRunnerWithFakeModule:
         assert result.status == "success"
         assert len(result.scores) > 0
 
+    def test_runner_passes_requested_markets_to_modules_that_support_collection_filtering(self) -> None:
+        class MarketAwareModule(FakeSportModule):
+            received_markets: tuple[str, ...] = ()
+
+            def collect_inputs(self, *, markets=(), **kwargs: Any) -> dict[str, Any]:
+                self.received_markets = markets
+                return super().collect_inputs(**kwargs)
+
+        module = MarketAwareModule()
+        request = PickRequest(sport="fake_sport", event_date="2026-06-01", home_team="A", away_team="B", markets=("metric_y",))
+        PipelineRunner().run(request=request, module=module)
+        assert module.received_markets == ("metric_y",)
+
     def test_runner_returns_steps(self) -> None:
         module = FakeSportModule()
         request = PickRequest(

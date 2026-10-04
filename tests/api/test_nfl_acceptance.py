@@ -54,7 +54,9 @@ def test_nfl_request_report_history_and_manual_grading(nfl_client):
     assert (
         "Test Book" in detail["report_markdown"] and "NFL" in detail["report_markdown"]
     )
-    assert nfl_client.get("/picks?sport=nfl").json()["items"][0]["sport"] == "nfl"
+    history_item = nfl_client.get("/picks?sport=nfl").json()["items"][0]
+    assert history_item["sport"] == "nfl"
+    assert history_item["display_title"] == "KC vs BUF · 2026-09-10"
     outcome = {
         "rank": 1,
         "player": detail["scores"][0]["subject_name"],

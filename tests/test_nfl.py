@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nfl_module import NflModule
+from nfl_module import NflModule, nfl_recommendation_summary
 from nfl_scoring import score_nfl
 from nfl_domain import NFL_MARKETS, valid_offer
 from pick_request import PickRequest, validate_pick_request
@@ -207,6 +207,27 @@ def test_collection_failure_is_explicit_without_samples():
         module.collect_inputs(home_team="KC", away_team="BUF", match_date="2026-09-10")
     assert isinstance(raised.value.__cause__, ValueError)
     assert raised.value.reason["exception_type"] == "ValueError"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (lambda data: data.update(game=None), "fixture_unverified"),
+        (lambda data: data.update(provider_errors={"offers": {}}), "provider_failure"),
+        (lambda data: None, "offers_unavailable"),
+        (lambda data: data.update(offers=[offer()], exclusions=[{"subject": "Test QB", "reason": "missing logs"}]), "insufficient_supported_data"),
+    ],
+)
+def test_recommendation_summary_distinguishes_no_pick_causes(mutate, expected):
+    data = context()
+    mutate(data)
+    assert nfl_recommendation_summary(data)["code"] == expected
+
+
+def test_recommendation_summary_identifies_threshold_no_pick():
+    data = context()
+    data["offers"] = [offer(selection="under")]
+    assert nfl_recommendation_summary(data)["code"] == "no_qualifying_selection"
 
 
 def test_request_and_slate_subject_contract():

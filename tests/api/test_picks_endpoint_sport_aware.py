@@ -35,6 +35,62 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 class TestStructuredPicksRequest:
+    @pytest.mark.parametrize(
+        ("sport", "home_team", "away_team", "event_date"),
+        [
+            ("soccer", "Arsenal", "Liverpool", "2026-06-01"),
+            ("basketball", "Boston Celtics", "LA Lakers", "2026-06-02"),
+            ("baseball", "New York Yankees", "Boston Red Sox", "2026-06-03"),
+            ("nfl", "Kansas City Chiefs", "Buffalo Bills", "2026-06-04"),
+        ],
+    )
+    def test_structured_run_uses_display_title_without_rewriting_match_query(
+        self,
+        client: TestClient,
+        sport: str,
+        home_team: str,
+        away_team: str,
+        event_date: str,
+    ) -> None:
+        row = db_module.create_pending_pick_run(
+            request_payload={
+                "sport": sport,
+                "home_team": home_team,
+                "away_team": away_team,
+                "event_date": event_date,
+                "top_n": 3,
+            }
+        )
+
+        summary = client.get("/picks", params={"sport": sport}).json()["items"][0]
+        detail = client.get(f"/picks/{row.id}").json()
+        expected = f"{home_team} vs {away_team} · {event_date}"
+
+        assert row.match_query == ""
+        assert summary["match_query"] == ""
+        assert summary["display_title"] == expected
+        assert detail["display_title"] == expected
+
+    def test_display_title_falls_back_for_malformed_legacy_request(self, client: TestClient) -> None:
+        row = db_module.create_pending_pick_run(
+            request_payload={"sport": "nfl", "event_date": "2026-06-04", "top_n": 3}
+        )
+        with db_module.session_scope() as session:
+            stored = session.get(db_module.PickRun, row.id)
+            assert stored is not None
+            stored.request_json = "{not-json"
+
+        summary = client.get("/picks", params={"sport": "nfl"}).json()["items"][0]
+        assert summary["display_title"] == f"Nfl run · {row.id[:8]}"
+
+    def test_display_title_falls_back_when_legacy_request_has_no_teams(self, client: TestClient) -> None:
+        row = db_module.create_pending_pick_run(
+            request_payload={"sport": "nfl", "event_date": "2026-06-04", "top_n": 3}
+        )
+
+        summary = client.get("/picks", params={"sport": "nfl"}).json()["items"][0]
+        assert summary["display_title"] == f"Nfl run · 2026-06-04 · {row.id[:8]}"
+
     def test_structured_soccer_requires_real_provider_by_default(self, client: TestClient) -> None:
         resp = client.post("/picks", json={
             "sport": "soccer",

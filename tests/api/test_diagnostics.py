@@ -77,7 +77,42 @@ def test_export_and_normal_detail_exclude_frames_and_provider_text(setup):
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         data = b"".join(archive.read(name) for name in archive.namelist())
         assert b'"frames"' not in data and b"PRIVATE" not in data
-        assert b"timeout" in data
+    assert b"timeout" in data
+
+
+def test_operations_can_be_filtered_to_a_parent_operation(setup):
+    client, store = setup
+    with d.operation("slate", sport="nfl") as parent:
+        with d.operation("slate_child", sport="nfl", home_team="Bears", away_team="Packers") as child:
+            child.finish("no_picks")
+        parent.finish("partial")
+    parent_id = parent.id
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        if store.get_operation(child.id):
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("child operation was not flushed")
+
+    body = client.get("/diagnostics/operations", params={"parent_operation_id": parent_id}).json()
+    assert [item["operation_id"] for item in body["items"]] == [child.id]
+
+
+def test_operations_list_exposes_a_next_page(setup):
+    client, store = setup
+    for index in range(3):
+        with d.operation("discovery", operation_id=f"page-{index}") as operation:
+            operation.finish("success")
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        if len(store.list_operations(limit=10)) >= 3:
+            break
+        time.sleep(0.02)
+    body = client.get("/diagnostics/operations", params={"limit": 2}).json()
+    assert len(body["items"]) == 2
+    assert body["has_more"] is True
+    assert body["next_offset"] == 2
 
 
 def test_auth_admin_isolation_and_debug(setup):

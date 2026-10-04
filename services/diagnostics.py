@@ -402,7 +402,7 @@ class DiagnosticsStore:
 
     def list_operations(self, limit=20, offset=0, **filters):
         conditions, params = [], []
-        for key in ("sport", "outcome", "service", "operation_id"):
+        for key in ("sport", "outcome", "service", "operation_id", "parent_operation_id"):
             if filters.get(key):
                 conditions.append(key + "=?")
                 params.append(self.resolve(filters[key]) if key == "operation_id" else filters[key])

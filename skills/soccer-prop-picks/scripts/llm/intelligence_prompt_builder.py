@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import json
 
 
@@ -93,7 +92,6 @@ def build_daily_intelligence_user_prompt(*, date_utc: str, top_n: int) -> str:
     }
     return json.dumps(payload, sort_keys=True)
 
-
 def build_match_discovery_system_prompt() -> str:
     return (
         "You are a real-time multi-sport match discovery analyst. "
@@ -110,6 +108,7 @@ def build_match_discovery_user_prompt(
     sports: list[str],
     limit_per_sport: int,
 ) -> str:
+    primary_sport = sports[0] if sports else "soccer"
     payload = {
         "task": (
             f"Identify up to {limit_per_sport} important matches per requested sport on {date_utc}."
@@ -123,12 +122,14 @@ def build_match_discovery_user_prompt(
                 "Only upcoming games with verified kickoff, team names and league=nfl",
             ],
             "soccer": [
-                "Major competitions, derbies, title races, relegation battles, knockout matches, and top-four races",
+                "Major competitions (Premier League, La Liga, Serie A, Bundesliga, Ligue 1, UEFA Champions League, MLS), derbies, title races, relegation battles, knockout matches, and top-four races",
                 "Prefer matches with clear kickoff time and competition context",
+                "Do NOT include FIFA U-20 Women's World Cup matches; this competition is not required",
             ],
             "basketball": [
                 "ONLY NBA, WNBA, or FIBA/Olympic international cup games",
                 "Do NOT include EuroLeague, NCAAB, or any domestic league outside the US (no Greek League, Israeli League, Turkish League, etc.)",
+                "Do NOT include FIBA 3x3 U23 Men's World Cup matches; this competition is not required",
                 "Prefer games with playoff, rivalry, or standings significance and a clear scheduled tip time",
             ],
             "baseball": [
@@ -143,23 +144,22 @@ def build_match_discovery_user_prompt(
             "provider": "provider name",
             "model": "model name used",
             "grouped_by_sport": {
-                "soccer": {
+                primary_sport: {
                     "matches": [
                         {
                             "home_team": "str",
                             "away_team": "str",
                             "event_date": "YYYY-MM-DD",
-                            "league": "stable league key or null",
+                            "league": "stable canonical league key (e.g. premier_league, la_liga, serie_a, bundesliga, ligue_1, mls, champions_league, nba, mlb, nfl) or null",
                             "competition": "display competition name or null",
                             "kickoff_utc": "ISO-8601Z or null",
                             "importance": "high|medium|low",
-                            "notes": "short rationale or null",
+                            "notes": "concise 1-sentence rationale or null",
                             "sources": [
-                                {"label": "source label", "url": "https://... or null"}
+                                {"label": "source label", "url": "exact provider-grounded URL or null"}
                             ],
                             "data_quality": {
                                 "confidence": "high|medium|low",
-                                "missing_fields": ["field name"],
                             },
                         }
                     ],
@@ -173,9 +173,13 @@ def build_match_discovery_user_prompt(
             "Only include sports requested in the sports array",
             f"Include at most {limit_per_sport} matches for each requested sport",
             "Group every result under grouped_by_sport using the sport key",
-            "If a sport cannot be discovered, return an empty matches list plus an error string for that sport",
+            "If no matches are scheduled for a sport on this date, return an empty matches list with error null and data_quality ok",
+            "If a sport cannot be discovered due to an error, return an empty matches list plus an error string for that sport",
+            "Include at most 1 primary URL per match and use an exact URL returned by provider grounding; never invent or rewrite a URL",
+            "Keep match notes concise (1 sentence maximum) or null",
             "Use null for unknown kickoff, league, competition, notes, or source URLs",
             "Do not fabricate fixtures, kickoff times, leagues, or sources",
+            "Use standard canonical league keys when available (e.g. premier_league, la_liga, bundesliga, serie_a, ligue_1, mls, champions_league for soccer; nba, euroleague, ncaab for basketball; mlb for baseball; nfl for nfl)",
         ],
     }
     return json.dumps(payload, sort_keys=True)

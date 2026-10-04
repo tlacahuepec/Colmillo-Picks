@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from services.api import db, jobs
-from services.api.main import _execute_pipeline_job
+from services.api.main import _execute_pipeline_job, _execute_slate_record
 from services.diagnostics import emit, error_info, operation, stage
 
 RESOLUTION_DELAY_HOURS = 3
@@ -75,6 +75,15 @@ def run_worker_loop(poll_seconds: float = 0.5) -> None:
     while True:
         item = jobs.dequeue_pick_run()
         if item is None:
+            slate_item = jobs.dequeue_slate_run()
+            if slate_item is not None:
+                slate_id, request_dict, job_id = slate_item
+                with operation("slate", service="worker", operation_id=request_dict.get("operation_id") or slate_id,
+                               slate_id=slate_id, job_id=job_id) as handle:
+                    _execute_slate_record(slate_id, request_dict, job_id)
+                    row = db.get_slate_run(slate_id)
+                    handle.finish(getattr(row, "outcome", None) or "failed")
+                continue
             cycle_count += 1
             if cycle_count >= RESOLUTION_CHECK_INTERVAL_CYCLES:
                 cycle_count = 0

@@ -126,6 +126,14 @@ class SlateRun(Base):
     operation_id = Column(String(64), nullable=True)
     outcome = Column(String(16), nullable=True)
     diagnostics_json = Column(Text, nullable=True)
+    progress_stage = Column(String(32), nullable=True)
+    matches_discovered = Column(Integer, nullable=True)
+    matches_completed = Column(Integer, nullable=True)
+    discovered_matches_json = Column(Text, nullable=False, default="[]")
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    stop_reason = Column(String(32), nullable=True)
+    interrupted_at = Column(DateTime(timezone=True), nullable=True)
+    resume_count = Column(Integer, nullable=False, default=0)
 
 
 class SlateJob(Base):
@@ -141,6 +149,8 @@ class SlateJob(Base):
     last_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    lease_until = Column(DateTime(timezone=True), nullable=True)
 
 
 # Module-level engine/session factory; rebuilt by ``configure_engine`` so tests
@@ -207,11 +217,26 @@ def _ensure_added_columns(engine: Engine) -> None:
             ("operation_id", "VARCHAR(64)"),
             ("outcome", "VARCHAR(16)"),
             ("diagnostics_json", "TEXT"),
+            ("progress_stage", "VARCHAR(32)"),
+            ("matches_discovered", "INTEGER"),
+            ("matches_completed", "INTEGER"),
+            ("discovered_matches_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("heartbeat_at", "TIMESTAMP"),
+            ("stop_reason", "VARCHAR(32)"),
+            ("interrupted_at", "TIMESTAMP"),
+            ("resume_count", "INTEGER NOT NULL DEFAULT 0"),
         ]
         with engine.begin() as conn:
             for col_name, col_def in slate_additive:
                 if col_name not in existing_cols:
                     conn.execute(text(f"ALTER TABLE slate_runs ADD COLUMN {col_name} {col_def}"))
+
+    if "slate_jobs" in inspector.get_table_names():
+        existing_cols = {col["name"] for col in inspector.get_columns("slate_jobs")}
+        with engine.begin() as conn:
+            for col_name, col_def in [("heartbeat_at", "TIMESTAMP"), ("lease_until", "TIMESTAMP")]:
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE slate_jobs ADD COLUMN {col_name} {col_def}"))
 
 
 def configure_engine(url: str | None = None) -> Engine:
@@ -513,9 +538,9 @@ VALID_OUTCOME_RESULTS = frozenset({"win", "loss", "push", "void"})
 
 
 def record_outcomes(*, pick_id: str, outcomes: list[dict[str, Any]]) -> list[PickOutcome]:
-    """Persist a batch of per-pick outcomes; returns the inserted rows."""
+    """Persist explicit grades, updating an already-recorded rank in place."""
     now = datetime.now(timezone.utc)
-    rows: list[PickOutcome] = []
+    normalized: list[tuple[int, str, str, str]] = []
     for entry in outcomes:
         result_value = str(entry.get("result", "")).lower()
         if result_value not in VALID_OUTCOME_RESULTS:
@@ -523,19 +548,33 @@ def record_outcomes(*, pick_id: str, outcomes: list[dict[str, Any]]) -> list[Pic
                 f"Invalid outcome result '{result_value}'. "
                 f"Allowed: {sorted(VALID_OUTCOME_RESULTS)}."
             )
-        rows.append(
-            PickOutcome(
-                id=str(uuid.uuid4()),
-                pick_id=pick_id,
-                rank=int(entry.get("rank", 0)),
-                player=str(entry.get("player", ""))[:255],
-                market=str(entry.get("market", ""))[:64],
-                result=result_value,
-                recorded_at=now,
-            )
-        )
+        normalized.append((
+            int(entry.get("rank", 0)),
+            str(entry.get("player", ""))[:255],
+            str(entry.get("market", ""))[:64],
+            result_value,
+        ))
+
+    rows: list[PickOutcome] = []
     with session_scope() as session:
-        session.add_all(rows)
+        for rank, player, market, result_value in normalized:
+            row = (
+                session.query(PickOutcome)
+                .filter(PickOutcome.pick_id == pick_id, PickOutcome.rank == rank)
+                .order_by(PickOutcome.recorded_at.desc(), PickOutcome.id.desc())
+                .first()
+            )
+            if row is None:
+                row = PickOutcome(id=str(uuid.uuid4()), pick_id=pick_id, rank=rank)
+                session.add(row)
+            row.player = player
+            row.market = market
+            row.result = result_value
+            row.recorded_at = now
+            rows.append(row)
+        session.flush()
+        for row in rows:
+            session.refresh(row)
     return rows
 
 
@@ -665,6 +704,7 @@ def create_pending_slate_run(*, request_payload: dict[str, Any]) -> SlateRun:
         request_json=json.dumps(_safe_request_payload(request_payload), default=str),
         candidates_json="[]",
         match_runs_json="[]",
+        discovered_matches_json="[]",
     )
     with session_scope() as session:
         session.add(row)
@@ -684,11 +724,14 @@ def enqueue_slate_job(*, slate_id: str, request_dict: dict[str, Any]) -> SlateJo
         last_error=None,
         created_at=now,
         updated_at=now,
+        heartbeat_at=now,
     )
     with session_scope() as session:
         row = session.get(SlateRun, slate_id)
         if row is not None:
             row.status = PICK_STATUS_QUEUED
+            row.progress_stage = "queued"
+            row.heartbeat_at = now
             session.add(row)
         session.add(job)
     emit("operation.accepted", operation_id=request_dict["operation_id"], outcome="queued", slate_id=slate_id, job_id=job.id)
@@ -731,7 +774,10 @@ def dequeue_slate_job() -> SlateJob | None:
         row = session.get(SlateRun, job.slate_id)
         if row is not None:
             row.status = PICK_STATUS_RUNNING
+            row.progress_stage = "starting"
+            row.heartbeat_at = now
             session.add(row)
+        job.heartbeat_at = now
         session.add(job)
         session.flush()
         session.refresh(job)
@@ -772,6 +818,10 @@ def mark_slate_success(
         row.total_tokens = total_tokens
         row.error_stage = None
         row.error_message = None
+        row.progress_stage = "complete"
+        row.matches_completed = len(match_runs)
+        row.heartbeat_at = datetime.now(timezone.utc)
+        row.stop_reason = None
         session.add(row)
         session.flush()
         session.refresh(row)
@@ -784,6 +834,14 @@ def mark_slate_failed(
     stage: str,
     message: str,
     latency_ms: int,
+    candidates: list[dict[str, Any]] | None = None,
+    match_runs: list[dict[str, Any]] | None = None,
+    discovery_latency_ms: int | None = None,
+    matches_attempted: int | None = None,
+    matches_succeeded: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
 ) -> SlateRun | None:
     with session_scope() as session:
         row = session.get(SlateRun, slate_id)
@@ -796,10 +854,114 @@ def mark_slate_failed(
         row.error_stage = stage[:64]
         row.error_message = message
         row.latency_ms = latency_ms
+        if candidates is not None:
+            row.candidates_json = json.dumps(candidates, default=str)
+        if match_runs is not None:
+            row.match_runs_json = json.dumps(match_runs, default=str)
+        if discovery_latency_ms is not None:
+            row.discovery_latency_ms = discovery_latency_ms
+        if matches_attempted is not None:
+            row.matches_attempted = matches_attempted
+        if matches_succeeded is not None:
+            row.matches_succeeded = matches_succeeded
+        row.prompt_tokens = prompt_tokens
+        row.completion_tokens = completion_tokens
+        row.total_tokens = total_tokens
+        row.progress_stage = "failed"
+        row.heartbeat_at = datetime.now(timezone.utc)
         session.add(row)
         session.flush()
         session.refresh(row)
         return row
+
+
+def checkpoint_slate_run(
+    *, slate_id: str, stage: str, discovered_matches: list[dict[str, Any]],
+    candidates: list[dict[str, Any]], match_runs: list[dict[str, Any]],
+    discovery_latency_ms: int | None = None, prompt_tokens: int | None = None,
+    completion_tokens: int | None = None, total_tokens: int | None = None,
+) -> SlateRun | None:
+    """Persist a recoverable sequential slate checkpoint after discovery or a match."""
+    with session_scope() as session:
+        row = session.get(SlateRun, slate_id)
+        if row is None:
+            return None
+        row.status = PICK_STATUS_RUNNING
+        row.progress_stage = stage
+        row.discovered_matches_json = json.dumps(discovered_matches, default=str)
+        row.matches_discovered = len(discovered_matches)
+        row.matches_completed = len(match_runs)
+        row.matches_attempted = len(match_runs)
+        row.matches_succeeded = sum(run.get("status") == "success" for run in match_runs)
+        row.candidates_json = json.dumps(candidates, default=str)
+        row.match_runs_json = json.dumps(match_runs, default=str)
+        row.discovery_latency_ms = discovery_latency_ms
+        row.prompt_tokens = prompt_tokens
+        row.completion_tokens = completion_tokens
+        row.total_tokens = total_tokens
+        row.heartbeat_at = datetime.now(timezone.utc)
+        session.add(row)
+        session.flush()
+        session.refresh(row)
+        return row
+
+
+def mark_slate_interrupted(
+    *, slate_id: str, reason: str, message: str, latency_ms: int,
+    candidates: list[dict[str, Any]], match_runs: list[dict[str, Any]],
+    discovered_matches: list[dict[str, Any]], discovery_latency_ms: int | None,
+    prompt_tokens: int | None = None, completion_tokens: int | None = None,
+    total_tokens: int | None = None,
+) -> SlateRun | None:
+    with session_scope() as session:
+        row = session.get(SlateRun, slate_id)
+        if row is None:
+            return None
+        now = datetime.now(timezone.utc)
+        row.status = "interrupted"
+        row.outcome = "partial"
+        row.progress_stage = "interrupted"
+        row.stop_reason = reason[:32]
+        row.interrupted_at = now
+        row.heartbeat_at = now
+        row.error_stage = "budget" if reason == "budget_exhausted" else "interrupted"
+        row.error_message = message[:500]
+        row.latency_ms = latency_ms
+        row.discovery_latency_ms = discovery_latency_ms
+        row.discovered_matches_json = json.dumps(discovered_matches, default=str)
+        row.matches_discovered = len(discovered_matches)
+        row.matches_completed = len(match_runs)
+        row.matches_attempted = len(match_runs)
+        row.matches_succeeded = sum(run.get("status") == "success" for run in match_runs)
+        row.candidates_json = json.dumps(candidates, default=str)
+        row.match_runs_json = json.dumps(match_runs, default=str)
+        row.prompt_tokens, row.completion_tokens, row.total_tokens = prompt_tokens, completion_tokens, total_tokens
+        session.add(row)
+        session.flush()
+        session.refresh(row)
+        return row
+
+
+def prepare_slate_resume(*, slate_id: str) -> dict[str, Any] | None:
+    """Atomically make an interrupted slate eligible for one explicit resume."""
+    with session_scope() as session:
+        row = session.get(SlateRun, slate_id)
+        if row is None or row.status != "interrupted":
+            return None
+        row.resume_count = (row.resume_count or 0) + 1
+        row.stop_reason = None
+        row.error_stage = None
+        row.error_message = None
+        # Claim the resume before enqueueing the next job so two callers cannot
+        # create duplicate resumes during the short hand-off between requests.
+        row.status = PICK_STATUS_QUEUED
+        row.progress_stage = "queued"
+        row.heartbeat_at = datetime.now(timezone.utc)
+        request = json.loads(row.request_json)
+        request["_resume"] = True
+        session.add(row)
+        session.flush()
+        return request
 
 
 def mark_slate_job_finished(*, job_id: str, success: bool, error_message: str | None = None) -> None:
@@ -810,6 +972,18 @@ def mark_slate_job_finished(*, job_id: str, success: bool, error_message: str | 
         job.state = PICK_STATUS_SUCCESS if success else PICK_STATUS_FAILED
         job.last_error = error_message
         job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+
+
+def heartbeat_slate_job(*, job_id: str) -> None:
+    """Record that a worker made a durable slate checkpoint."""
+    with session_scope() as session:
+        job = session.get(SlateJob, job_id)
+        if job is None:
+            return
+        now = datetime.now(timezone.utc)
+        job.heartbeat_at = now
+        job.updated_at = now
         session.add(job)
 
 

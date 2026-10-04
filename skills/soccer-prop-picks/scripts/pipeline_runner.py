@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
+from inspect import signature
 
 from pick_request import PickRequest
 from sport_module import SportModule
@@ -45,12 +46,15 @@ class PipelineRunner:
         t0 = perf_counter()
         try:
             with stage("collect"):
-                match_inputs = module.collect_inputs(
+                collect_kwargs = dict(
                     home_team=request.home_team,
                     away_team=request.away_team,
                     match_date=request.event_date,
                     league=request.league,
                 )
+                if "markets" in signature(module.collect_inputs).parameters:
+                    collect_kwargs["markets"] = request.markets
+                match_inputs = module.collect_inputs(**collect_kwargs)
         except Exception as exc:
             steps.append({"name": "collect", "status": "failed", "duration_ms": _elapsed(t0)})
             error_details = {"reason": exc.reason, "sport": getattr(module, "sport_id", None)} if hasattr(exc, "reason") else None

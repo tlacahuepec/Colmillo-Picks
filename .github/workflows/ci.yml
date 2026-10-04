@@ -76,10 +76,35 @@ jobs:
       - name: Run Pyright
         run: pyright
 
+  frontend:
+    name: Frontend (React 19 / Vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build bundle
+        run: npm run build
+
+      - name: Run Vitest suite
+        run: npm test
+
   docker-build:
     name: Build container images
     runs-on: ubuntu-latest
-    needs: [lint, test, typecheck]
+    needs: [lint, test, typecheck, frontend]
     steps:
       - uses: actions/checkout@v4
 
@@ -124,7 +149,7 @@ jobs:
     name: Release readiness checks
     runs-on: ubuntu-latest
     if: github.base_ref == 'main' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.base_ref, 'release/')
-    needs: [lint, test, docker-build]
+    needs: [lint, test, frontend, docker-build]
     steps:
       - uses: actions/checkout@v4
         with:

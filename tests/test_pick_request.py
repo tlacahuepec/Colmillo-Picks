@@ -184,3 +184,73 @@ class TestConstants:
     def test_baseball_markets(self) -> None:
         assert "strikeouts" in SPORT_MARKETS["baseball"]
         assert "hits" in SPORT_MARKETS["baseball"]
+
+
+class TestLeagueNormalization:
+    @pytest.mark.parametrize(
+        "raw_league,expected_canonical",
+        [
+            ("spanish_la_liga", "la_liga"),
+            ("Spanish La Liga", "la_liga"),
+            ("la_liga", "la_liga"),
+            ("laliga", "la_liga"),
+            ("english_premier_league", "premier_league"),
+            ("English Premier League", "premier_league"),
+            ("premier_league", "premier_league"),
+            ("epl", "premier_league"),
+            ("french_ligue_1", "ligue_1"),
+            ("French Ligue 1", "ligue_1"),
+            ("ligue_1", "ligue_1"),
+            ("ligue1", "ligue_1"),
+            ("italian_serie_a", "serie_a"),
+            ("Italian Serie A", "serie_a"),
+            ("serie_a", "serie_a"),
+            ("seriea", "serie_a"),
+            ("german_bundesliga", "bundesliga"),
+            ("German Bundesliga", "bundesliga"),
+            ("bundesliga", "bundesliga"),
+            ("anothergerman_bundesliga", "bundesliga"),
+            ("uefa_champions_league", "champions_league"),
+            ("UEFA Champions League", "champions_league"),
+            ("major_league_soccer", "mls"),
+            ("Major League Soccer", "mls"),
+            ("mls", "mls"),
+        ],
+    )
+    def test_soccer_league_normalization(self, raw_league: str, expected_canonical: str) -> None:
+        from pick_request import normalize_league
+        assert normalize_league(raw_league, "soccer") == expected_canonical
+        req = PickRequest(
+            sport="soccer",
+            event_date="2026-05-25",
+            home_team="Team A",
+            away_team="Team B",
+            markets=("passes", "shots"),
+            league=raw_league,
+        )
+        assert req.league == expected_canonical
+        validate_pick_request(req)
+
+    def test_legacy_dict_with_aliased_competition(self) -> None:
+        legacy = {
+            "match_query": "real madrid - barcelona 2026-06-01",
+            "top_n": 5,
+            "competition": "spanish_la_liga",
+        }
+        req = pick_request_from_legacy_dict(legacy)
+        assert req.league == "la_liga"
+        validate_pick_request(req)
+
+    def test_unrecognized_league_raises_validation_error(self) -> None:
+        req = PickRequest(
+            sport="soccer",
+            event_date="2026-05-25",
+            home_team="Arsenal",
+            away_team="Liverpool",
+            markets=("passes",),
+            league="totally_unsupported_league",
+        )
+        assert req.league == "totally_unsupported_league"
+        with pytest.raises(PickRequestValidationError) as exc_info:
+            validate_pick_request(req)
+        assert "totally_unsupported_league" in exc_info.value.errors[0]

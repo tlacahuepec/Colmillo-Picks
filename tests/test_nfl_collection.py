@@ -168,6 +168,55 @@ def test_normalize_offer_payload_accepts_safe_provider_aliases():
     assert normalized["observed_at"] == "2026-09-12T04:00:00Z"
 
 
+@pytest.mark.parametrize("raw_market, expected", [
+    ("Passing TDs", "passing_touchdowns"),
+    ("pass-yards", "passing_yards"),
+    ("Game Total", "total"),
+    ("money line", "moneyline"),
+])
+def test_normalize_offer_payload_accepts_unambiguous_market_aliases(raw_market, expected):
+    assert normalize_offer_payload({"market": raw_market})["market"] == expected
+
+
+def test_malformed_offer_does_not_discard_a_valid_offer_and_records_reason():
+    class MixedOfferClient(Client):
+        def generate_structured(self, **kwargs):
+            data = super().generate_structured(**kwargs)
+            if self.calls == 3:
+                data["offers"] = [offer(), "not an offer", {**offer(), "market": "unsupported_market"}]
+            return data
+
+    data = NflCollector(MixedOfferClient())(
+        home_team="KC", away_team="BUF", match_date="2026-09-10"
+    )
+    assert len(data["offers"]) == 1
+    assert "malformed_offer" in {item["code"] for item in data["offer_rejections"]}
+
+
+def test_malformed_offer_response_is_an_honest_group_unavailability():
+    class BadResponseClient(Client):
+        def generate_structured(self, **kwargs):
+            data = super().generate_structured(**kwargs)
+            if self.calls == 2:
+                return {"offers": "not-a-list"}
+            return data
+
+    data = NflCollector(BadResponseClient())(
+        home_team="KC", away_team="BUF", match_date="2026-09-10"
+    )
+    assert data["provider_statuses"]["game_offers"] == "unavailable"
+    assert any(item["code"] == "malformed_offer_response" for item in data["offer_rejections"])
+
+
+def test_game_only_request_does_not_call_player_offer_collection():
+    client = Client()
+    data = NflCollector(client)(
+        home_team="KC", away_team="BUF", match_date="2026-09-10", markets=("moneyline",)
+    )
+    assert client.calls == 2  # context + game offers, no player-offer request
+    assert "player_offers" not in data["provider_statuses"]
+
+
 def test_validation_diagnostics_contain_only_bounded_field_names():
     fields = _validation_fields({"market": "passing_yards", "secret": "do-not-log"})
     assert "secret" not in fields

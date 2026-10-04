@@ -16,6 +16,19 @@ _MARKDOWN_JSON_FENCE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL
 _TRAILING_COMMA = re.compile(r",\s*([}\]])")
 _CITATION_ANNOTATION = re.compile(r"\s*\[cite:\s*[\d,\s]+\]")
 _BARE_CITATION = re.compile(r'"\s*\[\d+(?:,\s*\d+)*\]')
+_RETRYABLE_TRANSPORT_MARKERS = (
+    "remoteprotocolerror", "connecttimeout", "readtimeout", "timeout", "timed out",
+    "connection reset", "connection aborted", "service unavailable", "bad gateway",
+    "internal server error", "http 429", "http 500", "http 502", "http 503", "http 504",
+)
+
+
+def _is_retryable_transport_error(exc: Exception) -> bool:
+    """Keep retries for transient transport/provider failures, never auth or schema errors."""
+    if isinstance(exc, TimeoutError):
+        return True
+    detail = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in detail for marker in _RETRYABLE_TRANSPORT_MARKERS)
 
 
 def _sdk_http_options(timeout_seconds: float) -> dict[str, int]:
@@ -31,13 +44,111 @@ def _strip_citations(text: str) -> str:
 
 
 def _repair_json(text: str) -> dict | None:
-    """Attempt to fix common LLM JSON errors (trailing commas) and parse."""
-    repaired = _TRAILING_COMMA.sub(r"\1", text)
-    try:
-        result = json.loads(repaired)
-        return result if isinstance(result, dict) else None
-    except (json.JSONDecodeError, ValueError):
-        return None
+    """Attempt to fix common LLM JSON errors (trailing commas, bracket mismatches, unclosed strings/brackets, glued objects) and parse."""
+    cleaned = _MARKDOWN_JSON_FENCE.sub(r"\1", text).strip()
+
+    # Split glued JSON objects (e.g. '}{' or '}\n{') if multiple objects exist
+    chunks = re.split(r"(?<=\})\s*(?=\{)", cleaned)
+    for chunk in chunks:
+        fast_repaired = _TRAILING_COMMA.sub(r"\1", chunk).strip()
+        try:
+            result = json.loads(fast_repaired)
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        out: list[str] = []
+        in_string = False
+        escape = False
+        stack: list[str] = []
+
+        for ch in chunk:
+            if escape:
+                out.append(ch)
+                escape = False
+                continue
+            if ch == "\\" and in_string:
+                out.append(ch)
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                out.append(ch)
+                continue
+            if in_string:
+                out.append(ch)
+                continue
+
+            if ch in ("{", "["):
+                stack.append(ch)
+                out.append(ch)
+            elif ch in ("}", "]"):
+                if not stack:
+                    continue  # Ignore orphaned closer
+                expected = "}" if stack[-1] == "{" else "]"
+                if ch != expected:
+                    out.append(expected)
+                    stack.pop()
+                else:
+                    out.append(ch)
+                    stack.pop()
+            else:
+                out.append(ch)
+
+        if in_string:
+            out.append('"')
+
+        repaired = "".join(out)
+        repaired = re.sub(r",\s*$", "", repaired)
+        repaired = _TRAILING_COMMA.sub(r"\1", repaired)
+
+        for opener in reversed(stack):
+            repaired += "}" if opener == "{" else "]"
+        repaired = _TRAILING_COMMA.sub(r"\1", repaired)
+
+        try:
+            result = json.loads(repaired)
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        last_bracket = max(repaired.rfind("}"), repaired.rfind("]"))
+        while last_bracket > 0:
+            candidate = repaired[:last_bracket + 1]
+            c_stack: list[str] = []
+            c_in_str = False
+            c_esc = False
+            for c in candidate:
+                if c_esc:
+                    c_esc = False
+                    continue
+                if c == "\\" and c_in_str:
+                    c_esc = True
+                    continue
+                if c == '"':
+                    c_in_str = not c_in_str
+                    continue
+                if c_in_str:
+                    continue
+                if c in ("{", "["):
+                    c_stack.append(c)
+                elif c in ("}", "]") and c_stack:
+                    c_stack.pop()
+            candidate_repaired = _TRAILING_COMMA.sub(r"\1", candidate)
+            for op in reversed(c_stack):
+                candidate_repaired += "}" if op == "{" else "]"
+            candidate_repaired = _TRAILING_COMMA.sub(r"\1", candidate_repaired)
+            try:
+                result = json.loads(candidate_repaired)
+                if isinstance(result, dict):
+                    return result
+            except (json.JSONDecodeError, ValueError):
+                pass
+            last_bracket = max(repaired.rfind("}", 0, last_bracket), repaired.rfind("]", 0, last_bracket))
+
+    return None
 
 
 def _extract_json_text(raw: str) -> str:
@@ -62,7 +173,7 @@ def _best_json_part(parts: list) -> str | None:
         try:
             _parse_first_json_object(extracted)
             return text
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError, LLMError):
             continue
     return getattr(parts[0], "text", None) if parts else None
 
@@ -79,7 +190,9 @@ def _parse_first_json_object(text: str) -> dict:
         pass
 
     try:
-        return json.loads(text)
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
     except json.JSONDecodeError:
         pass
 
@@ -92,7 +205,9 @@ def _parse_first_json_object(text: str) -> dict:
         pass
 
     try:
-        return json.loads(cleaned)
+        obj = json.loads(cleaned)
+        if isinstance(obj, dict):
+            return obj
     except json.JSONDecodeError:
         pass
 
@@ -104,7 +219,9 @@ def _parse_first_json_object(text: str) -> dict:
     if match:
         extracted = match.group(0)
         try:
-            return json.loads(extracted)
+            obj = json.loads(extracted)
+            if isinstance(obj, dict):
+                return obj
         except json.JSONDecodeError:
             repaired_extracted = _repair_json(extracted)
             if repaired_extracted is not None:
@@ -195,19 +312,36 @@ class GeminiLLMClient(LLMClient):
         """
         from dataclasses import asdict
 
+        def request_with_retry(stage: str, *, contents: str, config: dict[str, Any]) -> Any:
+            attempts = self._max_retries + 1
+            for attempt in range(1, attempts + 1):
+                try:
+                    with provider_attempt("gemini", model=self._model, stage=stage, attempt=attempt):
+                        return self._client.models.generate_content(
+                            model=self._model, contents=contents, config=config,
+                        )
+                except Exception as exc:
+                    retryable = _is_retryable_transport_error(exc)
+                    if retryable and attempt < attempts:
+                        emit("provider.retry", provider="gemini", model=self._model, stage=stage,
+                             attempt=attempt, error_type=type(exc).__name__)
+                        self._sleep(self._retry_delay_seconds)
+                        continue
+                    disposition = "retryable transport failure exhausted" if retryable else "non-retryable provider failure"
+                    raise LLMError(f"{stage} {disposition} after {attempt} attempt(s): {type(exc).__name__}.") from exc
+
         self._last_sources = []
         self._last_grounding_metadata = None
         self.last_research_evidence = None
         if not self._search_grounding:
             raise LLMError("Research requires a search-enabled client.")
         try:
-            with provider_attempt("gemini", model=self._model, stage="llm_research"):
-                researched = self._client.models.generate_content(
-                    model=self._model, contents=research_prompt,
-                    config={"tools": [{"google_search": {}}], "max_output_tokens": self._max_output_tokens,
-                            "thinking_config": {"thinking_budget": 0},
-                            "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
-                )
+            researched = request_with_retry(
+                "llm_research", contents=research_prompt,
+                config={"tools": [{"google_search": {}}], "max_output_tokens": self._max_output_tokens,
+                        "thinking_config": {"thinking_budget": 0},
+                        "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
+            )
             self._record_research_usage(researched)
             candidates = getattr(researched, "candidates", None) or []
             raw_metadata = getattr(candidates[0], "grounding_metadata", None) if candidates else None
@@ -227,13 +361,12 @@ class GeminiLLMClient(LLMClient):
                 "task": "Extract only facts present in the supplied research evidence into the schema. Do not research, use memory, invent values or infer missing prices. Use null or empty arrays for missing facts. source_urls/source_url must use the exact supplied citation URLs supporting that entity or offer. Source indices in supports refer to the sources array. Never assign an unrelated source just to fill a field. Preserve the exact book, selection, line, odds and observation time. Convert American odds to decimal only if explicitly observed. Follow the schema enum spellings. Return one JSON object.",
                 "request": research_prompt, "schema": schema, "evidence": evidence,
             }
-            with provider_attempt("gemini", model=self._model, stage="llm_extraction"):
-                extracted = self._client.models.generate_content(
-                    model=self._model, contents=json.dumps(extraction_prompt),
-                    config={"response_mime_type": "application/json", "max_output_tokens": self._max_output_tokens,
-                            "thinking_config": {"thinking_budget": 0}, "temperature": 0,
-                            "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
-                )
+            extracted = request_with_retry(
+                "llm_extraction", contents=json.dumps(extraction_prompt),
+                config={"response_mime_type": "application/json", "max_output_tokens": self._max_output_tokens,
+                        "thinking_config": {"thinking_budget": 0}, "temperature": 0,
+                        "http_options": {"timeout": max(60000, int(self._timeout_seconds * 1000))}},
+            )
             self._record_research_usage(extracted)
             result = _parse_first_json_object(_extract_json_text(extracted.text or ""))
             if not isinstance(result, dict):
@@ -326,6 +459,7 @@ class GeminiLLMClient(LLMClient):
                         config["temperature"] = temperature
                     if self._search_grounding:
                         config["tools"] = [{"google_search": {}}]
+                        config["http_options"] = {"timeout": max(60000, round(self._timeout_seconds * 1000))}
                     else:
                         config["response_mime_type"] = "application/json"
                     response = self._client.models.generate_content(
@@ -333,20 +467,39 @@ class GeminiLLMClient(LLMClient):
                         contents=prompt,
                         config=config,
                     )
-                    try:
-                        text = response.text
-                    except (ValueError, AttributeError):
-                        text = None
-                    if not text and hasattr(response, "candidates") and response.candidates:
-                        parts = response.candidates[0].content.parts
-                        if parts:
+
+                    parsed: dict | None = None
+                    candidates = getattr(response, "candidates", None) or []
+                    parts = getattr(getattr(candidates[0], "content", None), "parts", None) if candidates else None
+
+                    # If multiple candidate parts exist (e.g. from Google Search Grounding), evaluate each part first
+                    if parts and len(parts) > 1:
+                        for part in parts:
+                            p_text = getattr(part, "text", None)
+                            if p_text and p_text.strip():
+                                extracted = _extract_json_text(p_text)
+                                try:
+                                    candidate_parsed = _parse_first_json_object(extracted)
+                                    if isinstance(candidate_parsed, dict):
+                                        parsed = candidate_parsed
+                                        break
+                                except (json.JSONDecodeError, ValueError, LLMError):
+                                    pass
+
+                    if parsed is None:
+                        try:
+                            text = response.text
+                        except (ValueError, AttributeError):
+                            text = None
+                        if not text and parts:
                             text = _best_json_part(parts)
-                    if not text or not text.strip():
-                        raise LLMError("Gemini returned empty response")
-                    json_text = _extract_json_text(text)
-                    if not json_text:
-                        raise LLMError("Gemini returned empty response")
-                    parsed = _parse_first_json_object(json_text)
+                        if not text or not text.strip():
+                            raise LLMError("Gemini returned empty response")
+                        json_text = _extract_json_text(text)
+                        if not json_text:
+                            raise LLMError("Gemini returned empty response")
+                        parsed = _parse_first_json_object(json_text)
+
                     if not isinstance(parsed, dict):
                         raise LLMError("Gemini returned non-dict JSON output")
                     self._last_grounding_metadata = self._extract_grounding_metadata(response)
@@ -356,19 +509,19 @@ class GeminiLLMClient(LLMClient):
                         self._last_sources = []
                     usage = getattr(response, "usage_metadata", None)
                     if usage:
-                        prompt = getattr(usage, "prompt_token_count", 0) or 0
-                        completion = getattr(usage, "candidates_token_count", 0) or 0
-                        total = getattr(usage, "total_token_count", 0) or 0
+                        p_tokens = getattr(usage, "prompt_token_count", 0) or 0
+                        c_tokens = getattr(usage, "candidates_token_count", 0) or 0
+                        t_tokens = getattr(usage, "total_token_count", 0) or 0
                         self._last_token_usage = TokenUsage(
-                            prompt_tokens=prompt,
-                            completion_tokens=completion,
-                            total_tokens=total,
+                            prompt_tokens=p_tokens,
+                            completion_tokens=c_tokens,
+                            total_tokens=t_tokens,
                         )
-                        self._cumulative_tokens[0] += prompt
-                        self._cumulative_tokens[1] += completion
-                        self._cumulative_tokens[2] += total
+                        self._cumulative_tokens[0] += p_tokens
+                        self._cumulative_tokens[1] += c_tokens
+                        self._cumulative_tokens[2] += t_tokens
                         emit("provider.usage", provider="gemini", model=self._model,
-                             prompt_tokens=prompt, completion_tokens=completion, total_tokens=total,
+                             prompt_tokens=p_tokens, completion_tokens=c_tokens, total_tokens=t_tokens,
                              source_count=len(self._last_sources))
                     else:
                         self._last_token_usage = None
@@ -376,6 +529,10 @@ class GeminiLLMClient(LLMClient):
             except json.JSONDecodeError as exc:
                 if attempt >= attempts:
                     raise LLMError(f"Gemini returned invalid JSON: {exc}") from exc
+                prompt += (
+                    "\n\nYour previous response was not valid JSON. "
+                    "Retry now with exactly one JSON object and no explanation, citations, or markdown."
+                )
                 self._sleep(self._retry_delay_seconds)
                 continue
             except LLMError:
@@ -386,10 +543,29 @@ class GeminiLLMClient(LLMClient):
             except TimeoutError as exc:
                 if attempt >= attempts:
                     raise LLMError(str(exc)) from exc
-                self._sleep(self._retry_delay_seconds)
+                retry_delay = self._retry_delay_seconds * (2 ** (attempt - 1))
+                self._sleep(min(retry_delay, 60.0))
+                continue
             except Exception as exc:
                 error_str = str(exc)
-                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                retryable = any(
+                    code in error_str
+                    for code in (
+                        "429",
+                        "RESOURCE_EXHAUSTED",
+                        "504",
+                        "DEADLINE_EXCEEDED",
+                        "503",
+                        "UNAVAILABLE",
+                        "502",
+                        "BAD_GATEWAY",
+                        "timed out",
+                        "Timeout",
+                        "ConnectTimeout",
+                        "ReadTimeout",
+                    )
+                )
+                if retryable:
                     if attempt >= attempts:
                         raise LLMError(error_str) from exc
                     retry_delay = self._retry_delay_seconds * (2 ** (attempt - 1))

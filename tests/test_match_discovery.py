@@ -15,9 +15,11 @@ from match_discovery import MatchDiscoveryClient, MatchDiscoveryValidationError
 
 
 class _FakeLLMClient:
-    def __init__(self, responses: dict[str, dict | Exception]) -> None:
+    def __init__(self, responses: dict[str, dict | Exception], *, grounded: bool = True) -> None:
         self._responses = responses
+        self._grounded = grounded
         self.calls: list[dict] = []
+        self.last_sources: list[dict[str, str]] = []
 
     def generate_structured(self, *, system_prompt: str, user_prompt: str, schema: dict) -> dict:
         payload = json.loads(user_prompt)
@@ -31,6 +33,20 @@ class _FakeLLMClient:
         response = self._responses[sport]
         if isinstance(response, Exception):
             raise response
+        if self._grounded:
+            grouped = response.get("sports") or response.get("grouped_by_sport") or {}
+            payload = grouped.get(sport, {}) if isinstance(grouped, dict) else response
+            if not payload and isinstance(response.get("matches"), list):
+                payload = response
+            matches = payload.get("matches", []) if isinstance(payload, dict) else []
+            self.last_sources = [
+                {"url": source["url"], "title": source.get("label", "source")}
+                for match in matches
+                for source in match.get("sources", []) if isinstance(match, dict) and isinstance(source, dict)
+                if isinstance(source.get("url"), str)
+            ]
+        else:
+            self.last_sources = []
         return response
 
 
@@ -131,7 +147,7 @@ def test_discover_matches_validates_sports_and_limit() -> None:
         client.discover_matches(date_utc="2026-06-01", sports=["cricket"], limit_per_sport=2)
 
     with pytest.raises(MatchDiscoveryValidationError, match="limit_per_sport"):
-        client.discover_matches(date_utc="2026-06-01", sports=["soccer"], limit_per_sport=6)
+        client.discover_matches(date_utc="2026-06-01", sports=["soccer"], limit_per_sport=11)
 
 
 def test_discover_matches_filters_out_wrong_date_matches() -> None:
@@ -143,22 +159,28 @@ def test_discover_matches_filters_out_wrong_date_matches() -> None:
                         "home_team": "Arsenal",
                         "away_team": "Liverpool",
                         "event_date": "2030-06-01",
+                        "league": "premier_league",
                         "kickoff_utc": "2030-06-01T19:00:00Z",
                         "importance": "high",
+                        "sources": [{"label": "fixture", "url": "https://example.com/arsenal-liverpool"}],
                     },
                     {
                         "home_team": "Barca",
                         "away_team": "Madrid",
                         "event_date": "2030-06-02",
+                        "league": "la_liga",
                         "kickoff_utc": "2030-06-02T20:00:00Z",
                         "importance": "high",
+                        "sources": [{"label": "fixture", "url": "https://example.com/barca-madrid"}],
                     },
                     {
                         "home_team": "Bayern",
                         "away_team": "Dortmund",
                         "event_date": "2030-05-31",
+                        "league": "bundesliga",
                         "kickoff_utc": "2030-05-31T18:00:00Z",
                         "importance": "high",
+                        "sources": [{"label": "fixture", "url": "https://example.com/bayern-dortmund"}],
                     },
                 ]
             }
@@ -183,8 +205,10 @@ def test_discover_matches_preserves_informational_error_from_llm() -> None:
                         "home_team": "Norway",
                         "away_team": "Sweden",
                         "event_date": "2030-06-01",
+                        "league": "premier_league",
                         "kickoff_utc": "2030-06-01T18:00:00Z",
                         "importance": "medium",
+                        "sources": [{"label": "fixture", "url": "https://example.com/norway-sweden"}],
                     },
                 ],
                 "error": "Limited verifiable match information available for 2030-06-01.",
@@ -198,6 +222,42 @@ def test_discover_matches_preserves_informational_error_from_llm() -> None:
     soccer = result["results"]["soccer"]
     assert len(soccer["matches"]) == 1
     assert soccer["error"] == "Limited verifiable match information available for 2030-06-01."
+
+
+def test_discovery_withholds_uncited_or_incomplete_fixture_candidates() -> None:
+    response = {
+        "sports": {
+            "soccer": {
+                "matches": [
+                    {"home_team": "Arsenal", "away_team": "Liverpool", "event_date": "2030-06-01", "league": "premier_league", "kickoff_utc": "2030-06-01T18:00:00Z"},
+                    {"home_team": "Barcelona", "away_team": "Real Madrid", "event_date": "2030-06-01", "league": "la_liga", "sources": [{"label": "fixture", "url": "https://example.com/el-clasico"}]},
+                ]
+            }
+        }
+    }
+    client = MatchDiscoveryClient(client=_FakeLLMClient({"soccer": response}))
+
+    sport_result = client.discover_matches(date_utc="2030-06-01", sports=["soccer"], limit_per_sport=5)["results"]["soccer"]
+
+    assert sport_result["matches"] == []
+    assert sport_result["error"] is None
+    assert sport_result["data_quality"] == {
+        "status": "unavailable",
+        "verified_count": 0,
+        "rejected_counts": {"missing_citation": 1, "missing_kickoff": 1},
+        "reason": "No verifiable upcoming fixtures were returned.",
+    }
+
+
+def test_discovery_withholds_model_authored_url_without_provider_grounding() -> None:
+    response = {"sports": {"soccer": {"matches": [{"home_team": "Arsenal", "away_team": "Liverpool", "event_date": "2030-06-01", "league": "premier_league", "kickoff_utc": "2030-06-01T18:00:00Z", "sources": [{"label": "fixture", "url": "https://example.com/arsenal-liverpool"}]}]}}}
+    client = MatchDiscoveryClient(client=_FakeLLMClient({"soccer": response}, grounded=False))
+
+    sport_result = client.discover_matches(date_utc="2030-06-01", sports=["soccer"], limit_per_sport=5)["results"]["soccer"]
+
+    assert sport_result["matches"] == []
+    assert sport_result["data_quality"]["status"] == "unavailable"
+    assert sport_result["data_quality"]["rejected_counts"] == {"missing_citation": 1}
 
 
 class TestMatchesRequestedDateFilter:
@@ -374,3 +434,81 @@ class TestMatchDiscoveryClientConfig:
         MatchDiscoveryClient.from_env(provider="gemini")
 
         assert captured.get("max_output_tokens", 0) >= 4000
+
+
+class TestMatchDiscoveryLeagueNormalization:
+    @pytest.mark.parametrize(
+        "input_league,expected_league",
+        [
+            ("spanish_la_liga", "la_liga"),
+            ("Spanish La Liga", "la_liga"),
+            ("english_premier_league", "premier_league"),
+            ("french_ligue_1", "ligue_1"),
+            ("italian_serie_a", "serie_a"),
+            ("german_bundesliga", "bundesliga"),
+            ("anothergerman_bundesliga", "bundesliga"),
+            ("uefa_champions_league", "champions_league"),
+            ("major_league_soccer", "mls"),
+        ],
+    )
+    def test_normalize_match_normalizes_league_keys(self, input_league: str, expected_league: str) -> None:
+        from match_discovery import _normalize_match
+        item = {
+            "home_team": "Team A",
+            "away_team": "Team B",
+            "event_date": "2030-06-01",
+            "league": input_league,
+            "competition": "Some Competition",
+        }
+        normalized = _normalize_match(
+            item=item,
+            sport="soccer",
+            date_utc="2030-06-01",
+            source_provider="fake",
+            source_model="fake-model",
+            fallback_sources=[],
+        )
+        assert normalized["league"] == expected_league
+
+    def test_normalize_match_infers_league_from_competition(self) -> None:
+        from match_discovery import _normalize_match
+        item = {
+            "home_team": "Real Madrid",
+            "away_team": "Barcelona",
+            "event_date": "2030-06-01",
+            "league": None,
+            "competition": "Spanish La Liga",
+        }
+        normalized = _normalize_match(
+            item=item,
+            sport="soccer",
+            date_utc="2030-06-01",
+            source_provider="fake",
+            source_model="fake-model",
+            fallback_sources=[],
+        )
+        assert normalized["league"] == "la_liga"
+
+    def test_discover_matches_supports_limit_up_to_10(self) -> None:
+        ten_matches = [
+            {
+                "home_team": f"Home {i}",
+                "away_team": f"Away {i}",
+                "event_date": "2030-06-01",
+                "league": "spanish_la_liga",
+                "competition": "La Liga",
+                "kickoff_utc": "2030-06-01T15:00:00Z",
+                "sources": [{"label": "fixture", "url": f"https://example.com/{i}"}],
+            }
+            for i in range(10)
+        ]
+        fake_llm = _FakeLLMClient({"soccer": {"matches": ten_matches}})
+        client = MatchDiscoveryClient(client=fake_llm)
+        result = client.discover_matches(
+            date_utc="2030-06-01",
+            sports=["soccer"],
+            limit_per_sport=10,
+        )
+        soccer_matches = result["results"]["soccer"]["matches"]
+        assert len(soccer_matches) == 10
+        assert all(m["league"] == "la_liga" for m in soccer_matches)

@@ -8,7 +8,7 @@ from datetime import datetime, timezone as utc_timezone
 from typing import Any, Callable
 
 from baseball_module import BaseballDataQualityError
-from nfl_module import NflNoPicks
+from nfl_module import NflDataQualityError, NflNoPicks
 from slate_ranking import SlateCandidate, candidates_from_picks, rank_slate_candidates
 
 
@@ -24,6 +24,9 @@ class SlateResult:
     completion_tokens: int | None = None
     total_tokens: int | None = None
     discovery_failures: int = 0
+    discovered_matches: list[dict[str, Any]] | None = None
+    interrupted: bool = False
+    stop_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +41,12 @@ def execute_slate_job(
     *,
     request_dict: dict[str, Any],
     deps: SlateOrchestrationDeps,
+    on_checkpoint: Callable[[str, list[dict[str, Any]], list[SlateCandidate], list[dict[str, Any]], int], None] | None = None,
+    total_budget_seconds: float = 600,
+    per_match_budget_seconds: float = 120,
+    discovery_override: list[dict[str, Any]] | None = None,
+    existing_match_runs: list[dict[str, Any]] | None = None,
+    existing_candidates: list[SlateCandidate] | None = None,
 ) -> SlateResult:
     t0 = time.perf_counter()
 
@@ -47,21 +56,31 @@ def execute_slate_job(
     top_n = request_dict.get("top_n", 10)
     timezone = request_dict.get("timezone")
 
-    t_discovery = time.perf_counter()
-    discovery_result = deps.discover_matches(
-        date_utc=date,
-        sports=sports,
-        limit_per_sport=max_matches_per_sport,
-        timezone=timezone,
-    )
-    discovery_latency_ms = max(0, round((time.perf_counter() - t_discovery) * 1000))
+    if discovery_override is None:
+        t_discovery = time.perf_counter()
+        discovery_result = deps.discover_matches(
+            date_utc=date, sports=sports, limit_per_sport=max_matches_per_sport, timezone=timezone,
+        )
+        discovery_latency_ms = max(0, round((time.perf_counter() - t_discovery) * 1000))
+        results = discovery_result.get("results", {})
+    else:
+        discovery_latency_ms = 0
+        results: dict[str, dict[str, Any]] = {}
+        for item in discovery_override:
+            if isinstance(item, dict) and isinstance(item.get("match"), dict):
+                results.setdefault(str(item.get("sport", "")), {"matches": []})["matches"].append(item["match"])
 
-    all_candidates: list[SlateCandidate] = []
-    match_runs: list[dict[str, Any]] = []
-    matches_attempted = 0
-    matches_succeeded = 0
-
-    results = discovery_result.get("results", {})
+    all_candidates: list[SlateCandidate] = list(existing_candidates or [])
+    match_runs: list[dict[str, Any]] = list(existing_match_runs or [])
+    discovered_matches = [
+        {"sport": sport, "match": match}
+        for sport, sport_data in results.items()
+        if isinstance(sport_data, dict)
+        for match in sport_data.get("matches", [])
+        if isinstance(match, dict)
+    ]
+    if on_checkpoint:
+        on_checkpoint("matches", discovered_matches, all_candidates, match_runs, discovery_latency_ms)
     for sport, sport_data in results.items():
         if not isinstance(sport_data, dict):
             continue
@@ -69,11 +88,20 @@ def execute_slate_job(
         for match in matches:
             if not isinstance(match, dict):
                 continue
+            if any(
+                run.get("sport") == sport and run.get("home_team") == match.get("home_team")
+                and run.get("away_team") == match.get("away_team") and run.get("event_date") == match.get("event_date", date)
+                for run in match_runs
+            ):
+                continue
+            if time.perf_counter() - t0 >= total_budget_seconds:
+                return _interrupted_result(
+                    all_candidates, match_runs, t0, discovery_latency_ms, results, discovered_matches,
+                    deps, top_n, "budget_exhausted"
+                )
             home_team = match.get("home_team", "Unknown")
             away_team = match.get("away_team", "Unknown")
             event_date = match.get("event_date", date)
-            matches_attempted += 1
-
             t_match = time.perf_counter()
             try:
                 catalog_read = None
@@ -90,8 +118,6 @@ def execute_slate_job(
                     markets=(),
                 )
                 match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))
-                matches_succeeded += 1
-
                 candidates = candidates_from_picks(
                     scores,
                     sport=sport,
@@ -121,6 +147,15 @@ def execute_slate_job(
                     "error_message": str(exc)[:500], "pick_count": 0,
                     "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
                 })
+            except NflDataQualityError as exc:
+                summary = exc.reason.get("recommendation_summary", {}) if isinstance(exc.reason, dict) else {}
+                match_runs.append({
+                    "sport": sport, "home_team": home_team, "away_team": away_team,
+                    "event_date": event_date, "status": "failed", "error_stage": "offers",
+                    "error_message": summary.get("message") or str(exc)[:500], "pick_count": 0,
+                    "latency_ms": max(0, round((time.perf_counter() - t_match) * 1000)),
+                    "recommendation_summary": summary,
+                })
             except BaseballDataQualityError as exc:
                 match_latency_ms = max(0, round((time.perf_counter() - t_match) * 1000))
                 status = "pending_data" if exc.reason == "hitter_inputs_unavailable" else "failed"
@@ -148,6 +183,16 @@ def execute_slate_job(
                     "pick_count": 0,
                     "latency_ms": match_latency_ms,
                 })
+            if on_checkpoint:
+                on_checkpoint("matches", discovered_matches, all_candidates, match_runs, discovery_latency_ms)
+            if (
+                time.perf_counter() - t0 >= total_budget_seconds
+                or time.perf_counter() - t_match > per_match_budget_seconds
+            ):
+                return _interrupted_result(
+                    all_candidates, match_runs, t0, discovery_latency_ms, results, discovered_matches,
+                    deps, top_n, "budget_exhausted"
+                )
 
     ranked = rank_slate_candidates(all_candidates, top_n=top_n)
     total_latency_ms = max(0, round((time.perf_counter() - t0) * 1000))
@@ -168,9 +213,31 @@ def execute_slate_job(
         match_runs=match_runs,
         latency_ms=total_latency_ms,
         discovery_latency_ms=discovery_latency_ms,
-        matches_attempted=matches_attempted,
-        matches_succeeded=matches_succeeded,
+        matches_attempted=len(match_runs),
+        matches_succeeded=sum(run.get("status") == "success" for run in match_runs),
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        discovered_matches=discovered_matches,
+    )
+
+
+def _interrupted_result(
+    candidates: list[SlateCandidate], match_runs: list[dict[str, Any]], started: float,
+    discovery_latency_ms: int, results: dict[str, Any], discovered_matches: list[dict[str, Any]],
+    deps: SlateOrchestrationDeps, top_n: int, reason: str,
+) -> SlateResult:
+    prompt_tokens = completion_tokens = total_tokens = None
+    if deps.get_token_usage:
+        prompt, completion, total = deps.get_token_usage()
+        if total > 0:
+            prompt_tokens, completion_tokens, total_tokens = prompt, completion, total
+    return SlateResult(
+        candidates=rank_slate_candidates(candidates, top_n=top_n), match_runs=match_runs,
+        latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
+        discovery_latency_ms=discovery_latency_ms, matches_attempted=len(match_runs),
+        matches_succeeded=sum(run.get("status") == "success" for run in match_runs),
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, total_tokens=total_tokens,
+        discovery_failures=sum(bool(v.get("error")) for v in results.values() if isinstance(v, dict)),
+        discovered_matches=discovered_matches, interrupted=True, stop_reason=reason,
     )

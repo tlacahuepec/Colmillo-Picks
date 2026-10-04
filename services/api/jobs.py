@@ -60,3 +60,7 @@ def mark_slate_job_done(job_id: str) -> None:
 
 def mark_slate_job_failed(job_id: str, message: str) -> None:
     db.mark_slate_job_finished(job_id=job_id, success=False, error_message=message)
+
+
+def heartbeat_slate_job(job_id: str) -> None:
+    db.heartbeat_slate_job(job_id=job_id)
