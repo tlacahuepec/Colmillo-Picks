@@ -13,7 +13,7 @@ describe("Frontend API Client", () => {
     vi.restoreAllMocks();
   });
 
-  it("attaches default VITE_API_KEY when no API key in localStorage", async () => {
+  it("uses a configured VITE_API_KEY and omits an absent default", async () => {
     let capturedHeaders: Headers | undefined;
     global.fetch = vi.fn().mockImplementation((url, options) => {
       capturedHeaders = options?.headers as Headers;
@@ -24,7 +24,7 @@ describe("Frontend API Client", () => {
     });
 
     await api.getHealth();
-    expect(capturedHeaders?.get("X-API-Key")).toBe(import.meta.env.VITE_API_KEY || "");
+    expect(capturedHeaders?.get("X-API-Key")).toBe(import.meta.env.VITE_API_KEY || null);
   });
 
   it("attaches custom API key from localStorage", async () => {
