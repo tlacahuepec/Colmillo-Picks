@@ -129,7 +129,8 @@ def _build_basketball_module():
 
     config = LLMFixtureProviderConfig.from_env()
     if not config.is_configured():
-        return BasketballModule()
+        from basketball_prop_lines_adapter import BasketballPropLinesAdapter
+        return BasketballModule(props_provider=BasketballPropLinesAdapter())
 
     game_provider = None
     stats_provider = None
@@ -180,6 +181,10 @@ def _build_basketball_module():
     except Exception:
         pass
 
+    if props_provider is None:
+        from basketball_prop_lines_adapter import BasketballPropLinesAdapter
+        props_provider = BasketballPropLinesAdapter()
+
     return BasketballModule(
         game_provider=game_provider,
         stats_provider=stats_provider,
@@ -204,6 +209,7 @@ def _build_baseball_module():  # noqa: E302
             StatsAPISplitsAdapter,
             StatsAPIWeatherAdapter,
         )
+        from mlb_prop_lines_adapter import MLBPropLinesAdapter
         from mlb_collection import MLBCollectionService
         from baseball_module import BaseballModule
 
@@ -220,6 +226,7 @@ def _build_baseball_module():  # noqa: E302
             bullpen=StatsAPIBullpenAdapter(client=client, config=config),
             weather=StatsAPIWeatherAdapter(client=client, config=config),
             ballpark=StatsAPIBallparkAdapter(client=client, config=config),
+            prop_lines=MLBPropLinesAdapter(),
         )
         enrichment_provider = None
         gemini_api_key = os.getenv("GEMINI_API_KEY")

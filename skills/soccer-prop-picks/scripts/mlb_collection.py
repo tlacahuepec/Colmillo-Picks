@@ -28,6 +28,8 @@ from mlb_provider_ports import (
     MLBLineupsPort,
     MLBLineupsResult,
     MLBPlayerStatsPort,
+    MLBPropLinesPort,
+    MLBPropLinesResult,
     MLBProviderMeta,
     MLBSchedulePort,
     MLBWeatherPort,
@@ -59,6 +61,7 @@ class MLBCollectionService:
         bullpen: BullpenPort,
         weather: MLBWeatherPort,
         ballpark: BallparkPort,
+        prop_lines: MLBPropLinesPort | None = None,
         config: MLBCollectionConfig | None = None,
     ) -> None:
         self._schedule = schedule
@@ -69,6 +72,7 @@ class MLBCollectionService:
         self._bullpen = bullpen
         self._weather = weather
         self._ballpark = ballpark
+        self._prop_lines = prop_lines
         self._config = config or MLBCollectionConfig()
 
     def collect(
@@ -95,8 +99,26 @@ class MLBCollectionService:
         weather_model = _build_weather(weather_result)
         ballpark_model = _build_ballpark(ballpark_result)
 
+        player_names: list[str] = []
+        if home_pitcher and home_pitcher.player_name:
+            player_names.append(home_pitcher.player_name)
+        if away_pitcher and away_pitcher.player_name:
+            player_names.append(away_pitcher.player_name)
+        if home_order:
+            player_names.extend(s.player_name for s in home_order.slots if s.player_name)
+        if away_order:
+            player_names.extend(s.player_name for s in away_order.slots if s.player_name)
+
+        prop_lines_result = self._safe_call_prop_lines(
+            game_pk=game_pk,
+            home_team=game.home_team,
+            away_team=game.away_team,
+            date=game.game_time_utc[:10] if game.game_time_utc else "",
+            players=player_names,
+        )
+
         provider_status = self._aggregate_status(
-            pitcher_result, lineup_result, weather_result, bullpen_home
+            pitcher_result, lineup_result, weather_result, bullpen_home, prop_lines_result
         )
 
         ctx = MLBGameContext(
@@ -109,6 +131,7 @@ class MLBCollectionService:
             away_bullpen=away_bullpen,
             weather=weather_model,
             ballpark=ballpark_model,
+            prop_lines=list(prop_lines_result.prop_lines) if prop_lines_result else [],
             provider_status=provider_status,
             retrieved_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
@@ -175,19 +198,56 @@ class MLBCollectionService:
             logger.warning("mlb_ballpark_call_failed", extra={"venue_id": venue_id, **error_info(exc)})
             return None
 
+    def _safe_call_prop_lines(
+        self,
+        game_pk: int,
+        home_team: str,
+        away_team: str,
+        date: str,
+        players: list[str] | None = None,
+    ) -> MLBPropLinesResult | None:
+        if self._prop_lines is None:
+            return None
+        try:
+            with stage("mlb_prop_lines"):
+                result = self._prop_lines.get_prop_lines(
+                    game_pk=game_pk,
+                    home_team=home_team,
+                    away_team=away_team,
+                    date=date,
+                    players=players,
+                )
+            if not result.meta.available:
+                logger.warning(
+                    "mlb_prop_lines_unavailable",
+                    extra={"game_pk": game_pk, "provider_status": result.meta.provider_status},
+                )
+            return result
+        except Exception as exc:
+            logger.warning(
+                "mlb_prop_lines_call_failed",
+                extra={"game_pk": game_pk, **error_info(exc)},
+            )
+            return None
+
     def _aggregate_status(
         self,
         pitcher_result: ProbablePitcherResult | None,
         lineup_result: MLBLineupsResult | None,
         weather_result: MLBWeatherResult | None,
         bullpen_result: BullpenResult | None,
+        prop_lines_result: MLBPropLinesResult | None = None,
     ) -> BaseballProviderStatus:
         return BaseballProviderStatus(
             stats="ok",
             lineup=_meta_to_status(lineup_result.meta if lineup_result else None, self._config.freshness_threshold_minutes),
             weather=_meta_to_status(weather_result.meta if weather_result else None, self._config.freshness_threshold_minutes),
             bullpen=_meta_to_status(bullpen_result.meta if bullpen_result else None, self._config.freshness_threshold_minutes),
-            odds="ok",
+            odds=(
+                _meta_to_status(prop_lines_result.meta, self._config.freshness_threshold_minutes)
+                if prop_lines_result is not None
+                else "ok"
+            ),
         )
 
 

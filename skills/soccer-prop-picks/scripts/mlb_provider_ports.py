@@ -112,3 +112,23 @@ class MLBWeatherPort(Protocol):
 @runtime_checkable
 class BallparkPort(Protocol):
     def get_ballpark(self, *, venue_id: int) -> BallparkResult: ...
+
+
+@dataclass
+class MLBPropLinesResult:
+    meta: MLBProviderMeta = field(default_factory=MLBProviderMeta)
+    prop_lines: list[Any] = field(default_factory=list)
+
+
+@runtime_checkable
+class MLBPropLinesPort(Protocol):
+    def get_prop_lines(
+        self,
+        *,
+        game_pk: int,
+        home_team: str,
+        away_team: str,
+        date: str,
+        players: list[str] | None = None,
+    ) -> MLBPropLinesResult: ...
+
