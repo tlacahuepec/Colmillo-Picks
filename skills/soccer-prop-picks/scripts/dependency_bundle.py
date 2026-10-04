@@ -8,6 +8,7 @@ script entry points.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from availability import DeterministicMockAvailabilityAdapter, PrizePicksAdapter
 from collect_match_inputs import DeterministicWeatherProvider, MatchInputRequest, collect_inputs
@@ -171,7 +172,7 @@ def build_dependency_bundle(
     fixture_llm_base_url: str | None = None,
     availability_provider: str | None = None,
     parse_match_query=None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Wire fixture/LLM providers and return a deps dict for ``run_pipeline``."""
 
     if parse_match_query is None:

@@ -1,7 +1,9 @@
 {
   "include": [
     "services/catalog",
-    "services/diagnostics.py"
+    "services/diagnostics.py",
+    "services/api",
+    "services/worker"
   ],
   "extraPaths": [
     "skills/soccer-prop-picks/scripts"

@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Type-checking gate expansion in Pyright to cover `services/diagnostics.py`, `services/api/`, and `services/worker/` with zero errors (#359, #360).
+- Schema regression test suite in `tests/api/test_db_schema.py` ensuring declarative model refactoring maintains exact table schema.
+
+### Changed
+- Migrated SQLAlchemy declarative models (`PickRun`, `PickOutcome`, `PickJob`, `SlateRun`, `SlateJob`) in `services/api/db.py` to modern SQLAlchemy 2.0 `Mapped[T] = mapped_column(...)` annotations (#360).
+- Made `LLMPostMatchStatsProvider` compatible with both positional and keyword argument `generate_structured` signatures.
+
+### Fixed
+- Fixed silent `ImportError` in worker outcome resolution caused by importing nonexistent `get_llm_client` from `llm.client` (#359).
+
 ## [0.9.0] — 2026-09-12
 
 ### Added

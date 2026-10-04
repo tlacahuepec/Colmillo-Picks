@@ -96,7 +96,7 @@ def _legacy_operation(ident: str) -> dict | None:
             **saved, f"{kind}_id": row.id, "sport": getattr(row, "sport", None),
             "stage": getattr(row, "error_stage", None),
         }, include_frames=False)
-        return public_trace({
+        trace = public_trace({
             "operation_id": getattr(row, "operation_id", None) or row.id,
             "service": "api", "kind": kind, "outcome": outcome,
             "sport": getattr(row, "sport", None),
@@ -105,6 +105,7 @@ def _legacy_operation(ident: str) -> dict | None:
             "summary": safe_text(saved.get("summary") or MESSAGES.get(outcome, "Only the saved business record is available."), 512),
             "completeness": "legacy_summary_only", "metadata": metadata, "event_count": 0,
         })
+        return trace if isinstance(trace, dict) else None
     return None
 
 
