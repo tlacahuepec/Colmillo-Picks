@@ -358,6 +358,9 @@ class TestSlateOrchestrationCatalogRollout:
     def test_build_slate_deps_rollout_modes(self, monkeypatch, tmp_path) -> None:
         from services.api.main import _build_slate_deps
 
+        # Provide dummy Gemini API key so MatchDiscoveryClient can initialize in CI environments
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key-for-ci")
+
         # Point catalog DB to temp file
         monkeypatch.setenv("COLMILLO_CATALOG_DB_PATH", str(tmp_path / "catalog.db"))
 
