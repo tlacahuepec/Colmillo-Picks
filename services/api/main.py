@@ -633,10 +633,15 @@ def _build_run_ledger():
         return InMemoryRunLedger()
 
 
-def _discovery_cache_key(*, date: str, sports: list[str], limit: int, timezone_name: str | None = None) -> str:
+def _discovery_cache_key(
+    *, date: str, sports: list[str], limit: int, timezone_name: str | None = None,
+    provider: str | None = None, model: str | None = None,
+) -> str:
     sports_part = ":".join(sorted(sports))
     tz_part = timezone_name or "utc"
-    return f"discovery:{date}:{sports_part}:{limit}:{tz_part}"
+    provider_part = (provider or os.getenv("COLMILLO_LLM_PROVIDER") or "gemini").strip().lower()
+    model_part = (model or "default").strip().lower()
+    return f"discovery:v2:{date}:{sports_part}:{limit}:{tz_part}:{provider_part}:{model_part}"
 
 
 def _build_match_discovery_client(payload: MatchDiscoveryRequest):
@@ -1444,7 +1449,10 @@ def create_app() -> FastAPI:
             )
             raise HTTPException(status_code=400, detail="; ".join(exc.errors)) from exc
 
-        cache_key = _discovery_cache_key(date=payload.date, sports=sports, limit=payload.limit_per_sport, timezone_name=payload.timezone)
+        cache_key = _discovery_cache_key(
+            date=payload.date, sports=sports, limit=payload.limit_per_sport,
+            timezone_name=payload.timezone, provider=payload.llm_provider, model=payload.llm_model,
+        )
         now_iso = datetime.now(_dt_tz.utc).isoformat()
         if not payload.force_refresh:
             cached = catalog_store.get_discovery_cache(cache_key, now=now_iso)
@@ -1473,6 +1481,10 @@ def create_app() -> FastAPI:
             for sport_result in result.get("results", {}).values()
         )
         failures = sum(bool(v.get("error")) for v in result.get("results", {}).values())
+        unavailable = sum(
+            isinstance(v, dict) and (v.get("data_quality") or {}).get("status") == "unavailable"
+            for v in result.get("results", {}).values()
+        )
         finish_operation("partial" if failures and total_matches else "failed" if failures else "success" if total_matches else "no_picks",
                          count=total_matches, failed_count=failures)
         logger.info(
@@ -1489,7 +1501,7 @@ def create_app() -> FastAPI:
         # A provider error is a transient observation, never a four-hour success.
         # Return healthy sports immediately, but allow the next request to recover the
         # failed sport rather than replaying an error from cache.
-        if failures:
+        if failures or unavailable:
             result_copy["cache_status"] = "uncached"
             result_copy["cache_confidence"] = "partial"
             result_copy["cache_expires_at"] = None
@@ -1514,7 +1526,10 @@ def create_app() -> FastAPI:
     def clear_match_discovery_cache(payload: MatchDiscoveryRequest) -> dict[str, bool]:
         from match_discovery import validate_match_discovery_inputs
         sports = validate_match_discovery_inputs(date_utc=payload.date, sports=payload.sports, limit_per_sport=payload.limit_per_sport)
-        key = _discovery_cache_key(date=payload.date, sports=sports, limit=payload.limit_per_sport, timezone_name=payload.timezone)
+        key = _discovery_cache_key(
+            date=payload.date, sports=sports, limit=payload.limit_per_sport,
+            timezone_name=payload.timezone, provider=payload.llm_provider, model=payload.llm_model,
+        )
         discarded = catalog_store.clear_discovery_cache(key)
         return {"discarded": discarded}
 

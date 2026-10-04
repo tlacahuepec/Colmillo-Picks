@@ -37,7 +37,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { api } from "../api/client";
-import { DiagnosticCompleteness, DiagnosticOperation } from "../api/types";
+import { DiagnosticCompleteness, DiagnosticEvent, DiagnosticOperation } from "../api/types";
 import { isRecord, loadPageDraft, savePageDraft } from "../state/pageDrafts";
 
 export function getNextAction(operation: DiagnosticOperation): string {
@@ -97,6 +97,17 @@ export function operationTitle(operation: DiagnosticOperation): string {
   return `${sport} run · ${operation.operation_id.slice(0, 8)}`;
 }
 
+export function diagnosticEventTime(event: DiagnosticEvent): string | undefined {
+  return event.ts || event.timestamp;
+}
+
+function summaryText(operation: DiagnosticOperation): string {
+  if (operation.summary) return operation.summary;
+  return operation.outcome === "success"
+    ? "The operation completed without a saved summary."
+    : "No summary was recorded for this operation.";
+}
+
 interface DiagnosticsPageProps {
   initialOperationId?: string;
 }
@@ -112,9 +123,14 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
   const [outcomeFilter, setOutcomeFilter] = useState<string>(initialDraft.outcomeFilter);
   const [serviceFilter, setServiceFilter] = useState<string>(initialDraft.serviceFilter);
   const [operations, setOperations] = useState<DiagnosticOperation[]>([]);
+  const [operationsHasMore, setOperationsHasMore] = useState(false);
   const [selectedOp, setSelectedOp] = useState<DiagnosticOperation | null>(null);
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(initialOperationId || initialDraft.selectedOperationId);
   const [selectedCompleteness, setSelectedCompleteness] = useState<DiagnosticCompleteness | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [childOperations, setChildOperations] = useState<DiagnosticOperation[]>([]);
+  const [childrenHasMore, setChildrenHasMore] = useState(false);
+  const [eventsHasMore, setEventsHasMore] = useState(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [diagHealth, setDiagHealth] = useState<any>(null);
@@ -149,12 +165,18 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
     detailRequestRef.current = requestId;
     setSelectedOp(op);
     setSelectedOperationId(op.operation_id);
+    setSelectedCompleteness(null);
+    setDetailError(null);
+    setChildOperations([]);
+    setChildrenHasMore(false);
+    setEventsHasMore(false);
     try {
       const detail = await api.getDiagnosticDetail(op.operation_id);
       if (detailRequestRef.current !== requestId) return;
       if (detail) {
         if (detail.completeness) {
           setSelectedCompleteness(detail.completeness);
+          setEventsHasMore(Boolean(detail.completeness?.has_more));
         }
         if (detail.operation) {
           setSelectedOp({
@@ -162,13 +184,23 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
             events: detail.events || detail.operation.events || [],
           });
         }
+        try {
+          const children = await api.listDiagnostics({ parent_operation_id: op.operation_id, limit: 20 });
+          if (detailRequestRef.current === requestId) {
+            setChildOperations(children.items || []);
+            setChildrenHasMore(Boolean(children.has_more));
+          }
+        } catch {
+          // The selected operation remains useful even when its child index is unavailable.
+        }
       }
-    } catch {
-      // Keep existing op on error
+    } catch (err: any) {
+      if (detailRequestRef.current !== requestId) return;
+      setDetailError(err?.message || "Failed to load diagnostic detail. Retry to refresh this operation.");
     }
   };
 
-  const loadDiagnostics = async (overrideQuery?: string) => {
+  const loadDiagnostics = async (overrideQuery?: string, offset = 0) => {
     setLoading(true);
     setError(null);
     const queryToUse = overrideQuery !== undefined ? overrideQuery : operationQuery;
@@ -179,13 +211,20 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
         service: serviceFilter || undefined,
         operation_id: queryToUse || undefined,
         limit: 20,
+        offset,
       });
       const items = res.items || [];
-      setOperations(items);
-      if (items.length > 0) {
+      setOperations((previous) => offset === 0 ? items : [...previous, ...items]);
+      setOperationsHasMore(Boolean(res.has_more));
+      if (items.length > 0 && offset === 0) {
         handleSelectOp(items.find((item) => item.operation_id === selectedOperationId) || items[0]);
-      } else {
+      } else if (offset === 0) {
         setSelectedOp(null);
+        setSelectedCompleteness(null);
+        setDetailError(null);
+        setChildOperations([]);
+        setChildrenHasMore(false);
+        setEventsHasMore(false);
       }
     } catch (err: any) {
       setError(err.message || "Failed to load diagnostic telemetry");
@@ -194,6 +233,39 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadMoreOperations = () => {
+    void loadDiagnostics(undefined, operations.length);
+  };
+
+  const openChildOperation = (operation: DiagnosticOperation) => {
+    window.location.hash = `diagnostics?operation=${encodeURIComponent(operation.operation_id)}`;
+    void handleSelectOp(operation);
+  };
+
+  const loadMoreChildren = async () => {
+    if (!selectedOp) return;
+    const children = await api.listDiagnostics({
+      parent_operation_id: selectedOp.operation_id,
+      limit: 20,
+      offset: childOperations.length,
+    });
+    setChildOperations((previous) => [...previous, ...(children.items || [])]);
+    setChildrenHasMore(Boolean(children.has_more));
+  };
+
+  const loadMoreEvents = async () => {
+    if (!selectedOp) return;
+    const events = await api.getDiagnosticEvents(selectedOp.operation_id, {
+      limit: 100,
+      offset: selectedOp.events?.length || 0,
+    });
+    setSelectedOp((previous) => previous && previous.operation_id === selectedOp.operation_id
+      ? { ...previous, events: [...(previous.events || []), ...(events.items || [])] }
+      : previous);
+    setSelectedCompleteness(events.completeness);
+    setEventsHasMore(Boolean(events.completeness?.has_more));
   };
 
   const handleDownloadReport = async () => {
@@ -396,6 +468,11 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
                 </TableBody>
               </Table>
             </TableContainer>
+            {operationsHasMore && (
+              <Box sx={{ p: 1, display: "flex", justifyContent: "center" }}>
+                <Button size="small" onClick={loadMoreOperations} disabled={loading}>Load more operations</Button>
+              </Box>
+            )}
           </Card>
         </Grid>
 
@@ -428,9 +505,31 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
 
                 <Box sx={{ p: 1.5, bgcolor: "rgba(0,0,0,0.25)", borderRadius: "8px", mb: 2 }}>
                   <Typography variant="body2" sx={{ color: "text.primary", lineHeight: 1.6 }}>
-                    {selectedOp.summary || "The operation completed successfully."}
+                    {summaryText(selectedOp)}
                   </Typography>
                 </Box>
+
+                {detailError && (
+                  <Alert severity="warning" sx={{ mb: 1.5 }} action={<Button color="inherit" size="small" onClick={() => void handleSelectOp(selectedOp)}>Retry</Button>}>
+                    {detailError}
+                  </Alert>
+                )}
+
+                {childOperations.length > 0 && (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 0.5 }}>
+                      Child operations ({childOperations.length})
+                    </Typography>
+                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+                      {childOperations.map((child) => (
+                        <Button key={child.operation_id} size="small" variant="outlined" onClick={() => openChildOperation(child)}>
+                          {operationTitle(child)}
+                        </Button>
+                      ))}
+                    </Box>
+                    {childrenHasMore && <Button size="small" sx={{ mt: 0.75 }} onClick={() => void loadMoreChildren()}>Load more child operations</Button>}
+                  </Box>
+                )}
 
                 <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 1, fontSize: "0.85rem", mb: 2 }}>
                   <div><span style={{ color: "#94A3B8" }}>Service:</span> <strong>{selectedOp.service}</strong></div>
@@ -483,7 +582,7 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
                         </Box>
                       </Box>
                       <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                        Event: {ev.event} • Level: {ev.level} • {new Date(ev.timestamp).toLocaleTimeString()}
+                        Event: {ev.event} • Level: {ev.level} • {diagnosticEventTime(ev) ? new Date(diagnosticEventTime(ev)!).toLocaleTimeString() : "Time unavailable"}
                       </Typography>
                       {ev.metadata?.error_code && (
                         <Typography variant="caption" sx={{ color: "error.light", display: "block", mt: 0.3 }}>
@@ -502,6 +601,7 @@ export const DiagnosticsPage: React.FC<DiagnosticsPageProps> = ({ initialOperati
                       No discrete events recorded for this operation.
                     </Typography>
                   )}
+                  {eventsHasMore && <Button size="small" onClick={() => void loadMoreEvents()}>Load more retained events</Button>}
                 </Box>
               </Card>
 

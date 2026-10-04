@@ -189,6 +189,38 @@ def test_partial_provider_error_is_not_cached_and_can_recover(
     assert len(fake_client.calls) == 2
 
 
+def test_unverified_discovery_is_not_cached_as_an_empty_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
+    unverified = _api_response()
+    unverified["results"]["soccer"] = {
+        "matches": [],
+        "error": None,
+        "data_quality": {
+            "status": "unavailable",
+            "verified_count": 0,
+            "rejected_counts": {"missing_citation": 1},
+            "reason": "No verifiable upcoming fixtures were returned.",
+        },
+    }
+    recovered = _api_response()
+    fake_client = _FakeDiscoveryClient(unverified)
+    monkeypatch.setattr(api_main, "_build_match_discovery_client", lambda _: fake_client)
+    payload = {"date": "2026-06-01", "sports": ["soccer"], "limit_per_sport": 3}
+
+    first = client.post("/matches/discover", json=payload)
+    fake_client._response = recovered
+    second = client.post("/matches/discover", json=payload)
+
+    assert first.status_code == 200
+    assert first.json()["cache_status"] == "uncached"
+    assert first.json()["cache_confidence"] == "partial"
+    assert second.status_code == 200
+    assert second.json()["cache_status"] == "refreshed"
+    assert len(fake_client.calls) == 2
+
+
 def test_match_discovery_reuses_cache_and_can_discard_it(
     monkeypatch: pytest.MonkeyPatch,
     client: TestClient,
@@ -207,3 +239,19 @@ def test_match_discovery_reuses_cache_and_can_discard_it(
     assert second.json()["cache_status"] == "cached"
     assert len(fake_client.calls) == 1
     assert discarded.json() == {"discarded": True}
+
+
+def test_match_discovery_does_not_reuse_a_different_model_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
+    fake_client = _FakeDiscoveryClient(_api_response())
+    monkeypatch.setattr(api_main, "_build_match_discovery_client", lambda _: fake_client)
+    payload = {"date": "2026-06-01", "sports": ["soccer"], "limit_per_sport": 3}
+
+    first = client.post("/matches/discover", json={**payload, "llm_model": "model-a"})
+    second = client.post("/matches/discover", json={**payload, "llm_model": "model-b"})
+
+    assert first.json()["cache_status"] == "refreshed"
+    assert second.json()["cache_status"] == "refreshed"
+    assert len(fake_client.calls) == 2

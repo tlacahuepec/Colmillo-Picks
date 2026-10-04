@@ -33,6 +33,7 @@ import {
   CreateSlatePayload,
   SlateDetail,
   SlateRankedCandidate,
+  SlateSummary,
 } from "../api/types";
 import { SlateCandidateCard } from "../components/Slate/SlateCandidateCard";
 import { DEFAULT_TIMEZONE, isRecord, loadPageDraft, localDay, savePageDraft } from "../state/pageDrafts";
@@ -111,7 +112,7 @@ export const BestTodayPage: React.FC<BestTodayPageProps> = ({ onNavigateToDiagno
   const detailRequestRef = useRef(0);
 
   // ---- Recent Slates State ----
-  const [slates, setSlates] = useState<SlateDetail[]>([]);
+  const [slates, setSlates] = useState<SlateSummary[]>([]);
   const [loadingSlates, setLoadingSlates] = useState<boolean>(false);
   const [slatesError, setSlatesError] = useState<string | null>(null);
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
-import { DiagnosticsPage } from "./DiagnosticsPage";
+import { diagnosticEventTime, DiagnosticsPage } from "./DiagnosticsPage";
 import { api } from "../api/client";
 
 vi.mock("../api/client", () => ({
@@ -53,11 +53,11 @@ describe("DiagnosticsPage Component (ISSUE-13)", () => {
       counters: { active_operations: 2 },
       queue_depth: 0,
     } as any);
-    vi.mocked(api.listDiagnostics).mockResolvedValue({
-      items: mockOperations,
+    vi.mocked(api.listDiagnostics).mockImplementation((params: any) => Promise.resolve({
+      items: params?.parent_operation_id ? [] : mockOperations,
       limit: 20,
       offset: 0,
-    } as any);
+    } as any));
     vi.mocked(api.getDiagnosticDetail).mockResolvedValue({
       operation: mockOperations[0],
       events: mockOperations[0].events,
@@ -158,5 +158,10 @@ describe("DiagnosticsPage Component (ISSUE-13)", () => {
         expect.objectContaining({ operation_id: "op-test-102" })
       );
     });
+  });
+
+  it("accepts the backend event timestamp field and legacy timestamp field", () => {
+    expect(diagnosticEventTime({ event: "discover", level: "INFO", ts: "2026-09-13T12:00:00Z" })).toBe("2026-09-13T12:00:00Z");
+    expect(diagnosticEventTime({ event: "discover", level: "INFO", timestamp: "2026-09-13T12:00:01Z" })).toBe("2026-09-13T12:00:01Z");
   });
 });

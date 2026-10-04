@@ -208,6 +208,7 @@ Priorities: **P1** = immediate customer functionality/trust; **P2** = reliabilit
 
 ### DISC-02 — Distinguish verified fixtures from unavailable discovery
 
+- **Implementation status:** Implemented in the working tree: every suggested fixture now requires a URL from provider-issued grounding metadata, rather than accepting model-authored links. Missing or invalid evidence produces structured `unavailable` results with bounded rejection counts; those results are not cached as empty schedules. Discovery cache keys also separate provider/model variants.
 - **P1 / M.** As a customer, I know whether no matches exist, discovery failed, or suggestions could not be verified.
 - **Scope:** Validate and preserve fixture provenance from actual provider evidence; canonical teams/league/date; structured per-sport outcomes and filter reason counts. Clearly label or withhold unverified suggestions. Use the same discovery result contract for Generate and slate orchestration.
 - **Acceptance:** Missing kickoff, unsupported league, wrong date, already-started game, no citations, malformed output, and genuinely empty schedule are distinguishable. A model-authored URL alone does not establish provider grounding. Rejected items do not leave an unexplained empty `ok` response. The interface does not claim fixture truth solely because text normalization succeeded.
@@ -296,6 +297,7 @@ Priorities: **P1** = immediate customer functionality/trust; **P2** = reliabilit
 
 ### DIAG-02 — Make the timeline, refresh, and failure messaging trustworthy
 
+- **Implementation status:** Implemented in the working tree: the UI consumes wire `ts` with a legacy fallback, exposes detail-load failure/retry states, clears stale detail state, supports parent/child navigation, and pages operations, children, and retained events.
 - **P2 / M.** As a customer, diagnostic times and messages reflect the selected operation and all retained evidence is reachable.
 - **Scope:** Map wire `ts` correctly; remove optimistic success fallback; show detail-load errors; reset completeness/events on selection; page through operations and events; refresh active operations; distinguish diagnostic-storage health from pipeline readiness.
 - **Acceptance:** Real serialized events show valid timestamps. A failed operation with no summary never says it completed successfully. Selection cannot show a previous operation's events/completeness. Operations beyond the first 20 and events beyond the first 100 are reachable with truncation/retention messaging intact. Refresh preserves current selection where valid.
@@ -305,6 +307,7 @@ Priorities: **P1** = immediate customer functionality/trust; **P2** = reliabilit
 
 ### API-01 — Align frontend types and mocks with real response shapes
 
+- **Implementation status:** Backend-contract portion implemented in the working tree: slate summary/detail/status contracts are distinct in the frontend API types, nullable failed-slate activity remains nullable, and deterministic TestClient coverage locks discovery, pick, slate, and Diagnostics wire shapes. Frontend fixture-consumption tests remain outside this backend-only release gate.
 - **P1 / M.** As a maintainer, tests fail when the API and customer screens disagree.
 - **Scope:** Separate slate summary/detail types; represent nullable counts/durations and actual lifecycle/outcome values; type diagnostic event timestamps and parent links; add response-contract fixtures exported from isolated API tests. Prefer generated definitions or one explicit, tested adapter over unchecked casts.
 - **Acceptance:** List mocks contain list fields, not fabricated detail-only data. Diagnostic fixtures use the actual wire envelope. Nullable failed-slate counts do not appear as actual zero activity. Contract checks flag renamed/missing fields and prevent a fixture-only success path from passing as end-to-end coverage.
@@ -314,6 +317,7 @@ Priorities: **P1** = immediate customer functionality/trust; **P2** = reliabilit
 
 ### QA-01 — Gate release on the five customer journeys
 
+- **Implementation status:** The backend release-contract gate is implemented in the working tree through `tests/api/test_customer_wire_contracts.py`. Browser-level and live-provider journeys remain intentionally deferred.
 - **P1 / M.** As a customer, these complaints remain fixed when a new UI/API build ships.
 - **Scope:** App-level navigation and real HTTP integration journeys backed by isolated DBs and controlled providers; sanitized provider-envelope replay; a bounded deployed smoke check with known upcoming fixture and documented build identity. Update old issue links with the regression evidence rather than simply changing their status labels.
 - **Acceptance:** Each complaint has a failing-before/passing-after test or documented deterministic reproduction. Cover NFL player props and game bets, one other sport, empty schedule, provider failure, partial slate, long-running job, history identity, explicit grading, and diagnostics child navigation. Release evidence records UI/API commit, timezone, worker mode, operation IDs, and actual outcomes.

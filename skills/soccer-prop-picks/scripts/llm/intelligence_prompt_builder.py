@@ -156,7 +156,7 @@ def build_match_discovery_user_prompt(
                             "importance": "high|medium|low",
                             "notes": "concise 1-sentence rationale or null",
                             "sources": [
-                                {"label": "source label", "url": "https://... or null"}
+                                {"label": "source label", "url": "exact provider-grounded URL or null"}
                             ],
                             "data_quality": {
                                 "confidence": "high|medium|low",
@@ -175,7 +175,7 @@ def build_match_discovery_user_prompt(
             "Group every result under grouped_by_sport using the sport key",
             "If no matches are scheduled for a sport on this date, return an empty matches list with error null and data_quality ok",
             "If a sport cannot be discovered due to an error, return an empty matches list plus an error string for that sport",
-            "Include at most 1 primary source URL per match in sources array to keep JSON compact",
+            "Include at most 1 primary URL per match and use an exact URL returned by provider grounding; never invent or rewrite a URL",
             "Keep match notes concise (1 sentence maximum) or null",
             "Use null for unknown kickoff, league, competition, notes, or source URLs",
             "Do not fabricate fixtures, kickoff times, leagues, or sources",

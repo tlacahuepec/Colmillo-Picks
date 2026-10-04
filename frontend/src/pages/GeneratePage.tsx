@@ -574,9 +574,20 @@ export const GeneratePage: React.FC<GeneratePageProps> = ({ onNavigateToDiagnost
                   </Alert>
                 )}
 
+                {sportData.data_quality?.status === "unavailable" && (
+                  <Alert severity="info" sx={{ mb: 1.5 }}>
+                    {sportData.data_quality.reason || "Suggestions were withheld because the returned fixtures could not be verified."}
+                    {Object.keys(sportData.data_quality.rejected_counts || {}).length > 0 && (
+                      ` Rejected: ${Object.entries(sportData.data_quality.rejected_counts || {}).map(([reason, count]) => `${count} ${reason.replace(/_/g, " ")}`).join(", ")}.`
+                    )}
+                  </Alert>
+                )}
+
                 {(!sportData.matches || sportData.matches.length === 0) ? (
                   <Typography variant="body2" sx={{ color: "text.disabled", fontStyle: "italic" }}>
-                    No suggested matches returned.
+                    {sportData.data_quality?.status === "empty"
+                      ? "No matches are scheduled for this sport on the selected date."
+                      : "No verified suggestions are available."}
                   </Typography>
                 ) : (
                   <Box sx={{ display: "flex", flexDirection: "column", gap: 1.2 }}>

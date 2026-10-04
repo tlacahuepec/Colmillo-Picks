@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { clearAllPageDrafts, localDay, loadPageDraft, savePageDraft } from "./pageDrafts";
 
-afterEach(() => window.sessionStorage.clear());
+afterEach(() => window.localStorage.clear());
 
 describe("page drafts", () => {
   it("uses Chicago's calendar day rather than UTC midnight", () => {
@@ -22,16 +22,16 @@ describe("page drafts", () => {
   });
 
   it("drops malformed and obsolete drafts rather than blocking a page", () => {
-    window.sessionStorage.setItem("colmillo:view-draft:history", "not-json");
+    window.localStorage.setItem("colmillo:view-draft:history", "not-json");
     expect(loadPageDraft("history", { page: 0 }, (value): value is { page: number } => typeof value === "object" && value !== null && typeof (value as { page?: unknown }).page === "number")).toEqual({ page: 0 });
-    expect(window.sessionStorage.getItem("colmillo:view-draft:history")).toBeNull();
+    expect(window.localStorage.getItem("colmillo:view-draft:history")).toBeNull();
   });
 
   it("only clears Colmillo draft keys", () => {
     savePageDraft("catalog", { sport: "nfl" });
-    window.sessionStorage.setItem("unrelated", "keep");
+    window.localStorage.setItem("unrelated", "keep");
     clearAllPageDrafts();
-    expect(window.sessionStorage.getItem("colmillo:view-draft:catalog")).toBeNull();
-    expect(window.sessionStorage.getItem("unrelated")).toBe("keep");
+    expect(window.localStorage.getItem("colmillo:view-draft:catalog")).toBeNull();
+    expect(window.localStorage.getItem("unrelated")).toBe("keep");
   });
 });

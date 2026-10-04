@@ -12,7 +12,8 @@ export interface PickSummary {
   llm_status?: string;
   operation_id?: string;
   outcome?: string;
-  latency_ms?: number;
+  latency_ms?: number | null;
+  error_stage?: string | null;
 }
 
 export interface PickScore {
@@ -46,7 +47,7 @@ export interface PickDetail {
   sport?: string;
   operation_id?: string;
   outcome?: string;
-  latency_ms?: number;
+  latency_ms?: number | null;
   error_stage?: string;
   error_message?: string;
   error_details?: Record<string, any>;
@@ -74,6 +75,7 @@ export interface CreatePickPayload {
 export interface DiscoverySource {
   label: string;
   url?: string | null;
+  grounded?: boolean;
 }
 
 export interface DiscoveredMatch {
@@ -93,6 +95,10 @@ export interface DiscoveredMatch {
     confidence?: string;
     missing_fields?: string[];
     source_count?: number;
+    status?: "verified" | "empty" | "unavailable" | "error" | "partial" | string;
+    verified_count?: number;
+    rejected_counts?: Record<string, number>;
+    reason?: string;
     [key: string]: any;
   };
 }
@@ -100,7 +106,13 @@ export interface DiscoveredMatch {
 export interface SportDiscoveryResult {
   matches: DiscoveredMatch[];
   error?: string;
-  data_quality?: Record<string, any>;
+  data_quality?: {
+    status?: "verified" | "empty" | "unavailable" | "error" | "partial" | string;
+    verified_count?: number;
+    rejected_counts?: Record<string, number>;
+    reason?: string;
+    [key: string]: any;
+  };
 }
 
 export interface MatchDiscoveryRequest {
@@ -118,7 +130,7 @@ export interface MatchDiscoveryResponse {
   generated_at_utc: string;
   limit_per_sport: number;
   results: Record<string, SportDiscoveryResult>;
-  cache_status?: "cached" | "refreshed";
+  cache_status?: "cached" | "refreshed" | "uncached";
   cache_confidence?: string;
   cache_expires_at?: string;
 }
@@ -182,31 +194,50 @@ export interface SlateMatchRun {
   event_date: string;
   status: string;
   pick_count: number;
-  latency_ms: number;
+  latency_ms?: number | null;
   catalog_source?: string;
   catalog_refresh_resources?: string[];
   error_stage?: string;
   error_message?: string;
 }
 
-export interface SlateDetail {
+export interface SlateSummary {
   id: string;
   created_at: string;
   status: "pending" | "queued" | "running" | "success" | "partial" | "failed";
   outcome?: string;
+  operation_id?: string | null;
+  request: Record<string, any>;
+  latency_ms?: number | null;
+}
+
+export interface SlateDetail extends SlateSummary {
   candidates: SlateRankedCandidate[];
   match_runs: SlateMatchRun[];
-  latency_ms: number;
-  discovery_latency_ms: number;
-  matches_attempted: number;
-  matches_succeeded: number;
+  discovery_latency_ms?: number | null;
+  matches_attempted?: number | null;
+  matches_succeeded?: number | null;
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
-  request?: Record<string, any>;
   error_stage?: string;
   error_message?: string;
-  operation_id?: string;
+}
+
+export interface SlateStatus {
+  id: string;
+  status: SlateSummary["status"];
+  operation_id?: string | null;
+  outcome?: string;
+  error_stage?: string | null;
+  error_message?: string | null;
+  latency_ms?: number | null;
+}
+
+export interface SlateListResponse {
+  items: SlateSummary[];
+  limit: number;
+  offset: number;
 }
 
 export interface CreateSlatePayload {
@@ -248,15 +279,7 @@ export interface DiagnosticOperation {
   started_at: string;
   updated_at: string;
   summary?: string;
-  events?: Array<{
-    event: string;
-    stage?: string;
-    level: string;
-    duration_ms?: number;
-    timestamp: string;
-    outcome?: string;
-    metadata?: Record<string, any>;
-  }>;
+  events?: DiagnosticEvent[];
   metadata?: Record<string, any>;
 }
 
@@ -275,16 +298,35 @@ export interface DiagnosticCompleteness {
 
 export interface DiagnosticDetailResponse {
   operation: DiagnosticOperation;
-  events: Array<{
-    event: string;
-    stage?: string;
-    level: string;
-    duration_ms?: number;
-    timestamp: string;
-    outcome?: string;
-    metadata?: Record<string, any>;
-  }>;
+  events: DiagnosticEvent[];
   completeness: DiagnosticCompleteness;
+}
+
+export interface DiagnosticListResponse {
+  items: DiagnosticOperation[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  next_offset: number | null;
+}
+
+export interface DiagnosticEventsResponse {
+  items: DiagnosticEvent[];
+  limit: number;
+  offset: number;
+  completeness: DiagnosticCompleteness;
+}
+
+/** The API serializes event time as `ts`; `timestamp` remains for legacy data. */
+export interface DiagnosticEvent {
+  event: string;
+  stage?: string;
+  level: string;
+  duration_ms?: number;
+  ts?: string;
+  timestamp?: string;
+  outcome?: string;
+  metadata?: Record<string, any>;
 }
 
 export interface CatalogEventItem {

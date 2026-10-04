@@ -44,6 +44,31 @@ describe("GeneratePage Component", () => {
     expect(screen.getByText(/Kansas City Chiefs vs Buffalo Bills/i)).toBeInTheDocument();
   });
 
+  it("explains when returned fixtures could not be verified", async () => {
+    vi.spyOn(api, "discoverMatches").mockResolvedValue({
+      date_utc: "2026-06-01",
+      generated_at_utc: "2026-06-01T12:00:00Z",
+      limit_per_sport: 3,
+      results: {
+        soccer: {
+          matches: [],
+          data_quality: {
+            status: "unavailable",
+            reason: "No verifiable upcoming fixtures were returned.",
+            rejected_counts: { missing_citation: 2, missing_kickoff: 1 },
+          },
+        },
+      },
+    });
+
+    render(<GeneratePage />);
+    fireEvent.click(screen.getByRole("button", { name: /Discover Today's Matches/i }));
+
+    expect(await screen.findByText(/No verifiable upcoming fixtures were returned/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 missing citation, 1 missing kickoff/i)).toBeInTheDocument();
+    expect(screen.getByText("No verified suggestions are available.")).toBeInTheDocument();
+  });
+
   it("populates the manual form when 'Use Match' is clicked", async () => {
     vi.spyOn(api, "discoverMatches").mockResolvedValue(mockDiscoveryResponse);
 

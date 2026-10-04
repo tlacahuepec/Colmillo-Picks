@@ -8,7 +8,9 @@ type StoredDraft<T> = {
 
 function storage(): Storage | null {
   try {
-    return typeof window === "undefined" ? null : window.sessionStorage;
+    // Drafts intentionally outlive a tab session. Server data is always
+    // refetched after hydration; this only retains in-progress customer state.
+    return typeof window === "undefined" ? null : window.localStorage;
   } catch {
     return null;
   }

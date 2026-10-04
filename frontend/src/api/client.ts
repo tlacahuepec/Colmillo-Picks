@@ -9,6 +9,8 @@ import {
   CreatePickPayload,
   CreateSlatePayload,
   DiagnosticDetailResponse,
+  DiagnosticEventsResponse,
+  DiagnosticListResponse,
   DiagnosticOperation,
   HitRateSummary,
   MatchDiscoveryRequest,
@@ -17,6 +19,8 @@ import {
   PickDetail,
   PickSummary,
   SlateDetail,
+  SlateListResponse,
+  SlateStatus,
 } from "./types";
 
 const getApiBase = () => {
@@ -152,7 +156,7 @@ export const api = {
     }),
 
   listSlates: (limit: number = 10, offset: number = 0) =>
-    request<{ items: SlateDetail[]; limit: number; offset: number }>(
+    request<SlateListResponse>(
       `/slates?limit=${limit}&offset=${offset}`
     ),
 
@@ -160,7 +164,7 @@ export const api = {
     request<SlateDetail>(`/slates/${slateId}`),
 
   getSlateStatus: (slateId: string) =>
-    request<{ id: string; status: string; error_stage?: string; error_message?: string }>(`/slates/${slateId}/status`),
+    request<SlateStatus>(`/slates/${slateId}/status`),
 
   // --- Screen 4: Grounding Audit ---
   runGroundingAudit: (payload: { num_players: number; num_attempts: number; use_bible_style: boolean }) =>
@@ -182,20 +186,28 @@ export const api = {
     }),
 
   // --- Screen 5: Diagnostics & Observability ---
-  listDiagnostics: (params: { sport?: string; outcome?: string; service?: string; operation_id?: string; since?: string; limit?: number; offset?: number }) => {
+  listDiagnostics: (params: { sport?: string; outcome?: string; service?: string; operation_id?: string; parent_operation_id?: string; since?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
     if (params.sport && params.sport !== "all") q.append("sport", params.sport);
     if (params.outcome) q.append("outcome", params.outcome);
     if (params.service) q.append("service", params.service);
     if (params.operation_id) q.append("operation_id", params.operation_id);
+    if (params.parent_operation_id) q.append("parent_operation_id", params.parent_operation_id);
     if (params.since) q.append("since", params.since);
     if (params.limit) q.append("limit", params.limit.toString());
     if (params.offset) q.append("offset", params.offset.toString());
-    return request<{ items: DiagnosticOperation[]; limit: number; offset: number }>(`/diagnostics/operations?${q.toString()}`);
+    return request<DiagnosticListResponse>(`/diagnostics/operations?${q.toString()}`);
   },
 
   getDiagnosticDetail: (operationId: string) =>
     request<DiagnosticDetailResponse>(`/diagnostics/operations/${encodeURIComponent(operationId)}`),
+
+  getDiagnosticEvents: (operationId: string, params: { limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.append("limit", params.limit.toString());
+    if (params.offset) q.append("offset", params.offset.toString());
+    return request<DiagnosticEventsResponse>(`/diagnostics/operations/${encodeURIComponent(operationId)}/events?${q.toString()}`);
+  },
 
   exportDiagnostic: (operationId: string) =>
     requestBlob(`/diagnostics/operations/${encodeURIComponent(operationId)}/export`),
