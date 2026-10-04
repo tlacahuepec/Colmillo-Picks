@@ -236,7 +236,7 @@ class TestSlateFullSuccess:
                 "source_match": {"home_team": "Arsenal", "away_team": "Liverpool"},
             }
         ]
-        match_runs = [{"sport": "soccer", "home_team": "Arsenal", "away_team": "Liverpool", "status": "success", "pick_count": 1}]
+        match_runs = [{"sport": "soccer", "home_team": "Arsenal", "away_team": "Liverpool", "status": "success", "pick_count": 1, "operation_id": "op-match-arsenal"}]
         db_module.mark_slate_success(
             slate_id=row.id,
             candidates=candidates,
@@ -257,6 +257,7 @@ class TestSlateFullSuccess:
         assert body["matches_succeeded"] == 1
         assert body["latency_ms"] == 2000
         assert body["discovery_latency_ms"] == 500
+        assert body["match_runs"][0]["operation_id"] == "op-match-arsenal"
 
 
 class TestSlatePartialFailure:

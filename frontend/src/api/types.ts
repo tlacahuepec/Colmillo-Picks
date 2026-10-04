@@ -195,6 +195,7 @@ export interface SlateMatchRun {
   status: string;
   pick_count: number;
   latency_ms?: number | null;
+  operation_id?: string | null;
   catalog_source?: string;
   catalog_refresh_resources?: string[];
   error_stage?: string;

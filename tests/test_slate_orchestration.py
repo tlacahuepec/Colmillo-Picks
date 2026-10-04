@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -166,6 +167,40 @@ class TestPartialPipelineFailure:
         failed_runs = [r for r in result.match_runs if r["status"] == "failed"]
         assert len(failed_runs) == 1
         assert failed_runs[0]["error_message"] is not None
+
+
+class TestMatchDiagnosticIdentity:
+    def test_every_attempt_records_its_child_operation_id_and_outcome(self) -> None:
+        deps = _make_deps(
+            discovery_response=_discovery_response(["soccer"], matches_per_sport=2),
+            pipeline_error_teams={"Barcelona"},
+        )
+        finished: list[tuple[str, str]] = []
+
+        @contextmanager
+        def match_operation(*, sport, home_team, away_team, event_date):
+            operation_id = f"op-{home_team.lower()}"
+
+            class Diagnostic:
+                id = operation_id
+
+                def finish(self, outcome, **_metadata):
+                    finished.append((self.id, outcome))
+
+            yield Diagnostic()
+
+        deps = SlateOrchestrationDeps(
+            discover_matches=deps.discover_matches,
+            run_match_pipeline=deps.run_match_pipeline,
+            match_operation=match_operation,
+        )
+        result = execute_slate_job(
+            request_dict={"date": "2026-06-01", "sports": ["soccer"], "max_matches_per_sport": 2, "top_n": 5},
+            deps=deps,
+        )
+
+        assert [run["operation_id"] for run in result.match_runs] == ["op-arsenal", "op-barcelona"]
+        assert finished == [("op-arsenal", "success"), ("op-barcelona", "failed")]
 
 
 class TestAllPipelineFailures:

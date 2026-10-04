@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Direct navigation links to child diagnostic operations from slate match run items on the Best Today page and API response (`match_run.operation_id`).
 - Catalog staged rollout subsystem integration bridging team-based lookups via `CatalogStore.find_snapshot` and typed contract deserializers (`snapshot_from_dict`, `catalog_event_from_dict`, `canonical_ref_from_dict`).
 - Multi-threaded scheduler and lease concurrency stress test suite in `tests/test_catalog_scheduler.py` verifying race-free claims, heartbeat renewal, and crash recovery.
 - Field-level freshness policy test matrix in `tests/test_catalog_freshness.py` covering all TTL categories, hierarchical dotted prefixes, explicit `valid_until` overrides, and selective resource refreshes.
