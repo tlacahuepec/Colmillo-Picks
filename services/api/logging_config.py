@@ -8,7 +8,7 @@ import math
 import os
 import re
 import sys
-from typing import Any
+from typing import Any, TypeGuard
 
 from services.diagnostics import public_trace, safe_metadata, safe_text, valid_id
 
@@ -56,7 +56,7 @@ def safe_code(value: Any, default: str = "redacted") -> str:
     return default
 
 
-def valid_request_id(value: Any) -> bool:
+def valid_request_id(value: Any) -> TypeGuard[str]:
     return type(value) is str and valid_id(value)
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,7 +14,7 @@ from services.api.db import (
     mark_pick_success,
     session_scope,
 )
-from services.worker.main import run_resolution_cycle
+from services.worker.main import _attempt_resolution, run_resolution_cycle
 
 
 @pytest.fixture(autouse=True)
@@ -72,3 +72,22 @@ class TestRunResolutionCycle:
         resolved = run_resolution_cycle()
 
         assert resolved == 0
+
+
+class TestAttemptResolution:
+    def test_attempt_resolution_uses_discovery_client_and_resolves(self):
+        row = _make_successful_pick_with_kickoff(hours_ago=5)
+        pick = db_module.get_pick_run(row.id)
+        assert pick is not None
+        with patch("match_discovery.MatchDiscoveryClient.from_env") as mock_from_env, \
+             patch("outcome_resolver.OutcomeResolver.resolve") as mock_resolve:
+            mock_client_instance = MagicMock()
+            mock_from_env.return_value = MagicMock(client=mock_client_instance)
+            _attempt_resolution(pick)
+
+            assert mock_from_env.called
+            assert mock_resolve.called
+            assert mock_resolve.call_args.kwargs["pick_id"] == pick.id
+            picks_passed = mock_resolve.call_args.kwargs["picks"]
+            assert len(picks_passed) == 1
+            assert picks_passed[0]["player"] == "Judge"
