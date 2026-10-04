@@ -204,11 +204,16 @@ export interface SlateMatchRun {
 export interface SlateSummary {
   id: string;
   created_at: string;
-  status: "pending" | "queued" | "running" | "success" | "partial" | "failed";
+  status: "pending" | "queued" | "running" | "success" | "partial" | "failed" | "interrupted";
   outcome?: string;
   operation_id?: string | null;
   request: Record<string, any>;
   latency_ms?: number | null;
+  progress_stage?: string | null;
+  matches_discovered?: number | null;
+  matches_completed?: number | null;
+  heartbeat_at?: string | null;
+  stop_reason?: string | null;
 }
 
 export interface SlateDetail extends SlateSummary {
@@ -222,6 +227,7 @@ export interface SlateDetail extends SlateSummary {
   total_tokens?: number;
   error_stage?: string;
   error_message?: string;
+  resume_count?: number;
 }
 
 export interface SlateStatus {
@@ -232,6 +238,12 @@ export interface SlateStatus {
   error_stage?: string | null;
   error_message?: string | null;
   latency_ms?: number | null;
+  progress_stage?: string | null;
+  matches_discovered?: number | null;
+  matches_completed?: number | null;
+  heartbeat_at?: string | null;
+  stop_reason?: string | null;
+  resume_count?: number;
 }
 
 export interface SlateListResponse {

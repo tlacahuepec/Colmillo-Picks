@@ -339,6 +339,12 @@ class SlateStatusResponse(DiagnosticReference):
     error_stage: str | None = None
     error_message: str | None = None
     latency_ms: int | None = None
+    progress_stage: str | None = None
+    matches_discovered: int | None = None
+    matches_completed: int | None = None
+    heartbeat_at: datetime | None = None
+    stop_reason: str | None = None
+    resume_count: int = 0
 
 
 class SlateSummary(DiagnosticReference):
@@ -347,6 +353,11 @@ class SlateSummary(DiagnosticReference):
     status: str
     request: dict[str, Any]
     latency_ms: int | None = None
+    progress_stage: str | None = None
+    matches_discovered: int | None = None
+    matches_completed: int | None = None
+    heartbeat_at: datetime | None = None
+    stop_reason: str | None = None
 
 
 class SlateListResponse(BaseModel):
@@ -402,6 +413,12 @@ class SlateDetailResponse(DiagnosticReference):
     total_tokens: int | None = None
     error_stage: str | None = None
     error_message: str | None = None
+    progress_stage: str | None = None
+    matches_discovered: int | None = None
+    matches_completed: int | None = None
+    heartbeat_at: datetime | None = None
+    stop_reason: str | None = None
+    resume_count: int = 0
 
 
 class RunSummary(DiagnosticReference):
@@ -1112,6 +1129,41 @@ def _run_next_queued_slate_job() -> None:
         diagnostic.finish(getattr(row, "outcome", None) or "failed")
 
 
+def _serialize_slate_candidates(candidates):
+    return [
+        {
+            "rank": idx + 1, "sport": candidate.sport, "player": candidate.player,
+            "subject_type": candidate.subject_type, "subject_name": candidate.subject_name,
+            "selection": candidate.selection, "offer": candidate.offer, "market": candidate.market,
+            "line": candidate.line, "direction": candidate.direction, "confidence": candidate.confidence,
+            "normalized_score": candidate.normalized_score, "risk_flags": list(candidate.risk_flags),
+            "availability_status": candidate.availability_status, "source_match": candidate.source_match,
+            "source_pick": dict(candidate.source_pick) if candidate.source_pick else {},
+        }
+        for idx, candidate in enumerate(candidates)
+    ]
+
+
+def _restore_slate_candidates(records):
+    from slate_ranking import SlateCandidate
+    restored = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        try:
+            restored.append(SlateCandidate(
+                sport=record["sport"], source_match=record.get("source_match") or {}, player=record["player"],
+                market=record["market"], line=record.get("line"), direction=record["direction"],
+                confidence=record["confidence"], raw_score=None, normalized_score=float(record["normalized_score"]),
+                risk_flags=tuple(record.get("risk_flags") or ()), availability_status=record.get("availability_status", "unknown"),
+                source_pick=record.get("source_pick") or {}, subject_type=record.get("subject_type", "player"),
+                subject_name=record.get("subject_name", ""), selection=record.get("selection", ""), offer=record.get("offer"),
+            ))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return restored
+
+
 def _execute_slate_record(slate_id, request_dict, job_id):
 
     from services.api.slate_orchestration import (
@@ -1120,29 +1172,36 @@ def _execute_slate_record(slate_id, request_dict, job_id):
 
     try:
         deps = _build_slate_deps(request_dict)
-        result = execute_slate_job(request_dict=request_dict, deps=deps)
-
-        candidates_dicts = [
-            {
-                "rank": idx + 1,
-                "sport": c.sport,
-                "player": c.player,
-                "subject_type": c.subject_type,
-                "subject_name": c.subject_name,
-                "selection": c.selection,
-                "offer": c.offer,
-                "market": c.market,
-                "line": c.line,
-                "direction": c.direction,
-                "confidence": c.confidence,
-                "normalized_score": c.normalized_score,
-                "risk_flags": list(c.risk_flags),
-                "availability_status": c.availability_status,
-                "source_match": c.source_match,
-                "source_pick": dict(c.source_pick) if c.source_pick else {},
+        existing_row = db_module.get_slate_run(slate_id)
+        resume_kwargs = {}
+        if request_dict.get("_resume") and existing_row is not None:
+            resume_kwargs = {
+                "discovery_override": json.loads(existing_row.discovered_matches_json or "[]"),
+                "existing_match_runs": json.loads(existing_row.match_runs_json or "[]"),
+                "existing_candidates": _restore_slate_candidates(json.loads(existing_row.candidates_json or "[]")),
             }
-            for idx, c in enumerate(result.candidates)
-        ]
+        def checkpoint(stage_name, discovered_matches, candidates, match_runs, discovery_latency_ms):
+            db_module.checkpoint_slate_run(
+                slate_id=slate_id, stage=stage_name, discovered_matches=discovered_matches,
+                candidates=_serialize_slate_candidates(candidates), match_runs=match_runs,
+                discovery_latency_ms=discovery_latency_ms,
+            )
+            jobs_module.heartbeat_slate_job(job_id)
+
+        result = execute_slate_job(request_dict=request_dict, deps=deps, on_checkpoint=checkpoint, **resume_kwargs)
+        candidates_dicts = _serialize_slate_candidates(result.candidates)
+
+        if result.interrupted:
+            db_module.mark_slate_interrupted(
+                slate_id=slate_id, reason=result.stop_reason or "budget_exhausted",
+                message="Slate execution reached its configured time budget. Resume to run remaining matches.",
+                latency_ms=result.latency_ms, candidates=candidates_dicts, match_runs=result.match_runs,
+                discovered_matches=result.discovered_matches or [], discovery_latency_ms=result.discovery_latency_ms,
+                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+                total_tokens=result.total_tokens,
+            )
+            jobs_module.mark_slate_job_failed(job_id, "Slate interrupted; customer resume required")
+            return
 
         if not result.candidates and (getattr(result, "discovery_failures", 0) or any(m.get("status") in {"failed", "pending_data"} for m in result.match_runs)):
             db_module.mark_slate_failed(
@@ -1208,7 +1267,8 @@ def _build_slate_deps(request_dict: dict[str, Any]):
     def run_pipeline(
         *, sport: str, home_team: str, away_team: str, event_date: str, markets: tuple[str, ...]
     ) -> list[dict[str, Any]]:
-        with operation("slate_match", sport=sport, home_team=home_team, away_team=away_team, event_date=event_date) as diagnostic:
+        with operation("slate_match", sport=sport, home_team=home_team, away_team=away_team,
+                       event_date=event_date, parent_operation_id=request_dict.get("operation_id")) as diagnostic:
             try:
                 scores = run_match(sport=sport, home_team=home_team, away_team=away_team, event_date=event_date, markets=markets)
             except Exception as exc:
@@ -1274,6 +1334,12 @@ def _slate_row_to_detail(row: Any) -> SlateDetailResponse:
         total_tokens=getattr(row, "total_tokens", None),
         error_stage=row.error_stage,
         error_message=row.error_message,
+        progress_stage=getattr(row, "progress_stage", None),
+        matches_discovered=getattr(row, "matches_discovered", None),
+        matches_completed=getattr(row, "matches_completed", None),
+        heartbeat_at=getattr(row, "heartbeat_at", None),
+        stop_reason=getattr(row, "stop_reason", None),
+        resume_count=getattr(row, "resume_count", 0) or 0,
     )
 
 
@@ -1785,6 +1851,11 @@ def create_app() -> FastAPI:
                 status=row.status,
                 request=json.loads(row.request_json) if row.request_json else {},
                 latency_ms=row.latency_ms,
+                progress_stage=getattr(row, "progress_stage", None),
+                matches_discovered=getattr(row, "matches_discovered", None),
+                matches_completed=getattr(row, "matches_completed", None),
+                heartbeat_at=getattr(row, "heartbeat_at", None),
+                stop_reason=getattr(row, "stop_reason", None),
             )
             for row in rows
         ]
@@ -1834,7 +1905,26 @@ def create_app() -> FastAPI:
             error_stage=row.error_stage,
             error_message=row.error_message,
             latency_ms=row.latency_ms,
+            progress_stage=getattr(row, "progress_stage", None),
+            matches_discovered=getattr(row, "matches_discovered", None),
+            matches_completed=getattr(row, "matches_completed", None),
+            heartbeat_at=getattr(row, "heartbeat_at", None),
+            stop_reason=getattr(row, "stop_reason", None),
+            resume_count=getattr(row, "resume_count", 0) or 0,
         )
+
+    @app.post("/slates/{slate_id}/resume", response_model=SlateAcceptedResponse, status_code=202)
+    def resume_slate(slate_id: str, background_tasks: BackgroundTasks) -> SlateAcceptedResponse:
+        request_dict = db_module.prepare_slate_resume(slate_id=slate_id)
+        if request_dict is None:
+            raise HTTPException(status_code=409, detail="Only interrupted slates can be resumed.")
+        row = db_module.get_slate_run(slate_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Slate not found.")
+        jobs_module.enqueue_slate_run(slate_id=slate_id, request_dict=request_dict)
+        if os.getenv("COLMILLO_WORKER_MODE", "").lower() != "external":
+            background_tasks.add_task(_run_next_queued_slate_job)
+        return SlateAcceptedResponse(id=row.id, status="queued", created_at=row.created_at, operation_id=row.operation_id)
 
     return app
 

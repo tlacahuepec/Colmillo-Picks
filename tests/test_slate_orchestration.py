@@ -206,6 +206,40 @@ class TestTimingCaptured:
         assert result.discovery_latency_ms >= 0
 
 
+class TestCheckpointedResume:
+    def test_budget_interrupts_after_a_checkpoint_and_resume_skips_completed_match(self) -> None:
+        deps = _make_deps(discovery_response=_discovery_response(["soccer"], matches_per_sport=2))
+        request = {
+            "date": "2026-06-01", "sports": ["soccer"], "max_matches_per_sport": 2, "top_n": 5,
+        }
+        checkpoints: list[tuple[int, int]] = []
+
+        interrupted = execute_slate_job(
+            request_dict=request,
+            deps=deps,
+            per_match_budget_seconds=-1,
+            on_checkpoint=lambda _stage, matches, _candidates, runs, _latency: checkpoints.append((len(matches), len(runs))),
+        )
+
+        assert interrupted.interrupted is True
+        assert interrupted.stop_reason == "budget_exhausted"
+        assert len(interrupted.match_runs) == 1
+        assert checkpoints[-1] == (2, 1)
+
+        resumed = execute_slate_job(
+            request_dict=request,
+            deps=deps,
+            discovery_override=interrupted.discovered_matches,
+            existing_match_runs=interrupted.match_runs,
+            existing_candidates=interrupted.candidates,
+        )
+
+        assert resumed.interrupted is False
+        assert len(resumed.match_runs) == 2
+        assert resumed.matches_attempted == 2
+        assert resumed.matches_succeeded == 2
+
+
 class TestDiscoveryFailure:
     def test_raises_when_discovery_fails(self) -> None:
         deps = _make_deps(discovery_raises=RuntimeError("LLM timeout"))

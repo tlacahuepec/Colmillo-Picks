@@ -14,6 +14,7 @@ export function runState(run: { status?: string | null; outcome?: string | null 
   const status = (run.status || "unknown").toLowerCase();
   const outcome = (run.outcome || "").toLowerCase();
   if (ACTIVE.has(status)) return { label: status, color: "info", terminal: false, hasRecommendations: false };
+  if (status === "interrupted") return { label: "Interrupted - resume available", color: "warning", terminal: true, hasRecommendations: true };
   if (status === "failed" || outcome === "failed") return { label: "Failed", color: "error", terminal: true, hasRecommendations: false };
   if (outcome === "no_picks" || status === "no_picks") return { label: "No verified picks", color: "info", terminal: true, hasRecommendations: false };
   if (status === "partial" || outcome === "partial") return { label: "Partial results", color: "warning", terminal: true, hasRecommendations: true };

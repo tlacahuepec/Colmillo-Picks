@@ -202,6 +202,19 @@ class TestGetSlate:
         assert status_resp.status_code == 200
         assert status_resp.json()["status"] in ("pending", "queued")
 
+    def test_resumes_only_an_interrupted_slate(self, client: TestClient) -> None:
+        row = db_module.create_pending_slate_run(
+            request_payload={"date": "2026-06-01", "sports": ["soccer"], "max_matches_per_sport": 3, "top_n": 10}
+        )
+        db_module.mark_slate_interrupted(
+            slate_id=row.id, reason="budget_exhausted", message="budget", latency_ms=10,
+            candidates=[], match_runs=[], discovered_matches=[], discovery_latency_ms=1,
+        )
+        resumed = client.post(f"/slates/{row.id}/resume")
+        assert resumed.status_code == 202
+        assert resumed.json()["status"] == "queued"
+        assert client.post(f"/slates/{row.id}/resume").status_code == 409
+
 
 class TestSlateFullSuccess:
     def test_returns_ranked_candidates(self, client: TestClient) -> None:

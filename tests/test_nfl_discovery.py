@@ -15,6 +15,8 @@ def test_nfl_uses_local_kickoff_date_and_excludes_started_or_unknown(monkeypatch
 
     monkeypatch.setattr(match_discovery, "datetime", Clock)
     raw = {
+        "sources": [{"label": "NFL schedule", "url": "https://www.nfl.com/schedules/"}],
+        "grounding_sources": [{"url": "https://www.nfl.com/schedules/"}],
         "grouped_by_sport": {
             "nfl": {
                 "matches": [

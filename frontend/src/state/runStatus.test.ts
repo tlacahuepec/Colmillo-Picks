@@ -10,4 +10,10 @@ describe("runState", () => {
     expect(runState({ status: "success", outcome: "partial" })).toMatchObject({ label: "Partial results", color: "warning", hasRecommendations: true });
     expect(runState({ status: "success" })).toMatchObject({ label: "Recommendations ready", color: "success" });
   });
+
+  it("makes interrupted work terminal and resumable", () => {
+    expect(runState({ status: "interrupted", outcome: "partial" })).toMatchObject({
+      label: "Interrupted - resume available", color: "warning", terminal: true, hasRecommendations: true,
+    });
+  });
 });

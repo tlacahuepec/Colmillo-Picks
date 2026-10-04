@@ -166,6 +166,9 @@ export const api = {
   getSlateStatus: (slateId: string) =>
     request<SlateStatus>(`/slates/${slateId}/status`),
 
+  resumeSlate: (slateId: string) =>
+    request<{ id: string; status: string; created_at: string; operation_id?: string }>(`/slates/${slateId}/resume`, { method: "POST" }),
+
   // --- Screen 4: Grounding Audit ---
   runGroundingAudit: (payload: { num_players: number; num_attempts: number; use_bible_style: boolean }) =>
     request<{

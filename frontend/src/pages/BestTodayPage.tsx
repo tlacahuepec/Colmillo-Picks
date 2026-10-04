@@ -106,6 +106,7 @@ export const BestTodayPage: React.FC<BestTodayPageProps> = ({ onNavigateToDiagno
   const [isPolling, setIsPolling] = useState<boolean>(false);
   const [submitMessage, setSubmitMessage] = useState<string>("");
   const [pollError, setPollError] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
   const [selectedSlateId, setSelectedSlateId] = useState<string | null>(initialDraft.selectedSlateId);
   const pollIntervalRef = useRef<any>(null);
   const selectedSlateRef = useRef<string | null>(initialDraft.selectedSlateId);
@@ -207,7 +208,7 @@ export const BestTodayPage: React.FC<BestTodayPageProps> = ({ onNavigateToDiagno
       try {
         const stat = await api.getSlateStatus(slateId);
         if (selectedSlateRef.current !== slateId) return;
-        if (stat.status === "success" || stat.status === "partial" || stat.status === "failed") {
+        if (stat.status === "success" || stat.status === "partial" || stat.status === "failed" || stat.status === "interrupted") {
           if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
@@ -296,6 +297,20 @@ export const BestTodayPage: React.FC<BestTodayPageProps> = ({ onNavigateToDiagno
 
   const retrySelectedSlate = () => {
     if (selectedSlateId) void handleSelectSlate(selectedSlateId);
+  };
+
+  const resumeSelectedSlate = async () => {
+    if (!selectedSlateId) return;
+    setResuming(true);
+    setPollError(null);
+    try {
+      await api.resumeSlate(selectedSlateId);
+      await handleSelectSlate(selectedSlateId);
+    } catch (err: any) {
+      setPollError(err?.message || "Unable to resume this slate.");
+    } finally {
+      setResuming(false);
+    }
   };
 
   return (
@@ -542,7 +557,7 @@ export const BestTodayPage: React.FC<BestTodayPageProps> = ({ onNavigateToDiagno
                     Slate ID: <span style={{ fontFamily: "monospace", color: "#06B6D4" }}>{slateDetail.id}</span>
                   </Typography>
                   <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                    Status: <strong>{slateDetail.status}</strong> · Attempted: {slateDetail.matches_attempted} · Succeeded: {slateDetail.matches_succeeded}
+                    Status: <strong>{slateDetail.status}</strong> · Completed: {slateDetail.matches_completed ?? slateDetail.matches_attempted ?? 0} / {slateDetail.matches_discovered ?? "?"}
                   </Typography>
                   <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
                     Result: <strong>{runState(slateDetail).label}</strong>
@@ -567,11 +582,19 @@ export const BestTodayPage: React.FC<BestTodayPageProps> = ({ onNavigateToDiagno
                 )}
               </Paper>
 
-              {slateDetail.status === "failed" && (
-                <Alert severity="error">
-                  Slate failed at stage <strong>{slateDetail.error_stage || "unknown"}</strong>: {slateDetail.error_message || "Unknown error"}
-                </Alert>
-              )}
+                {slateDetail.status === "failed" && (
+                  <Alert severity="error">
+                    Slate failed at stage <strong>{slateDetail.error_stage || "unknown"}</strong>: {slateDetail.error_message || "Unknown error"}
+                  </Alert>
+                )}
+
+                {slateDetail.status === "interrupted" && (
+                  <Alert severity="warning" action={<Button color="inherit" size="small" disabled={resuming} onClick={() => void resumeSelectedSlate()}>{resuming ? "Resuming…" : "Resume"}</Button>}>
+                    {slateDetail.stop_reason === "budget_exhausted"
+                      ? "The slate reached its execution budget. Completed results are preserved; resume to run remaining matches."
+                      : "Slate execution was interrupted. Completed results are preserved; resume to run remaining matches."}
+                  </Alert>
+                )}
 
               {/* Partial Pipeline Summary Alert */}
               {(() => {
