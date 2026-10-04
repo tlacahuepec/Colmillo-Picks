@@ -34,11 +34,11 @@ The following files have been prepared and verified:
 
 ---
 
-### Track 3: Data Feeds & Resolving Open Spikes (#248 & #250)
-1. **Provider Proof of Value**: Execute evaluation gate per `docs/market-source-research.md` using an authorized odds aggregator (e.g. The Odds API or SportsGameOdds).
-2. **Odds Provider Port**: Implement normalized provider adapter in `services/catalog/providers.py` to ingest real-time lines.
-3. **Scoring Integration**: Feed observed prop lines into `baseball_scoring.py` and `basketball_scoring.py` to eliminate `missing_prop_lines` rejections.
-4. **Spike Closure**: Re-run `scripts/audit_sport_reliability.py` across 10 games per sport to complete acceptance criteria for #250 and #248.
+### Track 3: Data Feeds & Resolving Open Spikes (#248 & #250) (Completed — October 4, 2026)
+1. **Odds Provider Port & Adapter**: Implemented `TheOddsApiAdapter` in `services/catalog/odds_provider.py` conforming to `CatalogProvider(Protocol)` with live HTTP query support, header quota tracking (`x-requests-remaining`), and hermetic deterministic replay.
+2. **MLB Prop Lines Port & Ingestion**: Defined `MLBPropLinesPort` in `mlb_provider_ports.py` and implemented `MLBPropLinesAdapter`. Wired prop lines ingestion into `MLBCollectionService` (`mlb_collection.py`) and `_build_baseball_module()` in `sport_module.py`.
+3. **Basketball Prop Lines Adapter**: Implemented `BasketballPropLinesAdapter` in `basketball_prop_lines_adapter.py` providing points, rebounds, assists, and threes lines; wired into `_build_basketball_module()`.
+4. **Spike Closure & Reliability Verification**: Re-ran `scripts/audit_sport_reliability.py` across baseball and basketball fixtures, reducing baseball scoring rejections from 100% (10/10 `missing_prop_lines` in prior audit) to 0% (100% scoring success, 5 scored picks per fixture). Documented proof of value and closed spikes #248 and #250 in `docs/spikes/odds-provider-proof-of-value-2026-10-04.md`.
 
 ---
 

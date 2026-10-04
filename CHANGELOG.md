@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Catalog odds provider adapter (`TheOddsApiAdapter`) in `services/catalog/odds_provider.py` conforming to `CatalogProvider(Protocol)`, with live HTTP querying, quota tracking (`x-requests-remaining`), and hermetic deterministic replay (#248, #250).
+- `MLBPropLinesPort` protocol in `skills/soccer-prop-picks/scripts/mlb_provider_ports.py` and `MLBPropLinesAdapter` in `skills/soccer-prop-picks/scripts/mlb_prop_lines_adapter.py` feeding observed pitcher and batter prop lines into `MLBCollectionService` and `MLBGameContext.prop_lines`.
+- `BasketballPropLinesAdapter` in `skills/soccer-prop-picks/scripts/basketball_prop_lines_adapter.py` supplying structured points, rebounds, assists, and threes lines to `BasketballModule`.
+- Odds provider proof of value and spike closure report in `docs/spikes/odds-provider-proof-of-value-2026-10-04.md` documenting 100% reduction in MLB scoring rejections.
+- Unit test suites for odds provider and adapters (`tests/test_catalog_odds_provider.py`, `tests/test_mlb_prop_lines_adapter.py`, `tests/test_basketball_prop_lines_adapter.py`).
 - Direct navigation links to child diagnostic operations from slate match run items on the Best Today page and API response (`match_run.operation_id`).
 - Catalog staged rollout subsystem integration bridging team-based lookups via `CatalogStore.find_snapshot` and typed contract deserializers (`snapshot_from_dict`, `catalog_event_from_dict`, `canonical_ref_from_dict`).
 - Multi-threaded scheduler and lease concurrency stress test suite in `tests/test_catalog_scheduler.py` verifying race-free claims, heartbeat renewal, and crash recovery.

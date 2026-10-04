@@ -17,6 +17,7 @@ from services.catalog.scheduler import CatalogScheduler, DailySchedule
 from services.catalog.graph import CatalogGraphDeps, CatalogGraphState, build_catalog_graph, run_catalog_graph
 from services.catalog.freshness import FreshnessDecision, FreshnessPolicy, evaluate_field, evaluate_snapshot, resources_to_refresh
 from services.catalog.read_service import CatalogFirstReader, CatalogReadResult
+from services.catalog.odds_provider import TheOddsApiAdapter, TheOddsApiConfig
 from services.catalog.rollout import CatalogReadMode, resolve_read_mode, should_use_catalog
 from services.catalog.sport_adapters import BasketballCatalogAdapter, MlbCatalogAdapter, NflCatalogAdapter, SoccerCatalogAdapter, SportCatalogConfig
 
@@ -58,4 +59,6 @@ __all__ = [
     "MlbCatalogAdapter",
     "NflCatalogAdapter",
     "snapshot_from_dict",
+    "TheOddsApiAdapter",
+    "TheOddsApiConfig",
 ]
