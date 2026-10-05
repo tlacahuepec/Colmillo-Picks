@@ -1,7 +1,7 @@
 # Test/dev-only dependencies. Install on top of requirements.txt.
 -r requirements.txt
 
-pytest>=8.0,<10.0
+pytest>=9.1.1,<10.0
 # Keep local and CI lint rules aligned with the validated dev baseline.
 ruff==0.16.6
 pyright==1.1.414
